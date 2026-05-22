@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Material Orders">
+  <title>Material Orders — Worker</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.19.0/dist/tabler-icons.min.css">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div id="root"></div>
+
+<!-- Firebase SDKs -->
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+
+<script src="js/shared.js"></script>
+<script src="js/firebase-sync.js"></script>
+<script>
+// ── WORKER APP ──
+const Worker = {
+  activeTab: 'all',
+  orderRef: genRef(),
+  materials: [],
+
+  async init() {
+    this.materials = Data.get();
+    const cfg = FirebaseConfig.get();
+    if (!cfg) { this.showSetup(); return; }
+    const ok = await DB.init(cfg);
+    if (!ok) { this.showSetup('Could not connect. Check your Firebase config.'); return; }
+    this.renderApp();
+  },
+
+  // ── SETUP SCREEN ──
+  showSetup(err) {
+    document.getElementById('root').innerHTML = `
+      <div class="setup-screen">
+        <div class="setup-card">
+          <h2><i class="ti ti-flame" style="color:#ea580c;vertical-align:-2px"></i> Connect to Firebase</h2>
+          <p>Enter your Firebase project config so orders sync to the manager's Windows PC. You only need to do this once.</p>
+          ${err ? `<div style="background:var(--red-bg);color:var(--red-text);border-radius:var(--radius);padding:10px 12px;font-size:13px;margin-bottom:12px">${esc(err)}</div>` : ''}
+          <div class="setup-field"><label>API Key</label><input id="cfg-apiKey" placeholder="AIzaSy..."></div>
+          <div class="setup-field"><label>Project ID</label><input id="cfg-projectId" placeholder="my-project-id"></div>
+          <div class="setup-field"><label>App ID</label><input id="cfg-appId" placeholder="1:123456:web:abc..."></div>
+          <button class="btn btn-primary" style="margin-top:8px" onclick="Worker.saveConfig()">
+            <i class="ti ti-plug" aria-hidden="true"></i> Connect
+          </button>
+          <div class="setup-note" style="margin-top:14px">
+            Get these from <a href="https://console.firebase.google.com" target="_blank">console.firebase.google.com</a> → your project → Project settings → Web app config. See README.md for step-by-step setup.
+          </div>
+        </div>
+      </div>`;
+  },
+
+  async saveConfig() {
+    const apiKey = document.getElementById('cfg-apiKey').value.trim();
+    const projectId = document.getElementById('cfg-projectId').value.trim();
+    const appId = document.getElementById('cfg-appId').value.trim();
+    if (!apiKey || !projectId || !appId) { alert('Please fill in all fields.'); return; }
+    const cfg = { apiKey, projectId, appId, authDomain: `${projectId}.firebaseapp.com`, storageBucket: `${projectId}.appspot.com`, messagingSenderId: '000000000000' };
+    const ok = await DB.init(cfg);
+    if (!ok) { this.showSetup('Connection failed. Double-check your config values.'); return; }
+    FirebaseConfig.save(cfg);
+    this.renderApp();
+  },
+
+  // ── MAIN APP ──
+  renderApp() {
+    const root = document.getElementById('root');
+    root.innerHTML = `
+      <h1 class="sr-only">Material ordering — worker view</h1>
+      <div style="display:flex;flex-direction:column;height:100dvh">
+        <div class="header">
+          <div class="header-left">
+            <div class="header-title">Material Orders</div>
+            <div class="header-ref" id="order-ref">${esc(this.orderRef)}</div>
+          </div>
+          <div class="header-actions">
+            <span class="role-pill">Worker</span>
+            <button class="icon-btn" onclick="Worker.openCart()" aria-label="View cart">
+              <i class="ti ti-shopping-cart" aria-hidden="true"></i>
+              <span class="cart-badge" id="cart-badge" style="display:none">0</span>
+            </button>
+          </div>
+        </div>
+        <div class="tabs" id="tabs">${this.tabsHtml()}</div>
+        <div class="search-bar">
+          <div class="search-wrap">
+            <i class="ti ti-search" aria-hidden="true"></i>
+            <input type="search" id="search" placeholder="Search materials…" autocomplete="off" oninput="Worker.renderList()">
+          </div>
+        </div>
+        <div id="mat-list-wrap" style="flex:1;overflow:hidden;display:flex;flex-direction:column"></div>
+      </div>
+      <!-- Cart panel -->
+      <div id="cart-panel-wrap"></div>
+      <!-- Overlays -->
+      <div id="overlay-wrap"></div>`;
+    this.renderList();
+    this.updateBadge();
+  },
+
+  tabsHtml() {
+    return Data.categories(this.materials).map(c =>
+      `<button class="tab ${c.id===this.activeTab?'active':''}" onclick="Worker.setTab('${c.id}',this)">${esc(c.label)}</button>`
+    ).join('');
+  },
+
+  renderList() {
+    const q = (document.getElementById('search')?.value||'').toLowerCase();
+    const filtered = this.materials.filter(m =>
+      (this.activeTab==='all'||m.cat===this.activeTab) && m.name.toLowerCase().includes(q)
+    );
+    const wrap = document.getElementById('mat-list-wrap');
+    if (!wrap) return;
+    if (!filtered.length) {
+      wrap.innerHTML = `<div class="mat-list"><div class="empty-state"><i class="ti ti-package-off"></i><p>No materials found.</p></div></div>`;
+      return;
+    }
+    wrap.innerHTML = `<div class="mat-list">${filtered.map(m => this.matCardHtml(m)).join('')}</div>`;
+  },
+
+  matCardHtml(m) {
+    const qty = Cart.get(m.id);
+    const inCart = qty > 0;
+    const c = CAT_COLORS[m.cat]||CAT_COLORS.other;
+    const ic = CAT_ICONS[m.cat]||CAT_ICONS.other;
+    return `<div class="mat-card ${inCart?'in-cart':''}">
+      <div class="mat-icon" style="background:${c.bg}"><i class="ti ${ic}" style="color:${c.icon}" aria-hidden="true"></i></div>
+      <div class="mat-info">
+        <div class="mat-name">${esc(m.name)}</div>
+        <div class="mat-meta">${esc(m.unit)}</div>
+        <div class="mat-price">$${m.price.toFixed(2)} / ${esc(m.unit)}</div>
+      </div>
+      <div class="mat-controls">
+        <button class="qty-btn" onclick="Worker.adj(${m.id},-1)">−</button>
+        <input class="qty-input" type="number" min="0" step="1" value="${qty}" onchange="Worker.setQty(${m.id},this.value)">
+        <button class="qty-btn" onclick="Worker.adj(${m.id},1)">+</button>
+        <button class="add-btn ${inCart?'in-cart':''}" onclick="Worker.quickAdd(${m.id})">
+          <i class="ti ${inCart?'ti-check':'ti-plus'}" aria-hidden="true"></i>
+        </button>
+      </div>
+    </div>`;
+  },
+
+  setTab(tab, el) {
+    this.activeTab = tab;
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    el.classList.add('active');
+    this.renderList();
+  },
+
+  adj(id, d) { Cart.adjust(id, d); this.updateBadge(); this.renderList(); },
+  setQty(id, v) { Cart.set(id, parseInt(v)||0); this.updateBadge(); this.renderList(); },
+  quickAdd(id) { if (!Cart.get(id)) Cart.set(id, 1); this.updateBadge(); this.renderList(); },
+  cartAdj(id, d) { Cart.adjust(id, d); this.updateBadge(); this.refreshCart(); },
+  cartSet(id, v) { Cart.set(id, parseInt(v)||0); this.updateBadge(); this.refreshCart(); },
+  removeItem(id) { Cart.remove(id); this.updateBadge(); this.refreshCart(); },
+
+  updateBadge() {
+    const b = document.getElementById('cart-badge');
+    if (!b) return;
+    const n = Cart.count();
+    b.textContent = n; b.style.display = n > 0 ? 'flex' : 'none';
+  },
+
+  // ── CART PANEL ──
+  openCart() {
+    document.getElementById('cart-panel-wrap').innerHTML = this.cartPanelHtml();
+    requestAnimationFrame(() => document.getElementById('cart-panel')?.classList.add('open'));
+  },
+
+  closeCart() { document.getElementById('cart-panel')?.classList.remove('open'); },
+
+  refreshCart() {
+    const p = document.getElementById('cart-panel');
+    if (!p || !p.classList.contains('open')) return;
+    const wrap = document.getElementById('cart-panel-wrap');
+    wrap.innerHTML = this.cartPanelHtml();
+    requestAnimationFrame(() => document.getElementById('cart-panel')?.classList.add('open'));
+  },
+
+  cartPanelHtml() {
+    const items = Cart.items(this.materials);
+    const totals = Cart.totals(this.materials);
+    const itemsHtml = items.length ? items.map(i => `
+      <div class="cart-item">
+        <div class="cart-item-row">
+          <div>
+            <div class="cart-item-name">${esc(i.name)}</div>
+            <div class="cart-item-meta">${esc(i.unit)} · $${i.price.toFixed(2)} each</div>
+          </div>
+          <div class="cart-item-total">$${i.subtotal.toFixed(2)}</div>
+        </div>
+        <div class="cart-item-foot">
+          <button class="qty-btn" onclick="Worker.cartAdj(${i.id},-1)">−</button>
+          <input class="qty-input" type="number" min="1" step="1" value="${i.qty}" onchange="Worker.cartSet(${i.id},this.value)">
+          <button class="qty-btn" onclick="Worker.cartAdj(${i.id},1)">+</button>
+          <button class="remove-btn" onclick="Worker.removeItem(${i.id})"><i class="ti ti-trash"></i> Remove</button>
+        </div>
+      </div>`).join('') :
+      `<div class="empty-state"><i class="ti ti-shopping-cart-off"></i><p>Cart is empty.</p></div>`;
+
+    const summaryHtml = items.length ? `
+      <div class="summary">
+        <div class="summary-row"><span>Subtotal (${totals.count} items)</span><span>$${totals.sub.toFixed(2)}</span></div>
+        <div class="summary-row"><span>GST (${Settings.get().gstRate}%)</span><span>$${totals.gst.toFixed(2)}</span></div>
+        <div class="summary-row total"><span>Total inc. GST</span><span>$${totals.total.toFixed(2)}</span></div>
+      </div>` : '';
+
+    return `<div class="panel" id="cart-panel">
+      <div class="panel-header">
+        <button class="back-btn" onclick="Worker.closeCart()"><i class="ti ti-chevron-left"></i> Back</button>
+        <div class="panel-title">Order Cart</div>
+        <div class="panel-spacer"></div>
+      </div>
+      <div class="cart-items">${itemsHtml}</div>
+      ${summaryHtml}
+      <div class="action-bar">
+        <button class="btn btn-orange" onclick="Worker.confirmSubmit()">
+          <i class="ti ti-send" aria-hidden="true"></i> Submit to manager
+        </button>
+        <button class="btn btn-danger" onclick="Worker.clearCart()">
+          <i class="ti ti-trash" aria-hidden="true"></i> Clear cart
+        </button>
+      </div>
+    </div>`;
+  },
+
+  clearCart() {
+    if (!confirm('Clear all items?')) return;
+    Cart.clear(); this.updateBadge(); this.refreshCart();
+  },
+
+  // ── SUBMIT ORDER ──
+  confirmSubmit() {
+    if (Cart.isEmpty()) { alert('Cart is empty.'); return; }
+    const items = Cart.items(this.materials);
+    const totals = Cart.totals(this.materials);
+    const s = Settings.get();
+    const list = items.map(i => `• ${i.name} × ${i.qty}`).join('\n');
+    document.getElementById('overlay-wrap').innerHTML = `
+      <div class="overlay" id="submit-confirm">
+        <div class="sheet">
+          <div class="sheet-handle"></div>
+          <h3>Submit order to manager?</h3>
+          <p style="white-space:pre-line;font-family:var(--mono);font-size:12px;background:var(--bg);padding:10px;border-radius:var(--radius);margin-bottom:12px">${esc(list)}\n\nTotal: $${totals.total.toFixed(2)} inc. GST</p>
+          <p>The production manager will review and send the email to the supplier.</p>
+          <div class="sheet-btns">
+            <button class="btn btn-orange" onclick="Worker.submitOrder()"><i class="ti ti-send"></i> Confirm and submit</button>
+            <button class="btn btn-outline" onclick="Worker.closeOverlay()">Cancel</button>
+          </div>
+        </div>
+      </div>`;
+    requestAnimationFrame(() => document.getElementById('submit-confirm')?.classList.add('show'));
+  },
+
+  closeOverlay() {
+    const el = document.querySelector('.overlay');
+    el?.classList.remove('show');
+    setTimeout(() => { document.getElementById('overlay-wrap').innerHTML = ''; }, 300);
+  },
+
+  async submitOrder() {
+    this.closeOverlay();
+    const items = Cart.items(this.materials);
+    const totals = Cart.totals(this.materials);
+    const s = Settings.get();
+    const order = {
+      ref: this.orderRef,
+      items: items.map(i => ({ id:i.id, name:i.name, cat:i.cat, unit:i.unit, qty:i.qty, unitPrice:i.price, subtotal:i.subtotal })),
+      totals: { sub: totals.sub, gst: totals.gst, total: totals.total, gstRate: s.gstRate },
+      company: s.companyName,
+    };
+    try {
+      await DB.submitOrder(order);
+      // Success screen
+      document.getElementById('overlay-wrap').innerHTML = `
+        <div class="success-overlay">
+          <div class="success-card">
+            <div class="success-icon green"><i class="ti ti-circle-check"></i></div>
+            <h3>Order submitted!</h3>
+            <p>The production manager has been notified and will review your order on the Windows PC.</p>
+            <button class="btn btn-primary" onclick="Worker.newOrder()">Start new order</button>
+          </div>
+        </div>`;
+    } catch (e) {
+      alert('Failed to submit order. Check your internet connection.\n\n' + e.message);
+    }
+  },
+
+  newOrder() {
+    Cart.clear();
+    this.orderRef = genRef();
+    this.updateBadge();
+    document.getElementById('overlay-wrap').innerHTML = '';
+    document.getElementById('cart-panel-wrap').innerHTML = '';
+    document.getElementById('order-ref').textContent = this.orderRef;
+    this.renderList();
+  },
+};
+
+document.addEventListener('DOMContentLoaded', () => Worker.init());
+
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch(()=>{}));
+}
+</script>
+</body>
+</html>
