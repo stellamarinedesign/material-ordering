@@ -6,43 +6,25 @@
   <title>Material Orders — Manager</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.19.0/dist/tabler-icons.min.css">
   <link rel="stylesheet" href="css/style.css">
-  <style>
-    /* Manager-only extras */
-    body { min-height: 100vh; }
-    #root { display: flex; flex-direction: column; min-height: 100vh; max-width: 900px; margin: 0 auto; }
-    .manager-tabs { display: flex; background: var(--surface); border-bottom: 1px solid var(--border); flex-shrink: 0; }
-    .manager-tab { padding: 11px 18px; font-size: 13px; font-weight: 500; color: var(--text3); border-bottom: 2px solid transparent; background: none; border-top: none; border-left: none; border-right: none; cursor: pointer; display: flex; align-items: center; gap: 6px; }
-    .manager-tab.active { color: var(--text); border-bottom-color: #1e3a5f; }
-    .tab-count { background: var(--amber-bg); color: var(--amber-text); font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 20px; font-family: var(--mono); }
-    .tab-count.zero { display: none; }
-    .order-card-header { cursor: pointer; user-select: none; }
-    .order-card-header:hover { background: var(--bg); }
-    .chevron { transition: transform 0.2s; color: var(--text3); font-size: 16px; }
-    .chevron.open { transform: rotate(90deg); }
-    .qty-edit { width: 50px; border: 1px solid var(--border); background: var(--bg); border-radius: var(--radius); padding: 3px 6px; font-size: 13px; font-family: var(--mono); text-align: center; outline: none; }
-    .qty-edit:focus { border-color: var(--border2); }
-    .edit-note { font-size: 11px; color: var(--text3); font-style: italic; margin-top: 4px; }
-    .sent-stamp { font-size: 11px; color: var(--green-text); font-family: var(--mono); background: var(--green-bg); padding: 2px 8px; border-radius: 20px; }
-  </style>
 </head>
 <body>
 <div id="root"></div>
 
-<!-- Firebase SDKs -->
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+<!-- SheetJS for Excel import -->
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 
 <script src="js/shared.js"></script>
 <script src="js/firebase-sync.js"></script>
 <script>
 const Manager = {
   orders: [],
-  activeView: 'pending',   // 'pending' | 'all'
+  activeView: 'pending',
   unsubscribe: null,
-  materials: [],
+  importPreview: null,  // parsed rows from Excel, awaiting confirmation
 
   async init() {
-    this.materials = Data.get();
     const cfg = FirebaseConfig.get();
     if (!cfg) { this.showSetup(); return; }
     const ok = await DB.init(cfg);
@@ -57,16 +39,16 @@ const Manager = {
       <div class="setup-screen">
         <div class="setup-card">
           <h2><i class="ti ti-flame" style="color:#ea580c;vertical-align:-2px"></i> Connect to Firebase</h2>
-          <p>Enter your Firebase project config to receive orders from the iPad. You only need to do this once per browser.</p>
+          <p>Enter your Firebase project config to receive orders from the iPad.</p>
           ${err ? `<div style="background:var(--red-bg);color:var(--red-text);border-radius:var(--radius);padding:10px 12px;font-size:13px;margin-bottom:12px">${esc(err)}</div>` : ''}
-          <div class="setup-field"><label>API Key</label><input id="cfg-apiKey" placeholder="AIzaSy..."></div>
-          <div class="setup-field"><label>Project ID</label><input id="cfg-projectId" placeholder="my-project-id"></div>
-          <div class="setup-field"><label>App ID</label><input id="cfg-appId" placeholder="1:123456:web:abc..."></div>
+          <div class="setup-field"><label>API Key</label><input id="cfg-apiKey" placeholder="AIzaSy..." autocomplete="off"></div>
+          <div class="setup-field"><label>Project ID</label><input id="cfg-projectId" placeholder="my-project-id" autocomplete="off"></div>
+          <div class="setup-field"><label>App ID</label><input id="cfg-appId" placeholder="1:123456:web:abc..." autocomplete="off"></div>
           <button class="btn btn-primary" style="margin-top:8px" onclick="Manager.saveConfig()">
             <i class="ti ti-plug"></i> Connect
           </button>
           <div class="setup-note" style="margin-top:14px">
-            Same config as the iPad. Get it from <a href="https://console.firebase.google.com" target="_blank">console.firebase.google.com</a> → Project settings → Web app. See README.md for full setup guide.
+            Same config as the iPad. See README.md for setup guide.
           </div>
         </div>
       </div>`;
@@ -88,42 +70,62 @@ const Manager = {
   // ── SHELL ──
   renderShell() {
     document.getElementById('root').innerHTML = `
-      <div class="header manager">
-        <div class="header-left">
-          <div class="header-title">Material Orders</div>
-          <div class="header-ref" id="conn-status">
-            <span class="live-dot"></span>Connected
+      <div class="page-wrap manager-wrap">
+        <div class="header manager">
+          <div class="header-left">
+            <div class="header-title">Material Orders — Manager</div>
+            <div class="header-ref"><span class="live-dot"></span>Live</div>
+          </div>
+          <div class="header-actions">
+            <span class="role-pill">Production Manager</span>
+            <button class="icon-btn" onclick="Manager.openSettings()" title="Settings" aria-label="Settings">
+              <i class="ti ti-settings"></i>
+            </button>
           </div>
         </div>
-        <div class="header-actions">
-          <span class="role-pill">Manager</span>
-          <button class="icon-btn" onclick="Manager.openSettings()" aria-label="Settings" title="Settings">
-            <i class="ti ti-settings"></i>
-          </button>
+        <div class="manager-body" style="flex:1;min-height:0">
+          <div class="manager-sidebar">
+            <div class="sidebar-section">
+              <div class="sidebar-title">Orders</div>
+              <button class="sidebar-btn active" id="sb-pending" onclick="Manager.setView('pending')">
+                <i class="ti ti-clock"></i> Pending
+                <span class="sidebar-count zero" id="pending-count">0</span>
+              </button>
+              <button class="sidebar-btn" id="sb-sent" onclick="Manager.setView('sent')">
+                <i class="ti ti-mail-check"></i> Sent
+              </button>
+              <button class="sidebar-btn" id="sb-all" onclick="Manager.setView('all')">
+                <i class="ti ti-list"></i> All
+              </button>
+            </div>
+            <div class="sidebar-section">
+              <div class="sidebar-title">Catalogue</div>
+              <button class="sidebar-btn" onclick="Manager.openImport()">
+                <i class="ti ti-file-spreadsheet"></i> Import from Excel
+              </button>
+              <button class="sidebar-btn" onclick="Manager.openSettings()">
+                <i class="ti ti-adjustments"></i> Settings
+              </button>
+            </div>
+          </div>
+          <div class="manager-main">
+            <div class="order-queue" id="order-queue">
+              <div class="empty-queue"><i class="ti ti-loader" style="animation:spin 1s linear infinite"></i><p>Loading…</p></div>
+            </div>
+          </div>
         </div>
-      </div>
-      <div class="manager-tabs">
-        <button class="manager-tab active" id="tab-pending" onclick="Manager.setView('pending')">
-          <i class="ti ti-clock"></i> Pending
-          <span class="tab-count zero" id="pending-count">0</span>
-        </button>
-        <button class="manager-tab" id="tab-all" onclick="Manager.setView('all')">
-          <i class="ti ti-list"></i> All Orders
-        </button>
-      </div>
-      <div class="order-queue" id="order-queue">
-        <div class="empty-queue"><i class="ti ti-loader" style="animation:spin 1s linear infinite"></i><p>Loading orders…</p></div>
       </div>
       <div id="email-panel-wrap"></div>
       <div id="settings-panel-wrap"></div>
-      <div id="overlay-wrap"></div>
-      <style>@keyframes spin{to{transform:rotate(360deg)}}</style>`;
+      <div id="import-panel-wrap"></div>
+      <div id="overlay-wrap"></div>`;
   },
 
   setView(v) {
     this.activeView = v;
-    document.getElementById('tab-pending')?.classList.toggle('active', v==='pending');
-    document.getElementById('tab-all')?.classList.toggle('active', v==='all');
+    ['pending','sent','all'].forEach(x => {
+      document.getElementById(`sb-${x}`)?.classList.toggle('active', x === v);
+    });
     this.renderQueue();
   },
 
@@ -142,15 +144,18 @@ const Manager = {
   renderQueue() {
     const wrap = document.getElementById('order-queue');
     if (!wrap) return;
-    const list = this.activeView === 'pending'
-      ? this.orders.filter(o => o.status === 'pending')
-      : this.orders;
+    let list = this.orders;
+    if (this.activeView === 'pending') list = list.filter(o => o.status === 'pending');
+    if (this.activeView === 'sent')    list = list.filter(o => o.status === 'sent');
 
     if (!list.length) {
-      wrap.innerHTML = `<div class="empty-queue">
-        <i class="ti ti-${this.activeView==='pending'?'circle-check':'inbox'}"></i>
-        <p>${this.activeView==='pending' ? 'No pending orders.<br>The worker hasn\'t submitted anything yet.' : 'No orders yet.'}</p>
-      </div>`;
+      const msgs = {
+        pending: ['ti-clock','No pending orders yet.<br>Waiting for the worker to submit.'],
+        sent:    ['ti-mail-check','No sent orders yet.'],
+        all:     ['ti-inbox','No orders yet.'],
+      };
+      const [icon, msg] = msgs[this.activeView] || msgs.all;
+      wrap.innerHTML = `<div class="empty-queue"><i class="ti ${icon}"></i><p>${msg}</p></div>`;
       return;
     }
     wrap.innerHTML = list.map(o => this.orderCardHtml(o)).join('');
@@ -158,48 +163,44 @@ const Manager = {
 
   orderCardHtml(o) {
     const ts = o.submittedAt?.toDate ? fmtTime(o.submittedAt.toDate()) : fmtTime(o.submittedAt);
-    const statusLabel = { pending:'Pending review', approved:'Approved', sent:'Email sent' }[o.status] || o.status;
-    const statusClass = { pending:'status-pending', approved:'status-approved', sent:'status-sent' }[o.status] || 'status-pending';
-    const totals = o.totals || {};
+    const isPending = o.status === 'pending';
+    const isSent = o.status === 'sent';
+    const statusLabel = isPending ? 'Pending review' : isSent ? 'Sent' : o.status;
+    const statusClass = isPending ? 'status-pending' : isSent ? 'status-sent' : 'status-pending';
     const items = o.items || [];
 
-    const itemRows = items.map((i, idx) => `
+    const itemRows = items.map((item, idx) => `
       <div class="order-line">
-        <span class="order-line-name">${esc(i.name)}</span>
-        <span class="order-line-qty">
-          ${o.status === 'pending'
-            ? `<input class="qty-edit" type="number" min="0" step="1" value="${i.qty}" onchange="Manager.editQty('${o._id}',${idx},this.value)" title="Edit quantity">`
-            : `× ${i.qty}`}
-          ${esc(i.unit)}
-        </span>
-        <span class="order-line-total">$${(i.subtotal||0).toFixed(2)}</span>
+        <div class="order-line-info">
+          <div class="order-line-name">${esc(item.description)}</div>
+          <div class="order-line-code">${esc(item.partCode)}</div>
+        </div>
+        <div class="order-line-right">
+          ${isPending
+            ? `<input class="qty-edit" type="number" min="0" step="1" value="${item.qty}" onchange="Manager.editQty('${o._id}',${idx},this.value)" title="Edit quantity">`
+            : `<span class="order-line-qty">× ${item.qty}</span>`}
+          <span style="font-size:11px;color:var(--text3);font-family:var(--mono)">${esc(item.qtyType||'')}</span>
+        </div>
       </div>`).join('');
 
-    const actionButtons = o.status === 'pending' ? `
+    const actionBtns = isPending ? `
       <button class="btn btn-green" onclick="Manager.openEmail('${o._id}')">
-        <i class="ti ti-mail"></i> Approve &amp; compose email
+        <i class="ti ti-mail"></i> Approve &amp; send email
       </button>
       <button class="btn btn-danger" onclick="Manager.deleteOrder('${o._id}')">
-        <i class="ti ti-x"></i> Reject order
-      </button>` :
-      o.status === 'approved' ? `
-      <button class="btn btn-blue" onclick="Manager.openEmail('${o._id}')">
-        <i class="ti ti-mail"></i> Compose email
-      </button>
-      <button class="btn btn-danger" onclick="Manager.deleteOrder('${o._id}')">
-        <i class="ti ti-trash"></i> Delete
-      </button>` :
-      `<span class="sent-stamp"><i class="ti ti-circle-check"></i> Email sent</span>
-      <button class="btn btn-outline" style="margin-top:6px" onclick="Manager.deleteOrder('${o._id}')">
-        <i class="ti ti-trash"></i> Delete
-      </button>`;
+        <i class="ti ti-x"></i> Reject
+      </button>` : isSent ? `
+      <span class="sent-stamp"><i class="ti ti-circle-check"></i> Email sent</span>
+      <button class="btn btn-outline" style="margin-top:8px" onclick="Manager.deleteOrder('${o._id}')">
+        <i class="ti ti-trash"></i> Delete record
+      </button>` : '';
 
     return `<div class="order-card" id="card-${o._id}">
       <div class="order-card-header" onclick="Manager.toggleCard('${o._id}')">
-        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%">
           <div>
             <div class="order-ref-text">${esc(o.ref||o._id)}</div>
-            <div class="order-meta">${esc(o.company||'')} · ${ts}</div>
+            <div class="order-meta">${ts} · ${items.length} line${items.length!==1?'s':''}</div>
           </div>
           <div style="display:flex;align-items:center;gap:8px">
             <span class="status-pill ${statusClass}">${statusLabel}</span>
@@ -208,13 +209,9 @@ const Manager = {
         </div>
       </div>
       <div class="order-card-body" id="body-${o._id}">
-        ${o.status==='pending' ? '<div class="edit-note" style="padding:0 0 8px">You can edit quantities before approving.</div>' : ''}
+        ${isPending ? '<div class="edit-note">You can edit quantities before approving.</div>' : ''}
         ${itemRows}
-        <div class="order-total-row">
-          <span>Total inc. GST</span>
-          <span id="total-${o._id}">$${(totals.total||0).toFixed(2)}</span>
-        </div>
-        <div class="order-card-actions">${actionButtons}</div>
+        <div class="order-card-actions">${actionBtns}</div>
       </div>
     </div>`;
   },
@@ -222,33 +219,24 @@ const Manager = {
   toggleCard(id) {
     const body = document.getElementById(`body-${id}`);
     const chev = document.getElementById(`chev-${id}`);
-    if (!body) return;
-    const isOpen = body.classList.contains('open');
-    body.classList.toggle('open', !isOpen);
+    const isOpen = body?.classList.contains('open');
+    body?.classList.toggle('open', !isOpen);
     chev?.classList.toggle('open', !isOpen);
   },
 
-  // ── EDIT QUANTITIES ──
-  async editQty(orderId, itemIdx, newVal) {
+  async editQty(orderId, idx, val) {
     const order = this.orders.find(o => o._id === orderId);
     if (!order) return;
-    const qty = Math.max(0, parseInt(newVal) || 0);
     const items = [...order.items];
-    const s = Settings.get();
-    items[itemIdx] = { ...items[itemIdx], qty, subtotal: items[itemIdx].unitPrice * qty };
-    const sub = items.reduce((s, i) => s + (i.subtotal||0), 0);
-    const gst = sub * (s.gstRate / 100);
-    const totals = { sub, gst, total: sub + gst, gstRate: s.gstRate };
-    try {
-      await DB.updateItems(orderId, items, totals);
-    } catch (e) { alert('Failed to update: ' + e.message); }
+    items[idx] = { ...items[idx], qty: Math.max(0, parseInt(val) || 0) };
+    try { await DB.updateItems(orderId, items); }
+    catch (e) { alert('Update failed: ' + e.message); }
   },
 
-  // ── DELETE ──
   async deleteOrder(id) {
-    if (!confirm('Delete this order? This cannot be undone.')) return;
+    if (!confirm('Delete this order?')) return;
     try { await DB.deleteOrder(id); }
-    catch (e) { alert('Failed to delete: ' + e.message); }
+    catch (e) { alert('Delete failed: ' + e.message); }
   },
 
   // ── EMAIL ──
@@ -256,19 +244,7 @@ const Manager = {
     const order = this.orders.find(o => o._id === orderId);
     if (!order) return;
     const s = Settings.get();
-    const items = order.items || [];
-    const totals = order.totals || {};
-    const date = new Date().toLocaleDateString('en-AU', { day:'2-digit', month:'long', year:'numeric' });
-    const line = '─'.repeat(48);
-
-    let body = `Dear Supplier,\n\nPlease find our material order below for your action.\n\nOrder Reference: ${order.ref||order._id}\nOrder Date: ${date}\nCompany: ${s.companyName}\n\n${line}\nMATERIAL ORDER DETAILS\n${line}\n\n`;
-    items.forEach(i => {
-      body += `• ${i.name}\n  Qty: ${i.qty} × ${i.unit}  |  Unit: $${(i.unitPrice||0).toFixed(2)}  |  Total: $${(i.subtotal||0).toFixed(2)}\n\n`;
-    });
-    body += `${line}\nSubtotal:           $${(totals.sub||0).toFixed(2)}\nGST (${totals.gstRate||10}%):          $${(totals.gst||0).toFixed(2)}\nTotal inc. GST:     $${(totals.total||0).toFixed(2)}\n${line}\n\n${s.deliveryNote}\n\nPlease confirm availability and expected delivery date.\n\nKind regards,\n${s.senderName}\n${s.companyName}`;
-
-    const email = { to: s.supplierEmail, cc: s.ccEmail, subject: `Material Order — ${order.ref||order._id}`, body };
-
+    const body = buildEmailBody(order.ref || order._id, order.items || []);
     document.getElementById('email-panel-wrap').innerHTML = `
       <div class="panel" id="email-panel">
         <div class="panel-header">
@@ -278,10 +254,10 @@ const Manager = {
             <i class="ti ti-send"></i> Send
           </button>
         </div>
-        <div class="email-field"><label>To</label><input type="email" id="email-to" value="${esc(email.to)}"></div>
-        <div class="email-field"><label>CC</label><input type="email" id="email-cc" value="${esc(email.cc)}"></div>
-        <div class="email-field"><label>Subject</label><input type="text" id="email-subject" value="${esc(email.subject)}"></div>
-        <div class="email-body-wrap"><textarea id="email-body">${esc(email.body)}</textarea></div>
+        <div class="email-field"><label>To</label><input type="email" id="email-to" value="${esc(s.supplierEmail)}"></div>
+        <div class="email-field"><label>CC</label><input type="email" id="email-cc" value="${esc(s.ccEmail)}"></div>
+        <div class="email-field"><label>Subject</label><input type="text" id="email-subject" value="${esc('Material Order — ' + (order.ref||order._id))}"></div>
+        <div class="email-body-wrap"><textarea id="email-body">${esc(body)}</textarea></div>
       </div>`;
     requestAnimationFrame(() => document.getElementById('email-panel')?.classList.add('open'));
   },
@@ -294,27 +270,173 @@ const Manager = {
     const subject = document.getElementById('email-subject').value;
     const body = document.getElementById('email-body').value;
     const mailto = `mailto:${to}?cc=${encodeURIComponent(cc)}&subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-
-    try { await DB.updateStatus(orderId, 'sent'); } catch (e) { console.warn('Status update failed:', e); }
-
+    try { await DB.updateStatus(orderId, 'sent'); } catch {}
     this.closeEmail();
-    // Show confirm overlay briefly then open mail client
     document.getElementById('overlay-wrap').innerHTML = `
-      <div class="success-overlay" id="email-success">
+      <div class="success-overlay">
         <div class="success-card">
           <div class="success-icon blue"><i class="ti ti-mail-forward"></i></div>
           <h3>Opening mail client…</h3>
-          <p>Order marked as sent. Your email client will open with the order pre-filled.</p>
+          <p>Order marked as sent. Outlook will open with the order pre-filled.</p>
           <button class="btn btn-primary" onclick="document.getElementById('overlay-wrap').innerHTML=''">Done</button>
         </div>
       </div>`;
-    setTimeout(() => { window.location.href = mailto; }, 500);
+    setTimeout(() => { window.location.href = mailto; }, 400);
+  },
+
+  // ── EXCEL IMPORT ──
+  openImport() {
+    this.importPreview = null;
+    document.getElementById('import-panel-wrap').innerHTML = `
+      <div class="panel" id="import-panel">
+        <div class="panel-header">
+          <button class="back-btn" onclick="Manager.closeImport()"><i class="ti ti-chevron-left"></i> Back</button>
+          <div class="panel-title">Import Materials</div>
+          <div class="panel-spacer"></div>
+        </div>
+        <div class="settings-scroll">
+          <div class="settings-section">
+            <div class="settings-label">Upload spreadsheet</div>
+            <div class="import-zone" id="import-zone" onclick="document.getElementById('file-input').click()"
+              ondragover="event.preventDefault();this.classList.add('drag-over')"
+              ondragleave="this.classList.remove('drag-over')"
+              ondrop="Manager.handleDrop(event)">
+              <i class="ti ti-file-spreadsheet"></i>
+              <p>Tap to choose an Excel file (.xlsx)<br>or drag and drop here</p>
+              <small>Columns: Part Code · Description · Category · Subcategory · Quantity Type</small>
+            </div>
+            <input type="file" id="file-input" accept=".xlsx,.xls,.csv" style="display:none" onchange="Manager.handleFile(this.files[0])">
+          </div>
+
+          <div class="settings-section">
+            <div class="settings-label">Spreadsheet format</div>
+            <div class="settings-card">
+              <div class="settings-row" style="flex-direction:column;align-items:flex-start;gap:6px">
+                <div class="settings-row-sub">Your spreadsheet must have these column headers in row 1 (order doesn't matter):</div>
+                <div style="font-family:var(--mono);font-size:12px;background:var(--bg);padding:8px 10px;border-radius:var(--radius);width:100%;line-height:1.8">
+                  Part Code<br>Description<br>Category<br>Subcategory<br>Quantity Type
+                </div>
+                <div class="settings-row-sub">Once imported, the updated list is pushed to Firebase and the iPad will update automatically.</div>
+              </div>
+            </div>
+          </div>
+
+          <div id="import-preview-wrap"></div>
+        </div>
+      </div>`;
+    requestAnimationFrame(() => document.getElementById('import-panel')?.classList.add('open'));
+  },
+
+  closeImport() { document.getElementById('import-panel')?.classList.remove('open'); },
+
+  handleDrop(e) {
+    e.preventDefault();
+    document.getElementById('import-zone')?.classList.remove('drag-over');
+    const file = e.dataTransfer.files[0];
+    if (file) this.handleFile(file);
+  },
+
+  handleFile(file) {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = e => {
+      try {
+        const wb = XLSX.read(e.target.result, { type: 'array' });
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        const rows = XLSX.utils.sheet_to_json(ws, { defval: '' });
+
+        // Normalise column names (trim + case-insensitive)
+        const normalised = rows.map(r => {
+          const out = {};
+          Object.keys(r).forEach(k => { out[k.trim().toLowerCase()] = String(r[k]).trim(); });
+          return out;
+        }).filter(r => r['part code'] || r['partcode'] || r['part_code']);
+
+        if (!normalised.length) {
+          alert('No valid rows found. Check your column headers match: Part Code, Description, Category, Subcategory, Quantity Type');
+          return;
+        }
+
+        this.importPreview = normalised.map((r, i) => ({
+          id: i + 1,
+          partCode:    r['part code'] || r['partcode'] || r['part_code'] || '',
+          description: r['description'] || '',
+          category:    r['category'] || 'Uncategorised',
+          subcategory: r['subcategory'] || 'General',
+          qtyType:     r['quantity type'] || r['qty type'] || r['quantitytype'] || 'Each',
+        }));
+
+        this.renderImportPreview();
+      } catch (err) {
+        alert('Could not read file: ' + err.message);
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  },
+
+  renderImportPreview() {
+    const wrap = document.getElementById('import-preview-wrap');
+    if (!wrap || !this.importPreview) return;
+    const preview = this.importPreview.slice(0, 8);
+    const more = this.importPreview.length - preview.length;
+    wrap.innerHTML = `
+      <div class="settings-section">
+        <div class="settings-label">Preview — ${this.importPreview.length} materials found</div>
+        <div class="import-preview">
+          <div class="import-preview-header">
+            <span>Part Code · Description</span>
+            <span>Category / Sub</span>
+          </div>
+          ${preview.map(r => `
+            <div class="import-preview-row">
+              <div style="flex:1;min-width:0">
+                <span class="import-preview-code">${esc(r.partCode)}</span>
+                <span style="color:var(--text);margin-left:6px">${esc(r.description)}</span>
+              </div>
+              <div style="font-size:11px;color:var(--text3);flex-shrink:0;text-align:right">${esc(r.category)}<br>${esc(r.subcategory)}</div>
+            </div>`).join('')}
+          ${more > 0 ? `<div class="import-preview-row" style="color:var(--text3);font-style:italic">…and ${more} more</div>` : ''}
+        </div>
+        <div style="margin-top:10px;display:flex;flex-direction:column;gap:8px">
+          <button class="btn btn-primary" onclick="Manager.confirmImport()">
+            <i class="ti ti-cloud-upload"></i> Push to Firebase (updates iPad automatically)
+          </button>
+          <button class="btn btn-outline" onclick="Manager.cancelImport()">
+            <i class="ti ti-x"></i> Cancel
+          </button>
+        </div>
+      </div>`;
+  },
+
+  cancelImport() {
+    this.importPreview = null;
+    document.getElementById('import-preview-wrap').innerHTML = '';
+  },
+
+  async confirmImport() {
+    if (!this.importPreview?.length) return;
+    try {
+      await DB.pushMaterials(this.importPreview);
+      // Also save locally
+      Data.save(this.importPreview);
+      this.closeImport();
+      document.getElementById('overlay-wrap').innerHTML = `
+        <div class="success-overlay">
+          <div class="success-card">
+            <div class="success-icon green"><i class="ti ti-circle-check"></i></div>
+            <h3>Materials updated!</h3>
+            <p>${this.importPreview.length} materials pushed to Firebase. The iPad will update automatically next time it connects.</p>
+            <button class="btn btn-primary" onclick="document.getElementById('overlay-wrap').innerHTML=''">Done</button>
+          </div>
+        </div>`;
+    } catch (e) {
+      alert('Import failed: ' + e.message);
+    }
   },
 
   // ── SETTINGS ──
   openSettings() {
     const s = Settings.get();
-    const mats = Data.get();
     document.getElementById('settings-panel-wrap').innerHTML = `
       <div class="panel" id="settings-panel">
         <div class="panel-header">
@@ -328,53 +450,30 @@ const Manager = {
             <div class="settings-label">Email</div>
             <div class="settings-card">
               <div class="settings-row">
-                <div><div class="settings-row-label">Supplier email</div><div class="settings-row-sub">Auto-filled in To: field</div></div>
+                <div><div class="settings-row-label">To (purchasing email)</div><div class="settings-row-sub">Auto-filled in To: field</div></div>
                 <input type="email" id="s-supplier" value="${esc(s.supplierEmail)}">
               </div>
               <div class="settings-row">
                 <div><div class="settings-row-label">CC email</div><div class="settings-row-sub">Always CC'd on orders</div></div>
                 <input type="email" id="s-cc" value="${esc(s.ccEmail)}">
               </div>
-            </div>
-          </div>
-
-          <div class="settings-section">
-            <div class="settings-label">Company</div>
-            <div class="settings-card">
               <div class="settings-row">
-                <div class="settings-row-label" style="min-width:110px">Company name</div>
-                <input type="text" id="s-company" value="${esc(s.companyName)}">
-              </div>
-              <div class="settings-row">
-                <div class="settings-row-label" style="min-width:110px">Sender name</div>
+                <div><div class="settings-row-label">Sender name</div><div class="settings-row-sub">Shown at bottom of email</div></div>
                 <input type="text" id="s-sender" value="${esc(s.senderName)}">
               </div>
               <div class="settings-row">
-                <div><div class="settings-row-label">Delivery note</div><div class="settings-row-sub">Appears in every email</div></div>
+                <div><div class="settings-row-label">Delivery / closing note</div><div class="settings-row-sub">Added at end of email body</div></div>
                 <input type="text" id="s-delivery" value="${esc(s.deliveryNote)}">
-              </div>
-              <div class="settings-row">
-                <div class="settings-row-label" style="min-width:110px">GST rate (%)</div>
-                <input type="number" id="s-gst" value="${s.gstRate}" min="0" max="100" step="1" style="width:64px">
               </div>
             </div>
           </div>
 
           <div class="settings-section">
             <div class="settings-label">Materials catalogue</div>
-            <div class="settings-card" style="overflow:hidden">
-              <div class="settings-row" style="flex-direction:column;align-items:flex-start;gap:8px">
-                <div class="settings-row-sub">Edit the materials list that appears on the iPad. Changes save locally — copy the updated config to the iPad if needed.</div>
+            <div class="settings-card">
+              <div class="settings-row" style="flex-direction:column;align-items:flex-start;gap:6px">
+                <div class="settings-row-sub">To update the materials list, use <strong>Import from Excel</strong> in the sidebar. This pushes changes to Firebase and the iPad updates automatically.</div>
               </div>
-            </div>
-            <div id="mat-editor" style="margin-top:8px;display:flex;flex-direction:column;gap:6px">${this.matEditorHtml(mats)}</div>
-            <button class="add-material-btn" style="margin-top:6px" onclick="Manager.addMaterial()">
-              <i class="ti ti-plus"></i> Add material
-            </button>
-            <div style="margin-top:8px">
-              <button class="btn btn-outline" style="font-size:13px;padding:10px" onclick="Manager.resetMaterials()">
-                <i class="ti ti-refresh"></i> Reset to defaults
-              </button>
             </div>
           </div>
 
@@ -398,11 +497,9 @@ const Manager = {
   saveSettings() {
     Settings.save({
       supplierEmail: document.getElementById('s-supplier')?.value.trim(),
-      ccEmail: document.getElementById('s-cc')?.value.trim(),
-      companyName: document.getElementById('s-company')?.value.trim(),
-      senderName: document.getElementById('s-sender')?.value.trim(),
-      deliveryNote: document.getElementById('s-delivery')?.value.trim(),
-      gstRate: parseFloat(document.getElementById('s-gst')?.value) || 10,
+      ccEmail:       document.getElementById('s-cc')?.value.trim(),
+      senderName:    document.getElementById('s-sender')?.value.trim(),
+      deliveryNote:  document.getElementById('s-delivery')?.value.trim(),
     });
     const btn = document.querySelector('[onclick="Manager.saveSettings()"]');
     if (btn) { btn.textContent = '✓ Saved'; setTimeout(() => btn.textContent = 'Save', 1500); }
@@ -412,76 +509,6 @@ const Manager = {
     if (!confirm('Clear Firebase config? You will need to re-enter it.')) return;
     FirebaseConfig.clear();
     location.reload();
-  },
-
-  // ── MATERIALS EDITOR ──
-  matEditorHtml(mats) {
-    return mats.map(m => `
-      <div class="mat-edit-card" id="medit-${m.id}">
-        <div class="mat-edit-row">
-          <label>Name</label>
-          <input type="text" id="me-name-${m.id}" value="${esc(m.name)}">
-        </div>
-        <div class="mat-edit-row">
-          <label>Unit</label>
-          <input type="text" id="me-unit-${m.id}" value="${esc(m.unit)}">
-          <label style="width:36px;margin-left:4px">Cat</label>
-          <select id="me-cat-${m.id}">
-            ${ALL_CATS.map(c=>`<option value="${c}" ${m.cat===c?'selected':''}>${c}</option>`).join('')}
-          </select>
-        </div>
-        <div class="mat-edit-row">
-          <label>Price</label>
-          <input type="number" id="me-price-${m.id}" value="${m.price}" min="0" step="0.01" style="max-width:100px">
-        </div>
-        <div class="mat-edit-actions">
-          <button class="btn-sm btn-sm-danger" onclick="Manager.deleteMaterial(${m.id})"><i class="ti ti-trash"></i> Delete</button>
-          <button class="btn-sm btn-sm-save" onclick="Manager.saveMaterial(${m.id})"><i class="ti ti-check"></i> Save</button>
-        </div>
-      </div>`).join('');
-  },
-
-  saveMaterial(id) {
-    const name = document.getElementById(`me-name-${id}`)?.value.trim();
-    const unit = document.getElementById(`me-unit-${id}`)?.value.trim();
-    const cat = document.getElementById(`me-cat-${id}`)?.value;
-    const price = parseFloat(document.getElementById(`me-price-${id}`)?.value) || 0;
-    if (!name) { alert('Name is required.'); return; }
-    let mats = Data.get();
-    const idx = mats.findIndex(m => m.id === id);
-    if (idx >= 0) mats[idx] = { ...mats[idx], name, unit, cat, price };
-    Data.save(mats);
-    const btn = document.querySelector(`#medit-${id} .btn-sm-save`);
-    if (btn) { btn.textContent = '✓ Saved'; setTimeout(() => { btn.innerHTML = '<i class="ti ti-check"></i> Save'; }, 1500); }
-  },
-
-  deleteMaterial(id) {
-    if (!confirm('Delete this material?')) return;
-    let mats = Data.get().filter(m => m.id !== id);
-    Data.save(mats);
-    document.getElementById(`medit-${id}`)?.remove();
-  },
-
-  addMaterial() {
-    let mats = Data.get();
-    const newMat = { id: Data.nextId(mats), cat:'steel', name:'New material', unit:'each', price:0 };
-    mats.push(newMat);
-    Data.save(mats);
-    const editor = document.getElementById('mat-editor');
-    if (editor) {
-      editor.insertAdjacentHTML('beforeend', this.matEditorHtml([newMat]));
-      setTimeout(() => {
-        document.getElementById(`me-name-${newMat.id}`)?.focus();
-        document.getElementById(`medit-${newMat.id}`)?.scrollIntoView({ behavior:'smooth' });
-      }, 100);
-    }
-  },
-
-  resetMaterials() {
-    if (!confirm('Reset materials to defaults? Local changes will be lost.')) return;
-    Data.reset();
-    const editor = document.getElementById('mat-editor');
-    if (editor) editor.innerHTML = this.matEditorHtml(Data.get());
   },
 };
 

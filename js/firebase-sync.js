@@ -1,5 +1,4 @@
-// firebase-sync.js — Firestore wrapper used by both pages
-// Loaded after firebase SDKs via CDN
+// firebase-sync.js — Firestore wrapper
 
 let _db = null;
 let _configured = false;
@@ -20,7 +19,7 @@ const DB = {
 
   isReady() { return _configured && _db !== null; },
 
-  // Submit a new order from the iPad
+  // ── ORDERS ──
   async submitOrder(order) {
     if (!this.isReady()) throw new Error('Firebase not initialised');
     const ref = await _db.collection('orders').add({
@@ -31,7 +30,6 @@ const DB = {
     return ref.id;
   },
 
-  // Listen for orders in real-time (manager view)
   listenOrders(callback) {
     if (!this.isReady()) return () => {};
     return _db.collection('orders')
@@ -42,7 +40,6 @@ const DB = {
       }, err => console.error('Firestore listen error:', err));
   },
 
-  // Update order status
   async updateStatus(id, status) {
     if (!this.isReady()) throw new Error('Firebase not initialised');
     await _db.collection('orders').doc(id).update({
@@ -51,27 +48,40 @@ const DB = {
     });
   },
 
-  // Update order items (manager can edit quantities)
-  async updateItems(id, items, totals) {
+  async updateItems(id, items) {
     if (!this.isReady()) throw new Error('Firebase not initialised');
     await _db.collection('orders').doc(id).update({
-      items, totals,
+      items,
       updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
     });
   },
 
-  // Delete an order
   async deleteOrder(id) {
     if (!this.isReady()) throw new Error('Firebase not initialised');
     await _db.collection('orders').doc(id).delete();
   },
 
-  // Test connection
-  async testConnection() {
-    try {
-      await _db.collection('_test').doc('ping').set({ ping: true });
-      await _db.collection('_test').doc('ping').delete();
-      return true;
-    } catch { return false; }
+  // ── MATERIALS SYNC (manager pushes, worker receives) ──
+  async pushMaterials(materials) {
+    if (!this.isReady()) throw new Error('Firebase not initialised');
+    await _db.collection('config').doc('materials').set({
+      list: materials,
+      updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+    });
+  },
+
+  async fetchMaterials() {
+    if (!this.isReady()) throw new Error('Firebase not initialised');
+    const doc = await _db.collection('config').doc('materials').get();
+    if (doc.exists) return doc.data().list;
+    return null;
+  },
+
+  listenMaterials(callback) {
+    if (!this.isReady()) return () => {};
+    return _db.collection('config').doc('materials')
+      .onSnapshot(doc => {
+        if (doc.exists) callback(doc.data().list);
+      }, err => console.error('Materials listen error:', err));
   },
 };

@@ -1,148 +1,114 @@
-# Material Orders
+# Material Orders v3
 
-Two-page web app for material ordering:
+Two-page web app:
 - **iPad** (`index.html`) — worker selects materials and submits orders
-- **Windows PC** (`manager.html`) — production manager reviews, edits, and emails orders to supplier
-
-Orders sync in real-time via Firebase Firestore (free).
+- **Windows PC** (`manager.html`) — production manager reviews, approves, and emails orders to purchasing
 
 ---
 
-## Step 1 — Set up Firebase (free, ~10 minutes)
+## What changed in v3
+- No pricing or GST anywhere
+- Categories and subcategories (Stainless Steel → Hollow Section, Round Bar, etc.)
+- Each material has a Part Code + Description
+- Part code shown below description in the list; combined `SL0300 - 100x50x3mm...` in email
+- Excel import on manager page — pushes material list to Firebase, iPad updates automatically
+- "Order Confirmation" instead of cart
+- Email reformatted for internal use (no Dear/Kind regards/company line)
+- Manager page properly laid out for desktop with sidebar
+- Double-tap zoom disabled on iPad
 
-Firebase is the cloud database that connects the iPad to the Windows PC.
+---
+
+## Setup (first time)
+
+### 1. Firebase — free cloud database
 
 1. Go to [console.firebase.google.com](https://console.firebase.google.com)
-2. Click **Add project** → name it (e.g. `material-orders`) → Continue → Create project
-3. In the left sidebar click **Firestore Database** → **Create database**
-   - Choose **Start in test mode** → Next → select a region close to you → Enable
-4. In the left sidebar click **Project settings** (gear icon)
-5. Scroll down to **Your apps** → click the `</>` (Web) icon
-6. Register the app (any nickname) → **Register app**
-7. You'll see a config block like this — **copy these three values:**
+2. **Add project** → name it → Create
+3. Left sidebar → **Firestore Database** → **Create database** → Start in test mode → pick **australia-southeast1 (Sydney)** → Enable
+4. Left sidebar → **Project settings** (gear) → scroll to **Your apps** → click `</>` (Web)
+5. Register app → copy these three values:
+   ```
+   apiKey: "AIzaSy..."
+   projectId: "your-project-id"
+   appId: "1:123456:web:abc..."
+   ```
 
-```js
-const firebaseConfig = {
-  apiKey: "AIzaSy...",          ← copy this
-  projectId: "material-orders", ← copy this
-  appId: "1:123456:web:abc...", ← copy this
-  ...
-};
-```
+### 2. GitHub Pages
 
-You'll paste these into both the iPad and Windows PC when you first open the app.
+1. [github.com](https://github.com) → New repository → name it `material-orders` → Public → Create
+2. Upload all files from this folder (including `css/`, `js/`, `icons/` subfolders)
+3. Settings → Pages → Branch: main → Save
+4. Live at: `https://YOUR-USERNAME.github.io/material-orders/`
 
----
+### 3. First open on each device
 
-## Step 2 — Deploy to GitHub Pages (~5 minutes)
+**iPad:** Open worker URL in Safari → enter Firebase config → Connect → Share → Add to Home Screen
 
-1. Go to [github.com](https://github.com) → sign in → **New repository**
-2. Name it `material-orders` → set to **Public** → **Create repository**
-3. On the repo page click **uploading an existing file**
-4. Drag and drop all files from this folder:
-   - `index.html`, `manager.html`, `manifest.json`, `sw.js`
-   - `css/` folder, `js/` folder, `icons/` folder
-5. Click **Commit changes**
-6. Go to **Settings** → **Pages** → Source: **Deploy from a branch** → Branch: **main** → **Save**
-
-Your URLs will be (replace `YOUR-USERNAME` and `YOUR-REPO`):
-- **iPad (worker):** `https://YOUR-USERNAME.github.io/YOUR-REPO/`
-- **Windows (manager):** `https://YOUR-USERNAME.github.io/YOUR-REPO/manager.html`
-
-*(Takes ~2 minutes to go live after saving)*
+**Windows PC:** Open manager URL in Edge/Chrome → enter same Firebase config → Connect
 
 ---
 
-## Step 3 — First-time setup on each device
-
-### iPad
-1. Open the worker URL in **Safari**
-2. Enter your Firebase `apiKey`, `projectId`, and `appId` → tap **Connect**
-3. Tap the **Share** button → **Add to Home Screen** → **Add**
-4. The app icon will appear on the iPad home screen
-
-### Windows PC
-1. Open the manager URL in **Edge** or **Chrome**
-2. Enter the same Firebase config values → click **Connect**
-3. Optional: click the install icon in the address bar to install as a desktop app
-
----
-
-## How it works
-
-```
-Worker (iPad)                    Firebase                Manager (Windows)
-─────────────                    ────────                ─────────────────
-Select materials         →   Store order          →   See order appear live
-Adjust quantities             (Firestore)              Edit quantities if needed
-Tap "Submit to manager"                                Approve & compose email
-                                                       Send email to supplier
-                                                       Order marked as "Sent"
-```
-
-### Worker (iPad) can:
-- Browse materials by category or search
-- Adjust quantities
-- Submit an order to the manager
-- Start a new order after submitting
-
-### Manager (Windows) can:
-- See all pending orders in real time
-- Edit quantities before approving
-- Approve and compose the supplier email (pre-filled)
-- Reject/delete orders
-- Mark orders as sent
-- Configure supplier email, CC, company name, GST rate
-- Add/edit/delete materials in the catalogue
-
----
-
-## URLs to bookmark
+## URLs
 
 | Device | URL | Role |
 |--------|-----|------|
-| iPad | `https://YOUR-USERNAME.github.io/YOUR-REPO/` | Worker — submit orders |
-| Windows PC | `https://YOUR-USERNAME.github.io/YOUR-REPO/manager.html` | Manager — review & email |
+| iPad | `https://username.github.io/material-orders/` | Worker |
+| Windows | `https://username.github.io/material-orders/manager.html` | Manager |
 
 ---
 
-## Firestore security (optional, recommended)
+## Updating the materials list (Excel import)
 
-By default Firebase is in test mode (anyone with the URL can read/write).
-To lock it down, go to Firestore → **Rules** and replace with:
+The manager page has an **Import from Excel** button in the sidebar.
 
-```
-rules_version = '2';
-service cloud.firestore {
-  match /databases/{database}/documents {
-    match /orders/{orderId} {
-      allow read, write: if true; // Replace with auth rules if needed
-    }
-    match /_test/{doc} {
-      allow read, write: if true;
-    }
-  }
-}
-```
+Your spreadsheet needs these column headers in row 1:
 
-For a small internal tool on a private URL this is usually fine as-is.
+| Part Code | Description | Category | Subcategory | Quantity Type |
+|-----------|-------------|----------|-------------|---------------|
+| SL0300 | 100 x 50 x 3mm x 6m Box Section 316 S/S | Stainless Steel | Hollow Section | Length |
+
+A template CSV is included: `materials-template.csv` — open in Excel, fill it out, save as `.xlsx`, import.
+
+When you import:
+1. A preview shows before anything is saved
+2. On confirm, the list is pushed to Firebase
+3. The iPad picks up the new list automatically next time it connects — no manual update needed
 
 ---
 
-## Troubleshooting
+## Workflow
 
-**"Could not connect" on setup**
-- Double-check you copied the right values (apiKey, projectId, appId)
-- Make sure Firestore is enabled in your Firebase project (not just the project created)
+```
+Worker (iPad)             Firebase (Sydney)         Manager (Windows)
+─────────────             ─────────────────         ─────────────────
+Browse by category   →                         ←   Push updated materials
+Select materials          Store order           →   Order appears live
+Confirm quantities    →   (Firestore)               Edit quantities if needed
+Submit to manager                                   Approve → email to purchasing
+                          Mark as sent          ←   Outlook opens pre-filled
+```
 
-**Orders not appearing on Windows**
-- Both devices must use the exact same `projectId`
-- Check Firestore is in **test mode** or your rules allow reads
+## Email format
 
-**Email doesn't open**
-- The app uses `mailto:` links which open your default mail client (Outlook on Windows, Mail on iPad)
-- Make sure a mail client is configured on the Windows PC
+Emails are formatted for internal purchasing use:
 
-**iPad app not working offline**
-- Must be added to home screen via Safari for offline/PWA to work
-- First load requires internet; subsequent loads work offline for the app shell (orders require internet to sync)
+```
+Order Reference: ORD-2026-0522-482
+Date: 22 May 2026
+
+────────────────────────────────────────────────────
+MATERIAL ORDER
+────────────────────────────────────────────────────
+
+SL0300 - 100 x 50 x 3mm x 6m Box Section 316 S/S
+  Qty: 4 Length
+
+AL0400 - 20mm Diameter x 6m Round Bar 6061-T6
+  Qty: 2 Length
+
+────────────────────────────────────────────────────
+Please confirm availability and expected delivery date.
+```
+
+No "Dear Supplier", no "Kind regards" — your email signature handles that.
