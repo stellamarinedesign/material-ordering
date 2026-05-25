@@ -14,16 +14,15 @@
 </head>
 <body>
 <div id="root"></div>
-
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
 <script src="js/shared.js"></script>
 <script src="js/firebase-sync.js"></script>
 <script>
 const Worker = {
-  activeCategory:    null,
-  activeSubcategory: null,
-  orderRef: genRef(),
+  activeCat: null,
+  activeSub: null,
+  orderRef:  genRef(),
   materials: [],
 
   async init() {
@@ -63,9 +62,9 @@ const Worker = {
     const appId     = document.getElementById('cfg-appId').value.trim();
     if (!apiKey || !projectId || !appId) { alert('Please fill in all fields.'); return; }
     const cfg = { apiKey, projectId, appId,
-      authDomain:`${projectId}.firebaseapp.com`,
-      storageBucket:`${projectId}.appspot.com`,
-      messagingSenderId:'000000000000' };
+      authDomain: `${projectId}.firebaseapp.com`,
+      storageBucket: `${projectId}.appspot.com`,
+      messagingSenderId: '000000000000' };
     const ok = await DB.init(cfg);
     if (!ok) { this.showSetup('Connection failed. Double-check your config values.'); return; }
     FirebaseConfig.save(cfg);
@@ -73,35 +72,48 @@ const Worker = {
     this.renderApp();
   },
 
-  // ── SHELL ──
+  // ── APP SHELL (rendered once) ──
   renderApp() {
     document.getElementById('root').innerHTML = `
       <div class="app-root" id="app-root">
+
         <div class="header">
-          <div class="header-left">
-            <div class="header-title">Material Orders</div>
-            <div class="header-ref" id="order-ref">${esc(this.orderRef)}</div>
-          </div>
-          <div class="header-actions">
-            <span class="role-pill">Worker</span>
-            <button class="icon-btn" onclick="Worker.openReview()" aria-label="Review order">
-              <i class="ti ti-clipboard-list"></i>
-              <span class="order-badge" id="order-badge" style="display:none">0</span>
-            </button>
+          <div class="col">
+            <div class="header-inner">
+              <div class="header-left">
+                <div class="header-title">Material Orders</div>
+                <div class="header-ref" id="order-ref">${esc(this.orderRef)}</div>
+              </div>
+              <div class="header-actions">
+                <span class="role-pill">Worker</span>
+                <button class="icon-btn" onclick="Worker.openReview()" aria-label="Review order">
+                  <i class="ti ti-clipboard-list"></i>
+                  <span class="order-badge" id="order-badge" style="display:none">0</span>
+                </button>
+              </div>
+            </div>
           </div>
         </div>
-        <div class="app-body">
-          <div id="tabs-wrap"></div>
-          <div class="search-bar">
+
+        <div id="tabs-wrap"></div>
+
+        <div class="search-bar">
+          <div class="col">
             <div class="search-wrap">
               <i class="ti ti-search"></i>
               <input type="search" id="search" placeholder="Search part code or description…"
                 autocomplete="off" oninput="Worker.renderList()">
             </div>
           </div>
-          <div id="mat-list-wrap" style="flex:1;overflow:hidden;display:flex;flex-direction:column;min-height:0"></div>
         </div>
-        <!-- panels live inside app-root so they clip correctly -->
+
+        <div class="app-scroll" id="app-scroll">
+          <div class="col">
+            <div class="mat-list" id="mat-list"></div>
+          </div>
+        </div>
+
+        <!-- ORDER REVIEW PANEL -->
         <div class="panel" id="review-panel">
           <div class="panel-header">
             <button class="back-btn" onclick="Worker.closePanel('review-panel')">
@@ -110,190 +122,238 @@ const Worker = {
             <div class="panel-title">Order Confirmation</div>
             <div class="panel-spacer"></div>
           </div>
-          <div class="order-items" id="review-items"></div>
-          <div id="review-summary"></div>
+          <div class="panel-scroll">
+            <div class="panel-col" id="review-contents"></div>
+          </div>
           <div class="action-bar">
-            <button class="btn btn-orange" onclick="Worker.confirmSubmit()">
-              <i class="ti ti-send"></i> Submit to manager
-            </button>
-            <button class="btn btn-danger" onclick="Worker.clearOrder()">
-              <i class="ti ti-x"></i> Clear order
-            </button>
+            <div class="action-bar-inner">
+              <button class="btn btn-orange" onclick="Worker.confirmSubmit()">
+                <i class="ti ti-send"></i> Submit to manager
+              </button>
+              <button class="btn btn-danger" onclick="Worker.clearOrder()">
+                <i class="ti ti-x"></i> Clear order
+              </button>
+            </div>
           </div>
         </div>
+
       </div>
       <div id="overlay-wrap"></div>`;
+
     this.renderTabs();
     this.renderList();
     this.updateBadge();
   },
 
-  // ── TABS ──
+  // ── TABS — built dynamically from CSV data ──
   renderTabs() {
     const wrap = document.getElementById('tabs-wrap');
     if (!wrap) return;
     const cats = Data.categories(this.materials);
-    const catHtml = `<div class="tabs">
-      <button class="tab ${!this.activeCategory?'active':''}" onclick="Worker.setCategory(null)">All</button>
-      ${cats.map(c=>`<button class="tab ${this.activeCategory===c?'active':''}" onclick="Worker.setCategory('${esc(c)}')">${esc(c)}</button>`).join('')}
+
+    // Category row
+    const catRow = `<div class="tabs-bar">
+      <div class="tabs-inner">
+        <button class="tab ${!this.activeCat ? 'active' : ''}" onclick="Worker.setCat(null)">All</button>
+        ${cats.map(c => `
+          <button class="tab ${this.activeCat === c ? 'active' : ''}"
+            onclick="Worker.setCat(${JSON.stringify(c)})">${esc(c)}</button>`).join('')}
+      </div>
     </div>`;
-    let subHtml = '';
-    if (this.activeCategory) {
-      const subs = Data.subcategories(this.materials, this.activeCategory);
-      subHtml = `<div class="tabs sub">
-        <button class="tab ${!this.activeSubcategory?'active':''}" onclick="Worker.setSubcategory(null)">All</button>
-        ${subs.map(s=>`<button class="tab ${this.activeSubcategory===s?'active':''}" onclick="Worker.setSubcategory('${esc(s)}')">${esc(s)}</button>`).join('')}
+
+    // Subcategory row — only shown when a category is selected
+    let subRow = '';
+    if (this.activeCat) {
+      const subs = Data.subcategories(this.materials, this.activeCat);
+      subRow = `<div class="tabs-bar sub-bar">
+        <div class="tabs-inner">
+          <button class="tab ${!this.activeSub ? 'active' : ''}" onclick="Worker.setSub(null)">All</button>
+          ${subs.map(s => `
+            <button class="tab ${this.activeSub === s ? 'active' : ''}"
+              onclick="Worker.setSub(${JSON.stringify(s)})">${esc(s)}</button>`).join('')}
+        </div>
       </div>`;
     }
-    wrap.innerHTML = catHtml + subHtml;
+    wrap.innerHTML = catRow + subRow;
   },
 
-  setCategory(cat) { this.activeCategory=cat; this.activeSubcategory=null; this.renderTabs(); this.renderList(); },
-  setSubcategory(sub) { this.activeSubcategory=sub; this.renderTabs(); this.renderList(); },
+  setCat(cat) {
+    this.activeCat = cat;
+    this.activeSub = null;
+    this.renderTabs();
+    this.renderList();
+    // Scroll list back to top on category change
+    const scroll = document.getElementById('app-scroll');
+    if (scroll) scroll.scrollTop = 0;
+  },
+
+  setSub(sub) {
+    this.activeSub = sub;
+    this.renderTabs();
+    this.renderList();
+    const scroll = document.getElementById('app-scroll');
+    if (scroll) scroll.scrollTop = 0;
+  },
 
   // ── MATERIAL LIST ──
   renderList() {
-    const q = (document.getElementById('search')?.value||'').toLowerCase();
-    const wrap = document.getElementById('mat-list-wrap');
-    if (!wrap) return;
-    let filtered = this.materials;
-    if (this.activeCategory)    filtered = filtered.filter(m=>m.category===this.activeCategory);
-    if (this.activeSubcategory) filtered = filtered.filter(m=>m.subcategory===this.activeSubcategory);
-    if (q) filtered = filtered.filter(m=>m.description.toLowerCase().includes(q)||m.partCode.toLowerCase().includes(q));
+    const q        = document.getElementById('search')?.value || '';
+    const filtered = Data.filter(this.materials, this.activeCat, this.activeSub, q);
+    const list     = document.getElementById('mat-list');
+    if (!list) return;
+
     if (!filtered.length) {
-      wrap.innerHTML=`<div class="mat-list"><div class="empty-state"><i class="ti ti-package-off"></i><p>No materials found.</p></div></div>`;
+      list.innerHTML = `<div class="empty-state">
+        <i class="ti ti-package-off"></i>
+        <p>No materials found.</p>
+      </div>`;
       return;
     }
-    wrap.innerHTML=`<div class="mat-list">${filtered.map(m=>this.matCardHtml(m)).join('')}</div>`;
+    list.innerHTML = filtered.map(m => this._matCard(m)).join('');
   },
 
-  matCardHtml(m) {
-    const qty = Order.get(m.id);
+  _matCard(m) {
+    const qty     = Order.get(m.id);
     const inOrder = qty > 0;
-    const ci = CAT_ICONS[m.category]||CAT_ICONS.default;
-    return `<div class="mat-card ${inOrder?'in-order':''}">
+    const ci      = CAT_ICONS[m.category] || CAT_ICONS.default;
+    return `<div class="mat-card ${inOrder ? 'in-order' : ''}">
       <div class="mat-icon" style="background:${ci.bg}">
         <i class="ti ${ci.icon}" style="color:${ci.color}"></i>
       </div>
       <div class="mat-info">
         <div class="mat-name">${esc(m.description)}</div>
         <div class="mat-partcode">${esc(m.partCode)}</div>
-        <div class="mat-unit">${esc(m.qtyType||'')}</div>
+        <div class="mat-unit">${esc(m.qtyType || '')}</div>
       </div>
       <div class="mat-controls">
         <button class="qty-btn" onclick="Worker.adj(${m.id},-1)">−</button>
         <input class="qty-input" type="number" min="0" step="1" value="${qty}"
           onchange="Worker.setQty(${m.id},this.value)">
         <button class="qty-btn" onclick="Worker.adj(${m.id},1)">+</button>
-        <button class="add-btn ${inOrder?'in-order':''}" onclick="Worker.quickAdd(${m.id})">
-          <i class="ti ${inOrder?'ti-check':'ti-plus'}"></i>
+        <button class="add-btn ${inOrder ? 'in-order' : ''}" onclick="Worker.quickAdd(${m.id})">
+          <i class="ti ${inOrder ? 'ti-check' : 'ti-plus'}"></i>
         </button>
       </div>
     </div>`;
   },
 
   // ── ORDER ACTIONS ──
-  adj(id,d)    { Order.adjust(id,d); this.updateBadge(); this.renderList(); if(this.panelOpen('review-panel')) this.renderReviewContents(); },
-  setQty(id,v) { Order.set(id,parseInt(v)||0); this.updateBadge(); this.renderList(); if(this.panelOpen('review-panel')) this.renderReviewContents(); },
-  quickAdd(id) { if(!Order.get(id)) Order.set(id,1); this.updateBadge(); this.renderList(); },
-  revAdj(id,d) { Order.adjust(id,d); this.updateBadge(); this.renderReviewContents(); },
-  revSet(id,v) { Order.set(id,parseInt(v)||0); this.updateBadge(); this.renderReviewContents(); },
-  removeItem(id){ Order.remove(id); this.updateBadge(); this.renderReviewContents(); },
-  clearOrder()  { if(!confirm('Clear all items?')) return; Order.clear(); this.updateBadge(); this.renderReviewContents(); },
+  adj(id, d)      { Order.adjust(id, d);          this._afterChange(); },
+  setQty(id, v)   { Order.set(id, parseInt(v)||0); this._afterChange(); },
+  quickAdd(id)    { if (!Order.get(id)) Order.set(id, 1); this._afterChange(); },
+  revAdj(id, d)   { Order.adjust(id, d);          this.updateBadge(); this.renderReview(); },
+  revSet(id, v)   { Order.set(id, parseInt(v)||0); this.updateBadge(); this.renderReview(); },
+  removeItem(id)  { Order.remove(id);              this.updateBadge(); this.renderReview(); },
+  clearOrder()    { if (!confirm('Clear all items?')) return; Order.clear(); this.updateBadge(); this.renderReview(); },
+
+  _afterChange() {
+    this.updateBadge();
+    this.renderList();
+    if (this._panelOpen('review-panel')) this.renderReview();
+  },
 
   updateBadge() {
     const b = document.getElementById('order-badge');
     if (!b) return;
     const n = Order.count();
-    b.textContent = n; b.style.display = n>0?'flex':'none';
+    b.textContent = n;
+    b.style.display = n > 0 ? 'flex' : 'none';
   },
 
-  // ── PANEL MANAGEMENT ──
-  // All panels are pre-rendered in the DOM; we just toggle .open
-  panelOpen(id) { return document.getElementById(id)?.classList.contains('open'); },
-
-  openPanel(id) { document.getElementById(id)?.classList.add('open'); },
-
+  // ── PANELS ──
+  _panelOpen(id) { return !!document.getElementById(id)?.classList.contains('open'); },
+  openPanel(id)  { document.getElementById(id)?.classList.add('open'); },
   closePanel(id) { document.getElementById(id)?.classList.remove('open'); },
 
   openReview() {
-    this.renderReviewContents();
+    this.renderReview();
     this.openPanel('review-panel');
   },
 
-  renderReviewContents() {
+  renderReview() {
+    const wrap = document.getElementById('review-contents');
+    if (!wrap) return;
     const items = Order.items(this.materials);
-    const itemsEl = document.getElementById('review-items');
-    const summaryEl = document.getElementById('review-summary');
-    if (!itemsEl) return;
+
     if (!items.length) {
-      itemsEl.innerHTML = `<div class="empty-state"><i class="ti ti-clipboard"></i><p>No items on this order yet.</p></div>`;
-      if (summaryEl) summaryEl.innerHTML = '';
+      wrap.innerHTML = `<div class="empty-state">
+        <i class="ti ti-clipboard"></i><p>No items on this order yet.</p>
+      </div>`;
       return;
     }
-    itemsEl.innerHTML = items.map(i=>`
+
+    const itemsHtml = items.map(i => `
       <div class="order-item">
         <div class="order-item-row">
           <div>
             <div class="order-item-name">${esc(i.description)}</div>
             <div class="order-item-code">${esc(i.partCode)}</div>
-            <div class="order-item-unit">${esc(i.qtyType||'')}</div>
+            <div class="order-item-unit">${esc(i.qtyType || '')}</div>
           </div>
           <div class="order-item-qty">× ${i.qty}</div>
         </div>
         <div class="order-item-foot">
           <button class="qty-btn" onclick="Worker.revAdj(${i.id},-1)">−</button>
-          <input class="qty-input" type="number" min="1" step="1" value="${i.qty}" onchange="Worker.revSet(${i.id},this.value)">
+          <input class="qty-input" type="number" min="1" step="1" value="${i.qty}"
+            onchange="Worker.revSet(${i.id},this.value)">
           <button class="qty-btn" onclick="Worker.revAdj(${i.id},1)">+</button>
-          <button class="remove-btn" onclick="Worker.removeItem(${i.id})"><i class="ti ti-x"></i> Remove</button>
+          <button class="remove-btn" onclick="Worker.removeItem(${i.id})">
+            <i class="ti ti-x"></i> Remove
+          </button>
         </div>
       </div>`).join('');
-    const total = items.reduce((s,i)=>s+i.qty,0);
-    if (summaryEl) summaryEl.innerHTML = `
-      <div class="order-summary">
+
+    const total = items.reduce((s, i) => s + i.qty, 0);
+    const summaryHtml = `
+      <div class="order-summary-card">
         <div class="order-summary-row total">
           <span>Total items</span>
-          <span>${total} across ${items.length} line${items.length!==1?'s':''}</span>
+          <span>${total} across ${items.length} line${items.length !== 1 ? 's' : ''}</span>
         </div>
       </div>`;
+
+    wrap.innerHTML = itemsHtml + summaryHtml;
   },
 
   // ── SUBMIT ──
   confirmSubmit() {
     if (Order.isEmpty()) { alert('No items on this order.'); return; }
     const items = Order.items(this.materials);
-    const lines = items.map(i=>`${i.partCode}  ×${i.qty}  ${i.description}`).join('\n');
+    const lines = items.map(i => `${i.partCode}  ×${i.qty}  ${i.description}`).join('\n');
     document.getElementById('overlay-wrap').innerHTML = `
       <div class="overlay" id="submit-confirm">
         <div class="sheet">
           <div class="sheet-handle"></div>
           <h3>Submit order to manager?</h3>
-          <pre style="font-size:12px;font-family:var(--mono);background:var(--bg);padding:10px;border-radius:var(--radius);margin-bottom:12px;white-space:pre-wrap;line-height:1.6">${esc(lines)}</pre>
+          <pre style="font-size:12px;font-family:var(--mono);background:var(--bg);padding:10px;
+            border-radius:var(--radius);margin-bottom:12px;white-space:pre-wrap;line-height:1.6">${esc(lines)}</pre>
           <p>The production manager will review and forward to purchasing.</p>
           <div class="sheet-btns">
-            <button class="btn btn-orange" onclick="Worker.doSubmit()"><i class="ti ti-send"></i> Confirm and submit</button>
+            <button class="btn btn-orange" onclick="Worker.doSubmit()">
+              <i class="ti ti-send"></i> Confirm and submit
+            </button>
             <button class="btn btn-outline" onclick="Worker.closeOverlay()">Cancel</button>
           </div>
         </div>
       </div>`;
-    requestAnimationFrame(()=>document.getElementById('submit-confirm')?.classList.add('show'));
+    requestAnimationFrame(() => document.getElementById('submit-confirm')?.classList.add('show'));
   },
 
   closeOverlay() {
     const el = document.querySelector('.overlay');
     el?.classList.remove('show');
-    setTimeout(()=>{ document.getElementById('overlay-wrap').innerHTML=''; }, 300);
+    setTimeout(() => { document.getElementById('overlay-wrap').innerHTML = ''; }, 300);
   },
 
   async doSubmit() {
     this.closeOverlay();
-    const items = Order.items(this.materials).map(i=>({
-      id:i.id, partCode:i.partCode, description:i.description,
-      category:i.category, subcategory:i.subcategory,
-      qtyType:i.qtyType||'', qty:i.qty,
+    const items = Order.items(this.materials).map(i => ({
+      id: i.id, partCode: i.partCode, description: i.description,
+      category: i.category, subcategory: i.subcategory,
+      qtyType: i.qtyType || '', qty: i.qty,
     }));
     try {
-      await DB.submitOrder({ ref:this.orderRef, items });
+      await DB.submitOrder({ ref: this.orderRef, items });
       document.getElementById('overlay-wrap').innerHTML = `
         <div class="success-overlay">
           <div class="success-card">
@@ -303,11 +363,15 @@ const Worker = {
             <button class="btn btn-primary" onclick="Worker.newOrder()">Start new order</button>
           </div>
         </div>`;
-    } catch(e) { alert('Failed to submit. Check your internet connection.\n\n'+e.message); }
+    } catch (e) {
+      alert('Failed to submit. Check your internet connection.\n\n' + e.message);
+    }
   },
 
   newOrder() {
-    Order.clear(); this.orderRef = genRef(); this.updateBadge();
+    Order.clear();
+    this.orderRef = genRef();
+    this.updateBadge();
     document.getElementById('overlay-wrap').innerHTML = '';
     this.closePanel('review-panel');
     const ref = document.getElementById('order-ref');
@@ -316,9 +380,9 @@ const Worker = {
   },
 };
 
-document.addEventListener('DOMContentLoaded', ()=>Worker.init());
+document.addEventListener('DOMContentLoaded', () => Worker.init());
 if ('serviceWorker' in navigator) {
-  window.addEventListener('load', ()=>navigator.serviceWorker.register('./sw.js').catch(()=>{}));
+  window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch(() => {}));
 }
 </script>
 </body>

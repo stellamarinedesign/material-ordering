@@ -3,45 +3,50 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root {
-  --bg:           #f5f4f0;
-  --bg2:          #eceae4;
-  --surface:      #ffffff;
-  --border:       #d4d2c8;
-  --border2:      #b8b6ac;
-  --text:         #1a1a18;
-  --text2:        #5a5a54;
-  --text3:        #8a8a82;
-  --accent:       #1a1a18;
-  --accent-text:  #f5f4f0;
-  --blue:         #2563eb;
-  --blue-bg:      #eff6ff;
-  --blue-text:    #1d4ed8;
-  --green:        #16a34a;
-  --green-bg:     #f0fdf4;
-  --green-text:   #15803d;
-  --red:          #dc2626;
-  --red-bg:       #fef2f2;
-  --red-text:     #b91c1c;
-  --amber-bg:     #fffbeb;
-  --amber-text:   #b45309;
-  --orange:       #ea580c;
-  --radius:       6px;
-  --radius-lg:    10px;
-  --font:         'IBM Plex Sans', sans-serif;
-  --mono:         'IBM Plex Mono', monospace;
-  /* Panel max-width — panels slide within this container */
-  --app-max:      860px;
-  --mgr-max:      1140px;
+  --bg:          #f5f4f0;
+  --bg2:         #eceae4;
+  --surface:     #ffffff;
+  --border:      #d4d2c8;
+  --border2:     #b8b6ac;
+  --text:        #1a1a18;
+  --text2:       #5a5a54;
+  --text3:       #8a8a82;
+  --accent:      #1a1a18;
+  --accent-text: #f5f4f0;
+  --blue:        #2563eb;
+  --blue-bg:     #eff6ff;
+  --blue-text:   #1d4ed8;
+  --green:       #16a34a;
+  --green-bg:    #f0fdf4;
+  --green-text:  #15803d;
+  --red:         #dc2626;
+  --red-bg:      #fef2f2;
+  --red-text:    #b91c1c;
+  --amber-bg:    #fffbeb;
+  --amber-text:  #b45309;
+  --orange:      #ea580c;
+  --radius:      6px;
+  --radius-lg:   10px;
+  --font:        'IBM Plex Sans', sans-serif;
+  --mono:        'IBM Plex Mono', monospace;
 }
 
-html, body {
+html {
+  height: 100%;
+  /* Prevent iOS double-tap zoom globally */
+  touch-action: manipulation;
+}
+
+body {
   height: 100%;
   background: var(--bg);
   font-family: var(--font);
   color: var(--text);
   -webkit-font-smoothing: antialiased;
-  touch-action: manipulation;   /* stops double-tap zoom on iOS */
+  touch-action: manipulation;
+  overscroll-behavior: none;
 }
+
 input, button, textarea, select {
   font-family: var(--font);
   touch-action: manipulation;
@@ -49,54 +54,51 @@ input, button, textarea, select {
 button { cursor: pointer; }
 .sr-only { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0,0,0,0); }
 
-/* ═══════════════════════════════════════════
-   APP SHELL  —  both pages share this wrapper
-   ═══════════════════════════════════════════ */
-
-/*
-  .app-root wraps everything for one page.
-  It is centered, has a max-width, and provides
-  the stacking context that panels are relative to.
-*/
+/* ═══════════════════════════════════════════════════
+   APP ROOT
+   Full viewport, no artificial max-width cap.
+   Content inside uses a centred column.
+   ═══════════════════════════════════════════════════ */
 .app-root {
-  position: relative;        /* panels are absolute inside this */
+  /* Fills the whole viewport */
+  position: fixed;
+  inset: 0;
   display: flex;
   flex-direction: column;
-  width: 100%;
-  max-width: var(--app-max);
-  min-height: 100dvh;
-  margin: 0 auto;
   background: var(--surface);
-  /* subtle card shadow on wide screens */
-  box-shadow: 0 0 0 1px var(--border), 0 4px 24px rgba(0,0,0,0.06);
-  overflow: hidden;           /* clips panels that are translated off-screen */
+  overflow: hidden;   /* panels clip inside here */
 }
 
-.app-root.manager-root {
-  max-width: var(--mgr-max);
+/* A centred content column used by header, tabs, search, lists */
+.col {
+  width: 100%;
+  max-width: 900px;
+  margin-left: auto;
+  margin-right: auto;
+  padding-left: 16px;
+  padding-right: 16px;
 }
 
-/* The main scrollable content area */
-.app-body {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  overflow: hidden;
-}
+/* Manager gets a wider column */
+.manager-root .col { max-width: 1400px; }
 
-/* ═══════════════════════════════════════════
+/* ═══════════════════════════════════════════════════
    HEADER
-   ═══════════════════════════════════════════ */
+   ═══════════════════════════════════════════════════ */
 .header {
   background: var(--accent);
   color: var(--accent-text);
-  padding: 14px 18px 12px;
-  display: flex; align-items: center; justify-content: space-between;
   flex-shrink: 0;
   z-index: 2;
 }
-.header.manager { background: #1e3a5f; }
+.header-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 13px 0 11px;
+}
+.header.manager-hdr { background: #1e3a5f; }
+
 .header-left { display: flex; flex-direction: column; gap: 2px; }
 .header-title { font-size: 16px; font-weight: 600; letter-spacing: 0.02em; }
 .header-ref   { font-size: 11px; font-family: var(--mono); color: #9ca3af; letter-spacing: 0.05em; }
@@ -109,8 +111,7 @@ button { cursor: pointer; }
   width: 36px; height: 36px;
   display: flex; align-items: center; justify-content: center;
   color: #f5f4f0; font-size: 18px;
-  position: relative;
-  flex-shrink: 0;
+  position: relative; flex-shrink: 0;
 }
 .icon-btn:active { background: rgba(255,255,255,0.24); }
 
@@ -130,18 +131,28 @@ button { cursor: pointer; }
   color: rgba(255,255,255,0.85); letter-spacing: 0.04em;
 }
 
-/* ═══════════════════════════════════════════
+/* ═══════════════════════════════════════════════════
    TABS
-   ═══════════════════════════════════════════ */
-.tabs {
-  display: flex; overflow-x: auto;
+   ═══════════════════════════════════════════════════ */
+.tabs-bar {
   background: var(--surface);
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
-  scrollbar-width: none;
 }
-.tabs::-webkit-scrollbar { display: none; }
-.tabs.sub { background: var(--bg); }
+.tabs-bar.sub-bar { background: var(--bg); }
+
+.tabs-inner {
+  display: flex;
+  overflow-x: auto;
+  scrollbar-width: none;
+  /* inherit col padding */
+  padding-left: 0;
+}
+.tabs-inner::-webkit-scrollbar { display: none; }
+
+/* Left-align to the col boundary */
+.tabs-inner { max-width: 900px; margin: 0 auto; padding: 0 4px; }
+.manager-root .tabs-inner { max-width: 1400px; }
 
 .tab {
   padding: 10px 14px;
@@ -152,18 +163,19 @@ button { cursor: pointer; }
 }
 .tab.active { color: var(--text); border-bottom-color: var(--text); }
 
-/* ═══════════════════════════════════════════
+/* ═══════════════════════════════════════════════════
    SEARCH
-   ═══════════════════════════════════════════ */
+   ═══════════════════════════════════════════════════ */
 .search-bar {
-  padding: 10px 12px;
   background: var(--surface);
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
+  padding: 10px 0;
 }
 .search-wrap { position: relative; }
 .search-wrap i {
-  position: absolute; left: 10px; top: 50%; transform: translateY(-50%);
+  position: absolute; left: 10px; top: 50%;
+  transform: translateY(-50%);
   color: var(--text3); font-size: 15px; pointer-events: none;
 }
 .search-wrap input {
@@ -173,16 +185,25 @@ button { cursor: pointer; }
 }
 .search-wrap input:focus { border-color: var(--border2); }
 
-/* ═══════════════════════════════════════════
-   MATERIAL LIST  (worker)
-   ═══════════════════════════════════════════ */
-.mat-list {
-  flex: 1; overflow-y: auto;
-  padding: 10px 12px;
-  display: flex; flex-direction: column; gap: 6px;
+/* ═══════════════════════════════════════════════════
+   SCROLLABLE BODY
+   Takes remaining height, scrolls content
+   ═══════════════════════════════════════════════════ */
+.app-scroll {
+  flex: 1;
+  overflow-y: auto;
   -webkit-overflow-scrolling: touch;
+  overscroll-behavior-y: contain;
 }
 
+.mat-list {
+  display: flex; flex-direction: column; gap: 6px;
+  padding: 10px 0 20px;
+}
+
+/* ═══════════════════════════════════════════════════
+   MATERIAL CARDS
+   ═══════════════════════════════════════════════════ */
 .mat-card {
   background: var(--surface); border: 1px solid var(--border);
   border-radius: var(--radius-lg); padding: 11px 12px;
@@ -208,7 +229,7 @@ button { cursor: pointer; }
   font-size: 17px; color: var(--text);
   display: flex; align-items: center; justify-content: center;
 }
-.qty-btn:first-child { border-radius: var(--radius) 0 0 var(--radius); }
+.qty-btn:first-child  { border-radius: var(--radius) 0 0 var(--radius); }
 .qty-btn:last-of-type { border-radius: 0 var(--radius) var(--radius) 0; border-left: none; }
 .qty-btn:active { background: var(--bg2); }
 
@@ -231,18 +252,17 @@ button { cursor: pointer; }
 }
 .add-btn.in-order { background: var(--blue-bg); border-color: var(--blue); color: var(--blue-text); }
 
-/* ═══════════════════════════════════════════
+/* ═══════════════════════════════════════════════════
    PANELS
-   Panels live INSIDE .app-root (position:relative).
-   They slide in from the right within the app column.
-   ═══════════════════════════════════════════ */
+   position:absolute inside app-root.
+   Width matches app-root exactly → no bleed.
+   ═══════════════════════════════════════════════════ */
 .panel {
   position: absolute;
-  top: 0; right: 0; bottom: 0;
-  width: 100%;                 /* fills the app-root width exactly */
+  inset: 0;                  /* exactly fills app-root */
   background: var(--bg);
   transform: translateX(100%);
-  transition: transform 0.28s cubic-bezier(0.32,0.72,0,1);
+  transition: transform 0.3s cubic-bezier(0.32,0.72,0,1);
   z-index: 20;
   display: flex; flex-direction: column;
   overflow: hidden;
@@ -251,7 +271,7 @@ button { cursor: pointer; }
 
 .panel-header {
   background: var(--surface); border-bottom: 1px solid var(--border);
-  padding: 13px 14px;
+  padding: 13px 16px;
   display: flex; align-items: center; justify-content: space-between;
   flex-shrink: 0;
 }
@@ -259,53 +279,62 @@ button { cursor: pointer; }
   display: flex; align-items: center; gap: 4px;
   background: none; border: none; font-size: 14px; color: var(--blue-text); padding: 4px 0;
 }
-.panel-title   { font-size: 15px; font-weight: 600; color: var(--text); }
-.panel-spacer  { width: 70px; }
+.panel-title  { font-size: 15px; font-weight: 600; color: var(--text); }
+.panel-spacer { width: 70px; }
 
-/* ═══════════════════════════════════════════
-   ORDER REVIEW (worker panel)
-   ═══════════════════════════════════════════ */
-.order-items {
-  flex: 1; overflow-y: auto; padding: 10px 12px;
-  display: flex; flex-direction: column; gap: 6px;
+/* Panel content scrolls inside a centred col */
+.panel-scroll {
+  flex: 1; overflow-y: auto;
   -webkit-overflow-scrolling: touch;
 }
+.panel-col {
+  max-width: 900px; margin: 0 auto;
+  padding: 10px 16px 20px;
+  display: flex; flex-direction: column; gap: 6px;
+}
+
+/* ═══════════════════════════════════════════════════
+   ORDER REVIEW PANEL
+   ═══════════════════════════════════════════════════ */
 .order-item {
   background: var(--surface); border: 1px solid var(--border);
   border-radius: var(--radius-lg); padding: 12px 12px 10px;
 }
 .order-item-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
-.order-item-name     { font-size: 13px; font-weight: 500; color: var(--text); line-height: 1.3; }
-.order-item-code     { font-size: 11px; color: var(--text3); margin-top: 2px; font-family: var(--mono); }
-.order-item-unit     { font-size: 11px; color: var(--text3); margin-top: 1px; }
-.order-item-qty      { font-size: 14px; font-weight: 600; color: var(--text); font-family: var(--mono); white-space: nowrap; }
-.order-item-foot     { display: flex; align-items: center; margin-top: 10px; gap: 8px; }
+.order-item-name { font-size: 13px; font-weight: 500; color: var(--text); line-height: 1.3; }
+.order-item-code { font-size: 11px; color: var(--text3); margin-top: 2px; font-family: var(--mono); }
+.order-item-unit { font-size: 11px; color: var(--text3); margin-top: 1px; }
+.order-item-qty  { font-size: 14px; font-weight: 600; color: var(--text); font-family: var(--mono); white-space: nowrap; }
+.order-item-foot { display: flex; align-items: center; margin-top: 10px; gap: 8px; }
 .remove-btn {
   margin-left: auto; background: none; border: none;
   font-size: 12px; color: var(--red-text);
   display: flex; align-items: center; gap: 3px;
 }
 
-.order-summary {
-  background: var(--surface); border-top: 1px solid var(--border);
-  padding: 12px 14px; flex-shrink: 0;
+.order-summary-card {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius-lg); padding: 12px;
 }
-.order-summary-row { display: flex; justify-content: space-between; font-size: 13px; color: var(--text2); padding: 3px 0; }
+.order-summary-row { display: flex; justify-content: space-between; font-size: 13px; color: var(--text2); padding: 2px 0; }
 .order-summary-row.total {
-  font-size: 15px; font-weight: 600; color: var(--text);
+  font-size: 14px; font-weight: 600; color: var(--text);
   border-top: 1px solid var(--border); margin-top: 6px; padding-top: 8px;
   font-family: var(--mono);
 }
 
-/* ═══════════════════════════════════════════
-   ACTION BAR
-   ═══════════════════════════════════════════ */
+/* ═══════════════════════════════════════════════════
+   ACTION BAR  (sticks to bottom of panels)
+   ═══════════════════════════════════════════════════ */
 .action-bar {
   background: var(--surface); border-top: 1px solid var(--border);
-  padding: 12px 14px;
-  display: flex; flex-direction: column; gap: 8px;
-  flex-shrink: 0;
+  padding: 12px 16px; flex-shrink: 0;
 }
+.action-bar-inner {
+  max-width: 900px; margin: 0 auto;
+  display: flex; flex-direction: column; gap: 8px;
+}
+
 .btn {
   width: 100%; padding: 12px 16px; border-radius: var(--radius-lg);
   font-size: 14px; font-weight: 500;
@@ -322,41 +351,37 @@ button { cursor: pointer; }
 .btn-orange  { background: var(--orange); color: #fff; }
 .btn-blue    { background: var(--blue); color: #fff; }
 
-/* ═══════════════════════════════════════════
+/* ═══════════════════════════════════════════════════
    EMAIL PANEL
-   ═══════════════════════════════════════════ */
+   ═══════════════════════════════════════════════════ */
+.email-fields { background: var(--surface); border-bottom: 1px solid var(--border); flex-shrink: 0; }
 .email-field {
   display: flex; align-items: center; gap: 10px;
-  padding: 10px 14px; border-bottom: 1px solid var(--border);
-  background: var(--surface); flex-shrink: 0;
+  padding: 10px 16px; border-bottom: 1px solid var(--border);
 }
+.email-field:last-child { border-bottom: none; }
 .email-field label {
   font-size: 12px; font-weight: 500; color: var(--text3);
   width: 54px; flex-shrink: 0;
   text-transform: uppercase; letter-spacing: 0.06em; font-family: var(--mono);
 }
 .email-field input { flex: 1; border: none; background: transparent; font-size: 14px; color: var(--text); outline: none; }
-.email-body-wrap { flex: 1; overflow-y: auto; padding: 14px; background: var(--surface); }
+.email-body-wrap { flex: 1; overflow-y: auto; padding: 14px 16px; background: var(--surface); }
 .email-body-wrap textarea {
-  width: 100%; height: 100%; min-height: 300px;
+  width: 100%; height: 100%; min-height: 200px;
   border: none; background: transparent;
   font-size: 13px; line-height: 1.7; color: var(--text);
   resize: none; outline: none; font-family: var(--mono);
 }
 
-/* ═══════════════════════════════════════════
-   SETTINGS PANEL
-   ═══════════════════════════════════════════ */
-.settings-scroll {
-  flex: 1; overflow-y: auto; padding: 12px;
-  display: flex; flex-direction: column; gap: 20px;
-  -webkit-overflow-scrolling: touch;
-}
-.settings-section { display: flex; flex-direction: column; gap: 0; }
+/* ═══════════════════════════════════════════════════
+   SETTINGS
+   ═══════════════════════════════════════════════════ */
+.settings-section { display: flex; flex-direction: column; gap: 8px; }
 .settings-label {
   font-size: 11px; font-weight: 500; text-transform: uppercase;
   letter-spacing: 0.08em; color: var(--text3); font-family: var(--mono);
-  padding: 0 4px 8px;
+  padding: 0 2px;
 }
 .settings-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; }
 .settings-row { padding: 12px 14px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 10px; }
@@ -364,26 +389,24 @@ button { cursor: pointer; }
 .settings-row-label { font-size: 14px; color: var(--text); flex: 1; }
 .settings-row-sub   { font-size: 12px; color: var(--text3); margin-top: 2px; }
 .settings-row input[type=text],
-.settings-row input[type=email],
-.settings-row input[type=number] {
+.settings-row input[type=email] {
   flex: 1; border: 1px solid var(--border); background: var(--bg);
   border-radius: var(--radius); padding: 7px 10px;
-  font-size: 13px; color: var(--text); outline: none;
+  font-size: 13px; color: var(--text); outline: none; min-width: 0;
 }
 .settings-row input:focus { border-color: var(--border2); }
-.btn-sm { padding: 5px 12px; border-radius: var(--radius); font-size: 12px; font-weight: 500; border: 1px solid var(--border); background: var(--bg); color: var(--text); }
+.btn-sm { padding: 5px 12px; border-radius: var(--radius); font-size: 12px; font-weight: 500; border: 1px solid var(--border); background: var(--bg); color: var(--text); white-space: nowrap; }
 .btn-sm-danger { background: var(--red-bg); border-color: var(--red-text); color: var(--red-text); }
 .btn-sm-save   { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
 
-/* ═══════════════════════════════════════════
+/* ═══════════════════════════════════════════════════
    OVERLAY + BOTTOM SHEET
-   These DO use fixed positioning (cover full viewport)
-   but only appear above the app-root content.
-   ═══════════════════════════════════════════ */
+   Fixed over full viewport (intentional — covers everything)
+   ═══════════════════════════════════════════════════ */
 .overlay {
   position: fixed; inset: 0;
-  background: rgba(0,0,0,0.45);
-  z-index: 200;
+  background: rgba(0,0,0,0.5);
+  z-index: 100;
   display: flex; align-items: flex-end; justify-content: center;
   opacity: 0; transition: opacity 0.2s; pointer-events: none;
 }
@@ -391,10 +414,14 @@ button { cursor: pointer; }
 
 .sheet {
   background: var(--surface); border-radius: 16px 16px 0 0;
-  padding: 20px 16px 36px;
-  width: 100%; max-width: var(--app-max);
+  padding: 20px 20px 40px;
+  width: 100%; max-width: 600px;
   transform: translateY(100%);
-  transition: transform 0.28s cubic-bezier(0.32,0.72,0,1);
+  transition: transform 0.3s cubic-bezier(0.32,0.72,0,1);
+  /* Never taller than 80vh so it doesn't cover everything in landscape */
+  max-height: 80dvh;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
 }
 .overlay.show .sheet { transform: translateY(0); }
 .sheet-handle { width: 36px; height: 4px; background: var(--border2); border-radius: 2px; margin: 0 auto 16px; }
@@ -402,12 +429,12 @@ button { cursor: pointer; }
 .sheet p  { font-size: 13px; color: var(--text2); line-height: 1.5; margin-bottom: 18px; }
 .sheet-btns { display: flex; flex-direction: column; gap: 8px; }
 
-/* ═══════════════════════════════════════════
+/* ═══════════════════════════════════════════════════
    SUCCESS CARD
-   ═══════════════════════════════════════════ */
+   ═══════════════════════════════════════════════════ */
 .success-overlay {
-  position: fixed; inset: 0; background: rgba(0,0,0,0.5);
-  z-index: 200;
+  position: fixed; inset: 0; background: rgba(0,0,0,0.55);
+  z-index: 100;
   display: flex; align-items: center; justify-content: center; padding: 20px;
 }
 .success-card {
@@ -420,40 +447,36 @@ button { cursor: pointer; }
   margin: 0 auto 14px; font-size: 26px;
 }
 .success-icon.green { background: var(--green-bg); color: var(--green); }
-.success-icon.blue  { background: var(--blue-bg);  color: var(--blue);  }
+.success-icon.blue  { background: var(--blue-bg);  color: var(--blue); }
 .success-card h3 { font-size: 17px; font-weight: 600; margin-bottom: 8px; }
 .success-card p  { font-size: 13px; color: var(--text2); line-height: 1.5; margin-bottom: 20px; }
 
-/* ═══════════════════════════════════════════
+/* ═══════════════════════════════════════════════════
    MANAGER — TWO-COLUMN LAYOUT
-   ═══════════════════════════════════════════ */
-.manager-columns {
-  flex: 1; display: flex; min-height: 0; overflow: hidden;
+   ═══════════════════════════════════════════════════ */
+.manager-body {
+  flex: 1; display: flex; overflow: hidden;
 }
 
 .manager-sidebar {
   width: 220px; flex-shrink: 0;
   border-right: 1px solid var(--border);
   background: var(--surface);
-  display: flex; flex-direction: column;
-  overflow-y: auto;
+  overflow-y: auto; display: flex; flex-direction: column;
 }
-
 .manager-main {
-  flex: 1; min-width: 0;
-  display: flex; flex-direction: column;
+  flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden;
   background: var(--bg);
-  overflow: hidden;
 }
 
-/* On narrow screens hide sidebar, show it as a top tab strip instead */
+/* Mobile: hide sidebar, show tab strip */
 @media (max-width: 640px) {
   .manager-sidebar { display: none; }
-  .mobile-manager-tabs { display: flex !important; }
+  .mobile-tabs     { display: flex !important; }
 }
-.mobile-manager-tabs {
+.mobile-tabs {
   display: none;
-  background: var(--surface); border-bottom: 1px solid var(--border);
+  background: var(--surface); border-bottom: 1px solid var(--border); flex-shrink: 0;
 }
 
 .sidebar-section { padding: 10px; border-bottom: 1px solid var(--border); }
@@ -468,7 +491,7 @@ button { cursor: pointer; }
   background: none; font-size: 13px; color: var(--text2);
   display: flex; align-items: center; gap: 8px;
 }
-.sidebar-btn:hover { background: var(--bg); }
+.sidebar-btn:hover  { background: var(--bg); }
 .sidebar-btn.active { background: var(--blue-bg); color: var(--blue-text); font-weight: 500; }
 .sidebar-count {
   margin-left: auto; font-size: 10px; font-family: var(--mono);
@@ -477,9 +500,9 @@ button { cursor: pointer; }
 }
 .sidebar-count.zero { display: none; }
 
-/* ═══════════════════════════════════════════
+/* ═══════════════════════════════════════════════════
    ORDER QUEUE  (manager)
-   ═══════════════════════════════════════════ */
+   ═══════════════════════════════════════════════════ */
 .order-queue {
   flex: 1; overflow-y: auto; padding: 12px;
   display: flex; flex-direction: column; gap: 8px;
@@ -493,9 +516,12 @@ button { cursor: pointer; }
 .order-card-header:hover { background: var(--bg); }
 .order-ref-text { font-size: 13px; font-weight: 600; color: var(--text); font-family: var(--mono); }
 .order-meta     { font-size: 11px; color: var(--text3); margin-top: 2px; }
-.status-pill { font-size: 11px; font-weight: 500; padding: 3px 10px; border-radius: 20px; font-family: var(--mono); white-space: nowrap; }
+.status-pill {
+  font-size: 11px; font-weight: 500; padding: 3px 10px;
+  border-radius: 20px; font-family: var(--mono); white-space: nowrap;
+}
 .status-pending { background: var(--amber-bg); color: var(--amber-text); }
-.status-sent    { background: var(--blue-bg);  color: var(--blue-text);  }
+.status-sent    { background: var(--blue-bg);  color: var(--blue-text); }
 .order-card-body { padding: 12px 14px; display: none; border-top: 1px solid var(--border); }
 .order-card-body.open { display: block; }
 .order-line {
@@ -503,13 +529,13 @@ button { cursor: pointer; }
   font-size: 13px; padding: 7px 0; border-bottom: 1px solid var(--border); gap: 10px;
 }
 .order-line:last-child { border-bottom: none; }
-.order-line-info { flex: 1; }
-.order-line-name { color: var(--text); font-weight: 500; }
-.order-line-code { font-size: 11px; color: var(--text3); font-family: var(--mono); margin-top: 2px; }
+.order-line-info  { flex: 1; }
+.order-line-name  { color: var(--text); font-weight: 500; }
+.order-line-code  { font-size: 11px; color: var(--text3); font-family: var(--mono); margin-top: 2px; }
 .order-line-right { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
 .order-line-qty   { font-family: var(--mono); color: var(--text2); font-size: 13px; }
 .qty-edit {
-  width: 50px; border: 1px solid var(--border); background: var(--bg);
+  width: 52px; border: 1px solid var(--border); background: var(--bg);
   border-radius: var(--radius); padding: 3px 6px;
   font-size: 13px; font-family: var(--mono); text-align: center; outline: none;
 }
@@ -529,25 +555,26 @@ button { cursor: pointer; }
 }
 @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
 
-/* ═══════════════════════════════════════════
+/* ═══════════════════════════════════════════════════
    EMPTY STATES
-   ═══════════════════════════════════════════ */
+   ═══════════════════════════════════════════════════ */
 .empty-queue,
 .empty-state {
   display: flex; flex-direction: column; align-items: center;
-  justify-content: center; flex: 1; gap: 12px;
-  padding: 60px 20px; color: var(--text3); text-align: center;
+  justify-content: center; flex: 1; min-height: 200px;
+  gap: 12px; padding: 40px 20px; color: var(--text3); text-align: center;
 }
 .empty-queue i, .empty-state i { font-size: 40px; color: var(--border2); }
 .empty-queue p, .empty-state p { font-size: 14px; line-height: 1.5; }
 
-/* ═══════════════════════════════════════════
+/* ═══════════════════════════════════════════════════
    SETUP SCREEN
-   ═══════════════════════════════════════════ */
+   ═══════════════════════════════════════════════════ */
 .setup-screen {
+  position: fixed; inset: 0;
   display: flex; flex-direction: column; align-items: center;
-  justify-content: center; min-height: 100dvh;
-  padding: 24px; gap: 16px; background: var(--bg);
+  justify-content: center; padding: 24px; background: var(--bg);
+  overflow-y: auto; -webkit-overflow-scrolling: touch;
 }
 .setup-card {
   background: var(--surface); border: 1px solid var(--border);

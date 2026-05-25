@@ -9,16 +9,16 @@
 </head>
 <body>
 <div id="root"></div>
-
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
 <script src="js/shared.js"></script>
 <script src="js/firebase-sync.js"></script>
 <script>
 const Manager = {
-  orders: [],
-  activeView: 'pending',
+  orders:      [],
+  activeView:  'pending',
   unsubscribe: null,
+  _emailOrderId: null,
 
   async init() {
     const cfg = FirebaseConfig.get();
@@ -36,10 +36,14 @@ const Manager = {
         <div class="setup-card">
           <h2><i class="ti ti-flame" style="color:#ea580c;vertical-align:-2px"></i> Connect to Firebase</h2>
           <p>Enter your Firebase project config to receive orders from the iPad.</p>
-          ${err?`<div style="background:var(--red-bg);color:var(--red-text);border-radius:var(--radius);padding:10px 12px;font-size:13px;margin-bottom:12px">${esc(err)}</div>`:''}
-          <div class="setup-field"><label>API Key</label><input id="cfg-apiKey" autocomplete="off" placeholder="AIzaSy..."></div>
-          <div class="setup-field"><label>Project ID</label><input id="cfg-projectId" autocomplete="off" placeholder="my-project-id"></div>
-          <div class="setup-field"><label>App ID</label><input id="cfg-appId" autocomplete="off" placeholder="1:123456:web:abc..."></div>
+          ${err ? `<div style="background:var(--red-bg);color:var(--red-text);border-radius:var(--radius);
+            padding:10px 12px;font-size:13px;margin-bottom:12px">${esc(err)}</div>` : ''}
+          <div class="setup-field"><label>API Key</label>
+            <input id="cfg-apiKey" autocomplete="off" placeholder="AIzaSy..."></div>
+          <div class="setup-field"><label>Project ID</label>
+            <input id="cfg-projectId" autocomplete="off" placeholder="my-project-id"></div>
+          <div class="setup-field"><label>App ID</label>
+            <input id="cfg-appId" autocomplete="off" placeholder="1:123456:web:abc..."></div>
           <button class="btn btn-primary" style="margin-top:8px" onclick="Manager.saveConfig()">
             <i class="ti ti-plug"></i> Connect
           </button>
@@ -54,11 +58,11 @@ const Manager = {
     const apiKey    = document.getElementById('cfg-apiKey').value.trim();
     const projectId = document.getElementById('cfg-projectId').value.trim();
     const appId     = document.getElementById('cfg-appId').value.trim();
-    if (!apiKey||!projectId||!appId) { alert('Please fill in all fields.'); return; }
+    if (!apiKey || !projectId || !appId) { alert('Please fill in all fields.'); return; }
     const cfg = { apiKey, projectId, appId,
-      authDomain:`${projectId}.firebaseapp.com`,
-      storageBucket:`${projectId}.appspot.com`,
-      messagingSenderId:'000000000000' };
+      authDomain: `${projectId}.firebaseapp.com`,
+      storageBucket: `${projectId}.appspot.com`,
+      messagingSenderId: '000000000000' };
     const ok = await DB.init(cfg);
     if (!ok) { this.showSetup('Connection failed. Double-check your config values.'); return; }
     FirebaseConfig.save(cfg);
@@ -66,34 +70,41 @@ const Manager = {
     this.startListening();
   },
 
-  // ── SHELL ──
+  // ── SHELL (rendered once) ──
   renderShell() {
     document.getElementById('root').innerHTML = `
       <div class="app-root manager-root" id="app-root">
-        <div class="header manager">
-          <div class="header-left">
-            <div class="header-title">Material Orders — Manager</div>
-            <div class="header-ref"><span class="live-dot"></span>Live</div>
-          </div>
-          <div class="header-actions">
-            <span class="role-pill">Production Manager</span>
-            <button class="icon-btn" onclick="Manager.openPanel('settings-panel')" title="Settings">
-              <i class="ti ti-settings"></i>
-            </button>
+
+        <div class="header manager-hdr">
+          <div class="col">
+            <div class="header-inner">
+              <div class="header-left">
+                <div class="header-title">Material Orders — Manager</div>
+                <div class="header-ref"><span class="live-dot"></span>Live</div>
+              </div>
+              <div class="header-actions">
+                <span class="role-pill">Production Manager</span>
+                <button class="icon-btn" onclick="Manager.openPanel('settings-panel')" title="Settings">
+                  <i class="ti ti-settings"></i>
+                </button>
+              </div>
+            </div>
           </div>
         </div>
 
-        <!-- Mobile tab strip (hidden on desktop) -->
-        <div class="mobile-manager-tabs tabs">
+        <!-- Mobile tab strip -->
+        <div class="mobile-tabs">
           <button class="tab active" id="mtab-pending" onclick="Manager.setView('pending')">
-            Pending <span class="sidebar-count zero" id="mob-pending-count" style="margin-left:4px">0</span>
+            Pending
+            <span class="sidebar-count zero" id="mob-pending-count" style="margin-left:4px">0</span>
           </button>
           <button class="tab" id="mtab-sent" onclick="Manager.setView('sent')">Sent</button>
           <button class="tab" id="mtab-all"  onclick="Manager.setView('all')">All</button>
         </div>
 
-        <div class="manager-columns">
-          <!-- Sidebar (desktop only) -->
+        <div class="manager-body">
+
+          <!-- Sidebar (desktop) -->
           <div class="manager-sidebar">
             <div class="sidebar-section">
               <div class="sidebar-title">Orders</div>
@@ -128,9 +139,10 @@ const Manager = {
               </div>
             </div>
           </div>
+
         </div>
 
-        <!-- Panels — inside app-root so they clip and size correctly -->
+        <!-- EMAIL PANEL -->
         <div class="panel" id="email-panel">
           <div class="panel-header">
             <button class="back-btn" onclick="Manager.closePanel('email-panel')">
@@ -138,16 +150,21 @@ const Manager = {
             </button>
             <div class="panel-title">Order Email</div>
             <button class="btn-green btn" style="width:auto;padding:7px 14px;font-size:13px"
-              id="send-btn" onclick="Manager.sendEmail()">
+              onclick="Manager.sendEmail()">
               <i class="ti ti-send"></i> Send
             </button>
           </div>
-          <div class="email-field"><label>To</label><input type="email" id="email-to"></div>
-          <div class="email-field"><label>CC</label><input type="email" id="email-cc"></div>
-          <div class="email-field"><label>Subject</label><input type="text" id="email-subject"></div>
-          <div class="email-body-wrap"><textarea id="email-body"></textarea></div>
+          <div class="email-fields">
+            <div class="email-field"><label>To</label><input type="email" id="email-to"></div>
+            <div class="email-field"><label>CC</label><input type="email" id="email-cc"></div>
+            <div class="email-field"><label>Subject</label><input type="text" id="email-subject"></div>
+          </div>
+          <div class="email-body-wrap">
+            <textarea id="email-body"></textarea>
+          </div>
         </div>
 
+        <!-- SETTINGS PANEL -->
         <div class="panel" id="settings-panel">
           <div class="panel-header">
             <button class="back-btn" onclick="Manager.closePanel('settings-panel')">
@@ -156,36 +173,47 @@ const Manager = {
             <div class="panel-title">Settings</div>
             <button class="btn-sm btn-sm-save" onclick="Manager.saveSettings()">Save</button>
           </div>
-          <div class="settings-scroll" id="settings-content"></div>
+          <div class="panel-scroll">
+            <div class="panel-col" style="gap:20px" id="settings-body"></div>
+          </div>
         </div>
+
       </div>
       <div id="overlay-wrap"></div>`;
 
-    this.populateSettings();
+    this._populateSettings();
   },
 
-  populateSettings() {
-    const s = Settings.get();
-    const el = document.getElementById('settings-content');
+  // ── PANELS ──
+  openPanel(id)  { document.getElementById(id)?.classList.add('open'); },
+  closePanel(id) { document.getElementById(id)?.classList.remove('open'); },
+
+  // ── SETTINGS ──
+  _populateSettings() {
+    const s  = Settings.get();
+    const el = document.getElementById('settings-body');
     if (!el) return;
     el.innerHTML = `
       <div class="settings-section">
         <div class="settings-label">Email</div>
         <div class="settings-card">
           <div class="settings-row">
-            <div><div class="settings-row-label">To (purchasing)</div><div class="settings-row-sub">Auto-filled in To: field</div></div>
+            <div><div class="settings-row-label">To (purchasing)</div>
+              <div class="settings-row-sub">Auto-filled in To: field</div></div>
             <input type="email" id="s-supplier" value="${esc(s.supplierEmail)}">
           </div>
           <div class="settings-row">
-            <div><div class="settings-row-label">CC email</div><div class="settings-row-sub">Always CC'd on orders</div></div>
+            <div><div class="settings-row-label">CC email</div>
+              <div class="settings-row-sub">Always CC'd on orders</div></div>
             <input type="email" id="s-cc" value="${esc(s.ccEmail)}">
           </div>
           <div class="settings-row">
-            <div><div class="settings-row-label">Sender name</div></div>
+            <div class="settings-row-label">Sender name</div>
             <input type="text" id="s-sender" value="${esc(s.senderName)}">
           </div>
           <div class="settings-row">
-            <div><div class="settings-row-label">Closing note</div><div class="settings-row-sub">Added at end of email body</div></div>
+            <div><div class="settings-row-label">Closing note</div>
+              <div class="settings-row-sub">Added at end of email</div></div>
             <input type="text" id="s-delivery" value="${esc(s.deliveryNote)}">
           </div>
         </div>
@@ -195,9 +223,19 @@ const Manager = {
         <div class="settings-card">
           <div class="settings-row" style="flex-direction:column;align-items:flex-start;gap:6px">
             <div class="settings-row-sub">
-              To update materials, edit <strong>materials.csv</strong> in your GitHub repository and push.
-              Both devices reload from the CSV automatically on next open.
+              To update materials, edit <strong>materials.csv</strong> in the GitHub repository and commit.
+              Both devices reload automatically on next open — categories and subcategories update to match.
             </div>
+          </div>
+        </div>
+      </div>
+      <div class="settings-section">
+        <div class="settings-label">Connection</div>
+        <div class="settings-card">
+          <div class="settings-row">
+            <div><div class="settings-row-label">Firebase config</div>
+              <div class="settings-row-sub">Clear to re-enter connection details</div></div>
+            <button class="btn-sm btn-sm-danger" onclick="Manager.clearFirebase()">Clear</button>
           </div>
         </div>
       </div>`;
@@ -211,24 +249,21 @@ const Manager = {
       deliveryNote:  document.getElementById('s-delivery')?.value.trim(),
     });
     const btn = document.querySelector('[onclick="Manager.saveSettings()"]');
-    if (btn) { btn.textContent='✓ Saved'; setTimeout(()=>btn.textContent='Save',1500); }
+    if (btn) { btn.textContent = '✓ Saved'; setTimeout(() => btn.textContent = 'Save', 1500); }
   },
 
   clearFirebase() {
     if (!confirm('Clear Firebase config? You will need to re-enter it.')) return;
-    FirebaseConfig.clear(); location.reload();
+    FirebaseConfig.clear();
+    location.reload();
   },
-
-  // ── PANEL MANAGEMENT ──
-  openPanel(id) { document.getElementById(id)?.classList.add('open'); },
-  closePanel(id) { document.getElementById(id)?.classList.remove('open'); },
 
   // ── LIVE ORDERS ──
   setView(v) {
     this.activeView = v;
-    ['pending','sent','all'].forEach(x=>{
-      document.getElementById(`sb-${x}`)?.classList.toggle('active', x===v);
-      document.getElementById(`mtab-${x}`)?.classList.toggle('active', x===v);
+    ['pending','sent','all'].forEach(x => {
+      document.getElementById(`sb-${x}`)?.classList.toggle('active', x === v);
+      document.getElementById(`mtab-${x}`)?.classList.toggle('active', x === v);
     });
     this.renderQueue();
   },
@@ -237,10 +272,10 @@ const Manager = {
     if (this.unsubscribe) this.unsubscribe();
     this.unsubscribe = DB.listenOrders(orders => {
       this.orders = orders;
-      const n = orders.filter(o=>o.status==='pending').length;
-      ['pending-count','mob-pending-count'].forEach(id=>{
-        const el=document.getElementById(id);
-        if(el){ el.textContent=n; el.classList.toggle('zero',n===0); }
+      const n = orders.filter(o => o.status === 'pending').length;
+      ['pending-count','mob-pending-count'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) { el.textContent = n; el.classList.toggle('zero', n === 0); }
       });
       this.renderQueue();
     });
@@ -250,26 +285,31 @@ const Manager = {
     const wrap = document.getElementById('order-queue');
     if (!wrap) return;
     let list = this.orders;
-    if (this.activeView==='pending') list=list.filter(o=>o.status==='pending');
-    if (this.activeView==='sent')    list=list.filter(o=>o.status==='sent');
+    if (this.activeView === 'pending') list = list.filter(o => o.status === 'pending');
+    if (this.activeView === 'sent')    list = list.filter(o => o.status === 'sent');
+
     if (!list.length) {
-      const msgs={pending:['ti-clock','No pending orders yet.'],sent:['ti-mail-check','No sent orders yet.'],all:['ti-inbox','No orders yet.']};
-      const [ic,msg]=msgs[this.activeView]||msgs.all;
-      wrap.innerHTML=`<div class="empty-queue"><i class="ti ${ic}"></i><p>${msg}</p></div>`;
+      const msgs = {
+        pending: ['ti-clock',      'No pending orders yet.<br>Waiting for the worker to submit.'],
+        sent:    ['ti-mail-check', 'No sent orders yet.'],
+        all:     ['ti-inbox',      'No orders yet.'],
+      };
+      const [ic, msg] = msgs[this.activeView] || msgs.all;
+      wrap.innerHTML = `<div class="empty-queue"><i class="ti ${ic}"></i><p>${msg}</p></div>`;
       return;
     }
-    wrap.innerHTML = list.map(o=>this.orderCardHtml(o)).join('');
+    wrap.innerHTML = list.map(o => this._orderCard(o)).join('');
   },
 
-  orderCardHtml(o) {
-    const ts = o.submittedAt?.toDate ? fmtTime(o.submittedAt.toDate()) : fmtTime(o.submittedAt);
-    const isPending = o.status==='pending';
-    const isSent    = o.status==='sent';
-    const items = o.items||[];
-    const statusLabel = isPending?'Pending review':isSent?'Sent':o.status;
-    const statusClass = isPending?'status-pending':'status-sent';
+  _orderCard(o) {
+    const ts        = o.submittedAt?.toDate ? fmtTime(o.submittedAt.toDate()) : fmtTime(o.submittedAt);
+    const isPending = o.status === 'pending';
+    const isSent    = o.status === 'sent';
+    const items     = o.items || [];
+    const statusLabel = isPending ? 'Pending review' : isSent ? 'Sent' : o.status;
+    const statusClass = isPending ? 'status-pending' : 'status-sent';
 
-    const rows = items.map((item,idx)=>`
+    const rows = items.map((item, idx) => `
       <div class="order-line">
         <div class="order-line-info">
           <div class="order-line-name">${esc(item.description)}</div>
@@ -277,10 +317,11 @@ const Manager = {
         </div>
         <div class="order-line-right">
           ${isPending
-            ?`<input class="qty-edit" type="number" min="0" step="1" value="${item.qty}"
+            ? `<input class="qty-edit" type="number" min="0" step="1" value="${item.qty}"
                 onchange="Manager.editQty('${o._id}',${idx},this.value)">`
-            :`<span class="order-line-qty">× ${item.qty}</span>`}
-          <span style="font-size:11px;color:var(--text3);font-family:var(--mono)">${esc(item.qtyType||'')}</span>
+            : `<span class="order-line-qty">× ${item.qty}</span>`}
+          <span style="font-size:11px;color:var(--text3);font-family:var(--mono)">
+            ${esc(item.qtyType || '')}</span>
         </div>
       </div>`).join('');
 
@@ -300,8 +341,8 @@ const Manager = {
       <div class="order-card-header" onclick="Manager.toggleCard('${o._id}')">
         <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%">
           <div>
-            <div class="order-ref-text">${esc(o.ref||o._id)}</div>
-            <div class="order-meta">${ts} · ${items.length} line${items.length!==1?'s':''}</div>
+            <div class="order-ref-text">${esc(o.ref || o._id)}</div>
+            <div class="order-meta">${ts} · ${items.length} line${items.length !== 1 ? 's' : ''}</div>
           </div>
           <div style="display:flex;align-items:center;gap:8px">
             <span class="status-pill ${statusClass}">${statusLabel}</span>
@@ -310,7 +351,7 @@ const Manager = {
         </div>
       </div>
       <div class="order-card-body" id="body-${o._id}">
-        ${isPending?'<div class="edit-note">You can edit quantities before approving.</div>':''}
+        ${isPending ? '<div class="edit-note">You can edit quantities before approving.</div>' : ''}
         ${rows}
         <div class="order-card-actions">${actions}</div>
       </div>
@@ -323,32 +364,30 @@ const Manager = {
   },
 
   async editQty(orderId, idx, val) {
-    const order = this.orders.find(o=>o._id===orderId);
+    const order = this.orders.find(o => o._id === orderId);
     if (!order) return;
     const items = [...order.items];
-    items[idx] = {...items[idx], qty: Math.max(0,parseInt(val)||0)};
+    items[idx] = { ...items[idx], qty: Math.max(0, parseInt(val) || 0) };
     try { await DB.updateItems(orderId, items); }
-    catch(e) { alert('Update failed: '+e.message); }
+    catch (e) { alert('Update failed: ' + e.message); }
   },
 
   async deleteOrder(id) {
     if (!confirm('Delete this order?')) return;
     try { await DB.deleteOrder(id); }
-    catch(e) { alert('Delete failed: '+e.message); }
+    catch (e) { alert('Delete failed: ' + e.message); }
   },
 
   // ── EMAIL ──
-  _currentOrderId: null,
-
   prepareEmail(orderId) {
-    const order = this.orders.find(o=>o._id===orderId);
+    const order = this.orders.find(o => o._id === orderId);
     if (!order) return;
-    this._currentOrderId = orderId;
+    this._emailOrderId = orderId;
     const s = Settings.get();
     document.getElementById('email-to').value      = s.supplierEmail;
     document.getElementById('email-cc').value      = s.ccEmail;
-    document.getElementById('email-subject').value = `Material Order — ${order.ref||order._id}`;
-    document.getElementById('email-body').value    = buildEmailBody(order.ref||order._id, order.items||[]);
+    document.getElementById('email-subject').value = `Material Order — ${order.ref || order._id}`;
+    document.getElementById('email-body').value    = buildEmailBody(order.ref || order._id, order.items || []);
     this.openPanel('email-panel');
   },
 
@@ -358,8 +397,8 @@ const Manager = {
     const subject = document.getElementById('email-subject').value;
     const body    = document.getElementById('email-body').value;
     const mailto  = `mailto:${to}?cc=${encodeURIComponent(cc)}&subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-    if (this._currentOrderId) {
-      try { await DB.updateStatus(this._currentOrderId,'sent'); } catch {}
+    if (this._emailOrderId) {
+      try { await DB.updateStatus(this._emailOrderId, 'sent'); } catch {}
     }
     this.closePanel('email-panel');
     document.getElementById('overlay-wrap').innerHTML = `
@@ -368,14 +407,15 @@ const Manager = {
           <div class="success-icon blue"><i class="ti ti-mail-forward"></i></div>
           <h3>Opening mail client…</h3>
           <p>Order marked as sent. Outlook will open with the order pre-filled.</p>
-          <button class="btn btn-primary" onclick="document.getElementById('overlay-wrap').innerHTML=''">Done</button>
+          <button class="btn btn-primary"
+            onclick="document.getElementById('overlay-wrap').innerHTML=''">Done</button>
         </div>
       </div>`;
-    setTimeout(()=>{ window.location.href=mailto; }, 400);
+    setTimeout(() => { window.location.href = mailto; }, 400);
   },
 };
 
-document.addEventListener('DOMContentLoaded', ()=>Manager.init());
+document.addEventListener('DOMContentLoaded', () => Manager.init());
 </script>
 </body>
 </html>
