@@ -415,7 +415,8 @@ const Manager = {
   },
 };
 
-document.addEventListener('DOMContentLoaded', () => Manager.init());
+if ("serviceWorker" in navigator) navigator.serviceWorker.getRegistrations().then(rs => rs.forEach(r => r.unregister()));
+document.addEventListener("DOMContentLoaded", () => Manager.init());
 </script>
 </body>
 </html>

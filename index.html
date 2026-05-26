@@ -20,12 +20,18 @@
 <script src="js/firebase-sync.js"></script>
 <script>
 const Worker = {
-  activeCat: null,
-  activeSub: null,
-  orderRef:  genRef(),
-  materials: [],
+  activeCat:  null,
+  activeSub:  null,
+  orderRef:   genRef(),
+  materials:  [],
 
   async init() {
+    // Unregister any old service workers so caching is cleared
+    if ('serviceWorker' in navigator) {
+      const regs = await navigator.serviceWorker.getRegistrations();
+      for (const reg of regs) await reg.unregister();
+    }
+
     const cfg = FirebaseConfig.get();
     if (!cfg) { this.showSetup(); return; }
     const ok = await DB.init(cfg);
@@ -42,9 +48,12 @@ const Worker = {
           <h2><i class="ti ti-flame" style="color:#ea580c;vertical-align:-2px"></i> Connect to Firebase</h2>
           <p>Enter your Firebase project config once to start syncing orders.</p>
           ${err ? `<div style="background:var(--red-bg);color:var(--red-text);border-radius:var(--radius);padding:10px 12px;font-size:13px;margin-bottom:12px">${esc(err)}</div>` : ''}
-          <div class="setup-field"><label>API Key</label><input id="cfg-apiKey" autocomplete="off" placeholder="AIzaSy..."></div>
-          <div class="setup-field"><label>Project ID</label><input id="cfg-projectId" autocomplete="off" placeholder="my-project-id"></div>
-          <div class="setup-field"><label>App ID</label><input id="cfg-appId" autocomplete="off" placeholder="1:123456:web:abc..."></div>
+          <div class="setup-field"><label>API Key</label>
+            <input id="cfg-apiKey" autocomplete="off" placeholder="AIzaSy..."></div>
+          <div class="setup-field"><label>Project ID</label>
+            <input id="cfg-projectId" autocomplete="off" placeholder="my-project-id"></div>
+          <div class="setup-field"><label>App ID</label>
+            <input id="cfg-appId" autocomplete="off" placeholder="1:123456:web:abc..."></div>
           <button class="btn btn-primary" style="margin-top:8px" onclick="Worker.saveConfig()">
             <i class="ti ti-plug"></i> Connect
           </button>
@@ -72,7 +81,7 @@ const Worker = {
     this.renderApp();
   },
 
-  // ── APP SHELL (rendered once) ──
+  // ── APP SHELL ──
   renderApp() {
     document.getElementById('root').innerHTML = `
       <div class="app-root" id="app-root">
@@ -137,7 +146,27 @@ const Worker = {
           </div>
         </div>
 
+        <!-- SUCCESS SCREEN — inside app-root, shown by adding .open -->
+        <div class="panel" id="success-panel" style="background:var(--surface);z-index:30">
+          <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;
+            flex:1;padding:40px 24px;text-align:center">
+            <div class="success-icon green" style="margin-bottom:20px">
+              <i class="ti ti-circle-check"></i>
+            </div>
+            <h2 style="font-size:20px;font-weight:600;margin-bottom:10px">Order submitted!</h2>
+            <p style="font-size:14px;color:var(--text2);line-height:1.6;max-width:300px;margin-bottom:28px">
+              The production manager has been notified and will review your order.
+            </p>
+            <button class="btn btn-primary" style="max-width:280px"
+              onclick="Worker.newOrder()">
+              <i class="ti ti-plus"></i> Start new order
+            </button>
+          </div>
+        </div>
+
       </div>
+
+      <!-- Overlays (confirmation sheet lives here) -->
       <div id="overlay-wrap"></div>`;
 
     this.renderTabs();
@@ -145,13 +174,12 @@ const Worker = {
     this.updateBadge();
   },
 
-  // ── TABS — built dynamically from CSV data ──
+  // ── TABS ──
   renderTabs() {
     const wrap = document.getElementById('tabs-wrap');
     if (!wrap) return;
     const cats = Data.categories(this.materials);
 
-    // Category row
     const catRow = `<div class="tabs-bar">
       <div class="tabs-inner">
         <button class="tab ${!this.activeCat ? 'active' : ''}" onclick="Worker.setCat(null)">All</button>
@@ -161,7 +189,6 @@ const Worker = {
       </div>
     </div>`;
 
-    // Subcategory row — only shown when a category is selected
     let subRow = '';
     if (this.activeCat) {
       const subs = Data.subcategories(this.materials, this.activeCat);
@@ -178,21 +205,14 @@ const Worker = {
   },
 
   setCat(cat) {
-    this.activeCat = cat;
-    this.activeSub = null;
-    this.renderTabs();
-    this.renderList();
-    // Scroll list back to top on category change
-    const scroll = document.getElementById('app-scroll');
-    if (scroll) scroll.scrollTop = 0;
+    this.activeCat = cat; this.activeSub = null;
+    this.renderTabs(); this.renderList();
+    const s = document.getElementById('app-scroll'); if (s) s.scrollTop = 0;
   },
-
   setSub(sub) {
     this.activeSub = sub;
-    this.renderTabs();
-    this.renderList();
-    const scroll = document.getElementById('app-scroll');
-    if (scroll) scroll.scrollTop = 0;
+    this.renderTabs(); this.renderList();
+    const s = document.getElementById('app-scroll'); if (s) s.scrollTop = 0;
   },
 
   // ── MATERIAL LIST ──
@@ -201,12 +221,8 @@ const Worker = {
     const filtered = Data.filter(this.materials, this.activeCat, this.activeSub, q);
     const list     = document.getElementById('mat-list');
     if (!list) return;
-
     if (!filtered.length) {
-      list.innerHTML = `<div class="empty-state">
-        <i class="ti ti-package-off"></i>
-        <p>No materials found.</p>
-      </div>`;
+      list.innerHTML = `<div class="empty-state"><i class="ti ti-package-off"></i><p>No materials found.</p></div>`;
       return;
     }
     list.innerHTML = filtered.map(m => this._matCard(m)).join('');
@@ -238,50 +254,44 @@ const Worker = {
   },
 
   // ── ORDER ACTIONS ──
-  adj(id, d)      { Order.adjust(id, d);          this._afterChange(); },
-  setQty(id, v)   { Order.set(id, parseInt(v)||0); this._afterChange(); },
-  quickAdd(id)    { if (!Order.get(id)) Order.set(id, 1); this._afterChange(); },
-  revAdj(id, d)   { Order.adjust(id, d);          this.updateBadge(); this.renderReview(); },
-  revSet(id, v)   { Order.set(id, parseInt(v)||0); this.updateBadge(); this.renderReview(); },
-  removeItem(id)  { Order.remove(id);              this.updateBadge(); this.renderReview(); },
-  clearOrder()    { if (!confirm('Clear all items?')) return; Order.clear(); this.updateBadge(); this.renderReview(); },
+  adj(id, d)     { Order.adjust(id, d);           this._afterChange(); },
+  setQty(id, v)  { Order.set(id, parseInt(v)||0); this._afterChange(); },
+  quickAdd(id)   { if (!Order.get(id)) Order.set(id, 1); this._afterChange(); },
+  revAdj(id, d)  { Order.adjust(id, d);           this.updateBadge(); this.renderReview(); },
+  revSet(id, v)  { Order.set(id, parseInt(v)||0); this.updateBadge(); this.renderReview(); },
+  removeItem(id) { Order.remove(id);              this.updateBadge(); this.renderReview(); },
+  clearOrder()   {
+    if (!confirm('Clear all items?')) return;
+    Order.clear(); this.updateBadge(); this.renderReview();
+  },
 
   _afterChange() {
     this.updateBadge();
     this.renderList();
-    if (this._panelOpen('review-panel')) this.renderReview();
+    if (document.getElementById('review-panel')?.classList.contains('open')) this.renderReview();
   },
 
   updateBadge() {
     const b = document.getElementById('order-badge');
     if (!b) return;
     const n = Order.count();
-    b.textContent = n;
-    b.style.display = n > 0 ? 'flex' : 'none';
+    b.textContent = n; b.style.display = n > 0 ? 'flex' : 'none';
   },
 
   // ── PANELS ──
-  _panelOpen(id) { return !!document.getElementById(id)?.classList.contains('open'); },
   openPanel(id)  { document.getElementById(id)?.classList.add('open'); },
   closePanel(id) { document.getElementById(id)?.classList.remove('open'); },
 
-  openReview() {
-    this.renderReview();
-    this.openPanel('review-panel');
-  },
+  openReview() { this.renderReview(); this.openPanel('review-panel'); },
 
   renderReview() {
     const wrap = document.getElementById('review-contents');
     if (!wrap) return;
     const items = Order.items(this.materials);
-
     if (!items.length) {
-      wrap.innerHTML = `<div class="empty-state">
-        <i class="ti ti-clipboard"></i><p>No items on this order yet.</p>
-      </div>`;
+      wrap.innerHTML = `<div class="empty-state"><i class="ti ti-clipboard"></i><p>No items on this order yet.</p></div>`;
       return;
     }
-
     const itemsHtml = items.map(i => `
       <div class="order-item">
         <div class="order-item-row">
@@ -302,17 +312,14 @@ const Worker = {
           </button>
         </div>
       </div>`).join('');
-
     const total = items.reduce((s, i) => s + i.qty, 0);
-    const summaryHtml = `
+    wrap.innerHTML = itemsHtml + `
       <div class="order-summary-card">
         <div class="order-summary-row total">
           <span>Total items</span>
           <span>${total} across ${items.length} line${items.length !== 1 ? 's' : ''}</span>
         </div>
       </div>`;
-
-    wrap.innerHTML = itemsHtml + summaryHtml;
   },
 
   // ── SUBMIT ──
@@ -340,50 +347,59 @@ const Worker = {
   },
 
   closeOverlay() {
-    const el = document.querySelector('.overlay');
-    el?.classList.remove('show');
+    const el = document.getElementById('submit-confirm');
+    if (!el) return;
+    el.classList.remove('show');
     setTimeout(() => { document.getElementById('overlay-wrap').innerHTML = ''; }, 300);
   },
 
   async doSubmit() {
+    // 1. Close the confirmation sheet immediately
     this.closeOverlay();
+
     const items = Order.items(this.materials).map(i => ({
       id: i.id, partCode: i.partCode, description: i.description,
       category: i.category, subcategory: i.subcategory,
       qtyType: i.qtyType || '', qty: i.qty,
     }));
+
     try {
+      // 2. Submit to Firebase
       await DB.submitOrder({ ref: this.orderRef, items });
-      document.getElementById('overlay-wrap').innerHTML = `
-        <div class="success-overlay">
-          <div class="success-card">
-            <div class="success-icon green"><i class="ti ti-circle-check"></i></div>
-            <h3>Order submitted!</h3>
-            <p>The production manager has been notified and will review your order.</p>
-            <button class="btn btn-primary" onclick="Worker.newOrder()">Start new order</button>
-          </div>
-        </div>`;
+
+      // 3. Close the review panel
+      this.closePanel('review-panel');
+
+      // 4. Show the success screen (it's already in the DOM, just open it)
+      this.openPanel('success-panel');
+
     } catch (e) {
       alert('Failed to submit. Check your internet connection.\n\n' + e.message);
     }
   },
 
   newOrder() {
+    // Reset state
     Order.clear();
-    this.orderRef = genRef();
+    this.orderRef  = genRef();
+    this.activeCat = null;
+    this.activeSub = null;
+
+    // Close success screen
+    this.closePanel('success-panel');
+
+    // Reset UI
     this.updateBadge();
-    document.getElementById('overlay-wrap').innerHTML = '';
-    this.closePanel('review-panel');
     const ref = document.getElementById('order-ref');
     if (ref) ref.textContent = this.orderRef;
+    const search = document.getElementById('search');
+    if (search) search.value = '';
+    this.renderTabs();
     this.renderList();
   },
 };
 
 document.addEventListener('DOMContentLoaded', () => Worker.init());
-if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch(() => {}));
-}
 </script>
 </body>
 </html>

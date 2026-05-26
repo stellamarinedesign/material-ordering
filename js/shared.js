@@ -1,4 +1,4 @@
-// shared.js
+// shared.js — v6
 
 const DEFAULT_MATERIALS = [
   { id:1,  category:'Stainless Steel', subcategory:'Box Section', partCode:'SL0300', description:'100 x 50 x 3mm x 6m Box Section 316 S/S', qtyType:'Length' },
@@ -21,7 +21,6 @@ const DEFAULT_SETTINGS = {
   deliveryNote:  'Please confirm availability and expected delivery date.',
 };
 
-// Icon mapping — falls back to 'default' for any unknown category
 const CAT_ICONS = {
   'Stainless Steel': { icon:'ti-atom-2',  bg:'#dbeafe', color:'#1d4ed8' },
   'Aluminium':       { icon:'ti-diamond', bg:'#f0fdf4', color:'#15803d' },
@@ -43,30 +42,38 @@ const Settings = {
   },
 };
 
-// ── DATA — loads from materials.csv, falls back to cache then defaults ──
+// ── DATA ──
 const Data = {
   _list: null,
 
   async load(csvUrl) {
     try {
-      const res = await fetch(csvUrl + '?v=' + Date.now());
+      const res = await fetch(csvUrl + '?nocache=' + Date.now());
       if (!res.ok) throw new Error('HTTP ' + res.status);
       const text = await res.text();
       const parsed = this._parseCsv(text);
       if (parsed.length) {
         this._list = parsed;
         try { localStorage.setItem('mo_mat_cache', JSON.stringify(parsed)); } catch {}
+        console.log('Loaded', parsed.length, 'materials from CSV');
         return parsed;
       }
+      throw new Error('CSV parsed to 0 rows');
     } catch (e) {
-      console.warn('CSV load failed, using cache/defaults:', e.message);
+      console.warn('CSV load failed:', e.message);
     }
-    // fallback to localStorage cache
+    // fallback: localStorage cache
     try {
       const c = localStorage.getItem('mo_mat_cache');
-      if (c) { this._list = JSON.parse(c); return this._list; }
+      if (c) {
+        const cached = JSON.parse(c);
+        console.log('Using cached materials:', cached.length);
+        this._list = cached;
+        return cached;
+      }
     } catch {}
-    // final fallback
+    // final fallback: built-in defaults
+    console.log('Using built-in default materials');
     this._list = [...DEFAULT_MATERIALS];
     return this._list;
   },
@@ -74,35 +81,83 @@ const Data = {
   get() { return this._list || [...DEFAULT_MATERIALS]; },
 
   _parseCsv(text) {
-    const lines = text.trim().split(/\r?\n/).filter(l => l.trim());
-    if (lines.length < 2) return [];
-    const headers = lines[0].split(',').map(h => h.trim().toLowerCase().replace(/\s+/g, '_'));
-    const col = (row, name) => {
-      const i = headers.indexOf(name);
-      if (i < 0) return '';
-      return (row[i] || '').replace(/^"|"$/g, '').trim();
+    // Split into lines, drop empty lines
+    const lines = text.trim().split(/\r?\n/).filter(l => l.trim() !== '');
+    if (lines.length < 2) {
+      console.warn('CSV has fewer than 2 lines');
+      return [];
+    }
+
+    // Parse header row — normalise to lowercase, trim whitespace
+    const rawHeaders = this._splitCsvLine(lines[0]);
+    const headers = rawHeaders.map(h => h.toLowerCase().trim());
+
+    console.log('CSV headers found:', headers);
+
+    // Find column indices by flexible matching
+    const findCol = (...candidates) => {
+      for (const c of candidates) {
+        const i = headers.indexOf(c);
+        if (i >= 0) return i;
+      }
+      return -1;
     };
-    return lines.slice(1).map((line, i) => {
-      // simple CSV split (handles basic quoted fields)
-      const row = line.match(/("(?:[^"]|"")*"|[^,]*)/g)
-                      .map(v => v.replace(/^"|"$/g, '').replace(/""/g, '"').trim());
-      const partCode    = col(row, 'part_code');
-      const description = col(row, 'description');
-      if (!partCode && !description) return null;
-      return {
-        id:          i + 1,
+
+    const iCode = findCol('part code', 'part_code', 'partcode', 'code');
+    const iDesc = findCol('description', 'desc');
+    const iCat  = findCol('category', 'cat');
+    const iSub  = findCol('subcategory', 'sub category', 'sub_category', 'subcategory', 'sub');
+    const iQty  = findCol('quantity type', 'quantity_type', 'quantitytype', 'qty type', 'qty_type', 'unit');
+
+    console.log(`Column indices — code:${iCode} desc:${iDesc} cat:${iCat} sub:${iSub} qty:${iQty}`);
+
+    if (iCode < 0 || iDesc < 0) {
+      console.error('CSV missing required columns Part Code or Description. Headers:', headers);
+      return [];
+    }
+
+    const results = [];
+    for (let i = 1; i < lines.length; i++) {
+      const cols = this._splitCsvLine(lines[i]);
+      const get  = idx => (idx >= 0 && idx < cols.length) ? cols[idx].trim() : '';
+
+      const partCode    = get(iCode);
+      const description = get(iDesc);
+      if (!partCode && !description) continue;   // skip blank rows
+
+      results.push({
+        id:          i,
         partCode:    partCode,
         description: description,
-        category:    col(row, 'category')      || 'Uncategorised',
-        subcategory: col(row, 'subcategory')   || 'General',
-        qtyType:     col(row, 'quantity_type') || 'Each',
-      };
-    }).filter(Boolean);
+        category:    get(iCat)  || 'Uncategorised',
+        subcategory: get(iSub)  || 'General',
+        qtyType:     get(iQty)  || 'Each',
+      });
+    }
+
+    console.log('Parsed', results.length, 'materials from CSV');
+    return results;
   },
 
-  // ── Dynamic category/subcategory helpers (derived from live list) ──
+  // Splits one CSV line respecting quoted fields
+  _splitCsvLine(line) {
+    const cols = [];
+    let cur = '', inQuote = false;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (ch === '"') {
+        if (inQuote && line[i+1] === '"') { cur += '"'; i++; }
+        else inQuote = !inQuote;
+      } else if (ch === ',' && !inQuote) {
+        cols.push(cur); cur = '';
+      } else {
+        cur += ch;
+      }
+    }
+    cols.push(cur);
+    return cols;
+  },
 
-  // Returns array of unique category strings in the order they appear
   categories(list) {
     const seen = new Set();
     return (list || this.get())
@@ -110,7 +165,6 @@ const Data = {
       .filter(c => { if (seen.has(c)) return false; seen.add(c); return true; });
   },
 
-  // Returns subcategories for a given category
   subcategories(list, category) {
     const seen = new Set();
     return (list || this.get())
@@ -119,7 +173,6 @@ const Data = {
       .filter(s => { if (seen.has(s)) return false; seen.add(s); return true; });
   },
 
-  // Filter list by category and optional subcategory
   filter(list, category, subcategory, query) {
     let out = list || this.get();
     if (category)    out = out.filter(m => m.category === category);
