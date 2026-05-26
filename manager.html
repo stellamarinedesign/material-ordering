@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="mobile-web-app-capable" content="yes">
   <title>Material Orders — Manager</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.19.0/dist/tabler-icons.min.css">
   <link rel="stylesheet" href="css/style.css">
@@ -14,10 +15,15 @@
 <script src="js/shared.js"></script>
 <script src="js/firebase-sync.js"></script>
 <script>
+// Clear any stale service workers
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.getRegistrations().then(rs => rs.forEach(r => r.unregister()));
+}
+
 const Manager = {
-  orders:      [],
-  activeView:  'pending',
-  unsubscribe: null,
+  orders:        [],
+  activeView:    'pending',
+  unsubscribe:   null,
   _emailOrderId: null,
 
   async init() {
@@ -29,7 +35,6 @@ const Manager = {
     this.startListening();
   },
 
-  // ── SETUP ──
   showSetup(err) {
     document.getElementById('root').innerHTML = `
       <div class="setup-screen">
@@ -70,29 +75,26 @@ const Manager = {
     this.startListening();
   },
 
-  // ── SHELL (rendered once) ──
   renderShell() {
     document.getElementById('root').innerHTML = `
       <div class="app-root manager-root" id="app-root">
 
         <div class="header manager-hdr">
-          <div class="col">
-            <div class="header-inner">
-              <div class="header-left">
-                <div class="header-title">Material Orders — Manager</div>
-                <div class="header-ref"><span class="live-dot"></span>Live</div>
-              </div>
-              <div class="header-actions">
-                <span class="role-pill">Production Manager</span>
-                <button class="icon-btn" onclick="Manager.openPanel('settings-panel')" title="Settings">
-                  <i class="ti ti-settings"></i>
-                </button>
-              </div>
+          <div class="col"><div class="header-inner">
+            <div class="header-left">
+              <div class="header-title">Material Orders — Manager</div>
+              <div class="header-ref"><span class="live-dot"></span>Live</div>
             </div>
-          </div>
+            <div class="header-actions">
+              <span class="role-pill">Production Manager</span>
+              <button class="icon-btn" onclick="Manager.openPanel('settings-panel')" title="Settings">
+                <i class="ti ti-settings"></i>
+              </button>
+            </div>
+          </div></div>
         </div>
 
-        <!-- Mobile tab strip -->
+        <!-- Mobile tabs -->
         <div class="mobile-tabs">
           <button class="tab active" id="mtab-pending" onclick="Manager.setView('pending')">
             Pending
@@ -103,8 +105,6 @@ const Manager = {
         </div>
 
         <div class="manager-body">
-
-          <!-- Sidebar (desktop) -->
           <div class="manager-sidebar">
             <div class="sidebar-section">
               <div class="sidebar-title">Orders</div>
@@ -130,7 +130,6 @@ const Manager = {
             </div>
           </div>
 
-          <!-- Main content -->
           <div class="manager-main">
             <div class="order-queue" id="order-queue">
               <div class="empty-queue">
@@ -139,7 +138,6 @@ const Manager = {
               </div>
             </div>
           </div>
-
         </div>
 
         <!-- EMAIL PANEL -->
@@ -159,9 +157,7 @@ const Manager = {
             <div class="email-field"><label>CC</label><input type="email" id="email-cc"></div>
             <div class="email-field"><label>Subject</label><input type="text" id="email-subject"></div>
           </div>
-          <div class="email-body-wrap">
-            <textarea id="email-body"></textarea>
-          </div>
+          <div class="email-body-wrap"><textarea id="email-body"></textarea></div>
         </div>
 
         <!-- SETTINGS PANEL -->
@@ -184,11 +180,9 @@ const Manager = {
     this._populateSettings();
   },
 
-  // ── PANELS ──
   openPanel(id)  { document.getElementById(id)?.classList.add('open'); },
   closePanel(id) { document.getElementById(id)?.classList.remove('open'); },
 
-  // ── SETTINGS ──
   _populateSettings() {
     const s  = Settings.get();
     const el = document.getElementById('settings-body');
@@ -208,10 +202,6 @@ const Manager = {
             <input type="email" id="s-cc" value="${esc(s.ccEmail)}">
           </div>
           <div class="settings-row">
-            <div class="settings-row-label">Sender name</div>
-            <input type="text" id="s-sender" value="${esc(s.senderName)}">
-          </div>
-          <div class="settings-row">
             <div><div class="settings-row-label">Closing note</div>
               <div class="settings-row-sub">Added at end of email</div></div>
             <input type="text" id="s-delivery" value="${esc(s.deliveryNote)}">
@@ -223,8 +213,8 @@ const Manager = {
         <div class="settings-card">
           <div class="settings-row" style="flex-direction:column;align-items:flex-start;gap:6px">
             <div class="settings-row-sub">
-              To update materials, edit <strong>materials.csv</strong> in the GitHub repository and commit.
-              Both devices reload automatically on next open — categories and subcategories update to match.
+              Edit <strong>materials.csv</strong> in the GitHub repository and commit.
+              Both devices reload automatically on next open.
             </div>
           </div>
         </div>
@@ -245,7 +235,6 @@ const Manager = {
     Settings.save({
       supplierEmail: document.getElementById('s-supplier')?.value.trim(),
       ccEmail:       document.getElementById('s-cc')?.value.trim(),
-      senderName:    document.getElementById('s-sender')?.value.trim(),
       deliveryNote:  document.getElementById('s-delivery')?.value.trim(),
     });
     const btn = document.querySelector('[onclick="Manager.saveSettings()"]');
@@ -254,11 +243,9 @@ const Manager = {
 
   clearFirebase() {
     if (!confirm('Clear Firebase config? You will need to re-enter it.')) return;
-    FirebaseConfig.clear();
-    location.reload();
+    FirebaseConfig.clear(); location.reload();
   },
 
-  // ── LIVE ORDERS ──
   setView(v) {
     this.activeView = v;
     ['pending','sent','all'].forEach(x => {
@@ -287,12 +274,11 @@ const Manager = {
     let list = this.orders;
     if (this.activeView === 'pending') list = list.filter(o => o.status === 'pending');
     if (this.activeView === 'sent')    list = list.filter(o => o.status === 'sent');
-
     if (!list.length) {
       const msgs = {
-        pending: ['ti-clock',      'No pending orders yet.<br>Waiting for the worker to submit.'],
-        sent:    ['ti-mail-check', 'No sent orders yet.'],
-        all:     ['ti-inbox',      'No orders yet.'],
+        pending: ['ti-clock','No pending orders yet.<br>Waiting for the worker to submit.'],
+        sent:    ['ti-mail-check','No sent orders yet.'],
+        all:     ['ti-inbox','No orders yet.'],
       };
       const [ic, msg] = msgs[this.activeView] || msgs.all;
       wrap.innerHTML = `<div class="empty-queue"><i class="ti ${ic}"></i><p>${msg}</p></div>`;
@@ -309,18 +295,24 @@ const Manager = {
     const statusLabel = isPending ? 'Pending review' : isSent ? 'Sent' : o.status;
     const statusClass = isPending ? 'status-pending' : 'status-sent';
 
+    // NOTE: stopPropagation on qty inputs/buttons so they don't bubble to the header toggle
     const rows = items.map((item, idx) => `
       <div class="order-line">
         <div class="order-line-info">
           <div class="order-line-name">${esc(item.description)}</div>
           <div class="order-line-code">${esc(item.partCode)}</div>
         </div>
-        <div class="order-line-right">
-          ${isPending
-            ? `<input class="qty-edit" type="number" min="0" step="1" value="${item.qty}"
-                onchange="Manager.editQty('${o._id}',${idx},this.value)">`
-            : `<span class="order-line-qty">× ${item.qty}</span>`}
-          <span style="font-size:11px;color:var(--text3);font-family:var(--mono)">
+        <div class="order-line-right" onclick="event.stopPropagation()">
+          ${isPending ? `
+            <button class="qty-btn" style="border-radius:var(--radius) 0 0 var(--radius)"
+              onclick="event.stopPropagation();Manager.stepQty('${o._id}',${idx},-1)">−</button>
+            <input class="qty-edit" type="number" min="0" step="1" value="${item.qty}"
+              onclick="event.stopPropagation()"
+              onchange="event.stopPropagation();Manager.editQty('${o._id}',${idx},this.value)">
+            <button class="qty-btn" style="border-radius:0 var(--radius) var(--radius) 0;border-left:none"
+              onclick="event.stopPropagation();Manager.stepQty('${o._id}',${idx},1)">+</button>
+          ` : `<span class="order-line-qty">× ${item.qty}</span>`}
+          <span style="font-size:11px;color:var(--text3);font-family:var(--mono);margin-left:4px">
             ${esc(item.qtyType || '')}</span>
         </div>
       </div>`).join('');
@@ -363,6 +355,19 @@ const Manager = {
     document.getElementById(`chev-${id}`)?.classList.toggle('open');
   },
 
+  // Step qty by +/- 1 directly
+  async stepQty(orderId, idx, delta) {
+    const order = this.orders.find(o => o._id === orderId);
+    if (!order) return;
+    const items = [...order.items];
+    items[idx] = { ...items[idx], qty: Math.max(0, (items[idx].qty || 0) + delta) };
+    // Update input display immediately for responsiveness
+    const inputs = document.querySelectorAll(`#body-${orderId} .qty-edit`);
+    if (inputs[idx]) inputs[idx].value = items[idx].qty;
+    try { await DB.updateItems(orderId, items); }
+    catch (e) { alert('Update failed: ' + e.message); }
+  },
+
   async editQty(orderId, idx, val) {
     const order = this.orders.find(o => o._id === orderId);
     if (!order) return;
@@ -378,7 +383,6 @@ const Manager = {
     catch (e) { alert('Delete failed: ' + e.message); }
   },
 
-  // ── EMAIL ──
   prepareEmail(orderId) {
     const order = this.orders.find(o => o._id === orderId);
     if (!order) return;
@@ -415,8 +419,7 @@ const Manager = {
   },
 };
 
-if ("serviceWorker" in navigator) navigator.serviceWorker.getRegistrations().then(rs => rs.forEach(r => r.unregister()));
-document.addEventListener("DOMContentLoaded", () => Manager.init());
+document.addEventListener('DOMContentLoaded', () => Manager.init());
 </script>
 </body>
 </html>
