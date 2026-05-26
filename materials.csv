@@ -23,9 +23,9 @@ STL0034,75 x75 x 6mm x 6m Angle 316 S/S,Stainless Steel,Angle,Length
 SHC0087,30 x 30 x 5mm x 6m Angle Bar 316 S/S,Stainless Steel,Angle,Length
 STL0032,100 x 50 x 5mm x 6m Angle 6060 Aluminum,Aluminium,Angle,Length
 SWD0013,65 x 65 x 6mm x 6m Angle 6060 Aluminium,Aluminium,Angle,Length
-SWD0008,1 1/4' x 1.6mm x 6m Mirror Tube 316 S/S,Stainless Steel,Tube,Length
+SWD0008,"1 1/4"" x 1.6mm x 6m Mirror Tube 316 S/S",Stainless Steel,Tube,Length
 SL0309,"1 1/4"" x 6m Sch 40 Seamless Pipe 316 S/S",Stainless Steel,Tube,Length
-SL0600,1 1/8' Solid Bar Bronze LG2,Bronze,Round Bar,Length
+SL0600,"1 1/8"" Solid Bar Bronze LG2",Bronze,Round Bar,Length
 SL0315,"1 1/8"" x 6m Centreless Ground Bar 316 S/S",Stainless Steel,Round Bar,Length
 SL0673,"1"" x 6m SCH 80 Seamless Pipe 316 S/S",Stainless Steel,Pipe,Length
 SL0310,"1"" x 6m Schd 40 Seamless pipe 316 S/S",Stainless Steel,Pipe,Length
@@ -34,7 +34,7 @@ SL0330,1.5mm x 1.5 x 3m 2B Sheet 316 S/S,Stainless Steel,Plate,Each
 SL0364,1.5mm x 1.5 x 3m Mirror Sheet 316 S/S,Stainless Steel,Plate,Each
 SL0329,"1/2"" x 6m Solid Round Bar S/S 316S/S",Stainless Steel,Round Bar,Length
 ST0258,1/8inch S/S tube,Stainless Steel,Tube,Length
-SDC0275,1” x 1.6mm wall Mirror Tube 316 S/S,Stainless Steel,Tube,Length
+SDC0275,"1"" x 1.6mm wall Mirror Tube 316 S/S",Stainless Steel,Tube,Length
 SDC0147,100 x 25mm Flat Bar 316 S/S,Stainless Steel,Flat Bar,Length
 STL0030,100 x 50 x 7.5mm x 6m Channel 6060 Aluminium,Aluminium,Channel,Length
 SDC0225,100 x 65 x 6 RHS 6060 Aluminium,Aluminium,Box Section,Length
@@ -58,9 +58,9 @@ SWD0025,160 x 10mm x 4m Flat Bar 6060 Aluminium,Aluminium,Flat Bar,Length
 SDC0095,16mm x 1.2 x 2.4m Plate 5083 Aluminium,Aluminium,Plate,Each
 SL0325,16mm x 6m Solid Round Bar 316 S/S,Stainless Steel,Round Bar,Length
 SL0320,"2 3/4"" x 6m Solid Round Bar 316 S/S",Stainless Steel,Round Bar,Length
-SDC0094,"2'""Solid Bar Brass",Bronze,Round Bar,Length
+SDC0094,"2"" Solid Bar Brass",Bronze,Round Bar,Length
 SL0305,"2.5"" x 6m Schd 40 Seamless Pipe 316 S/S",Stainless Steel,Pipe,Length
-SL0347,2” Solid Round Bar Bronze LG2,Bronze,Round Bar,Length
+SL0347,"2"" Solid Round Bar Bronze LG2",Bronze,Round Bar,Length
 SRL0032,20mm Solid Bar Duplex 2205,Duplex,Round Bar,Length
 SDC0001,20mm x 1.2 x 2.4 Plate 5083 Aluminium,Aluminium,Plate,Each
 SHC0089,20mm x 3mm x 6m Flat Bar 316 S/S,Stainless Steel,Flat Bar,Length
@@ -108,7 +108,7 @@ SDC0093,4mm x 100mm x 4m Flat Bar 6060 T5 Aluminium,Aluminium,Flat Bar,Length
 SHC0086,"5.5"" Solid Round Bar 316 S/S",Stainless Steel,Round Bar,Length
 SRL0049,50 x 25mm Hollow Bar 316 S/S,Stainless Steel,Hollow Bar,Length
 SL0357,50.80mm Solid Hex Bar 316 S/S,Stainless Steel,Hex Bar,Length
-SRL0047,50.8mm Solid Round Bar  Duplex 2205,Duplex,Round Bar,Length
+SRL0047,50.8mm Solid Round Bar Duplex 2205,Duplex,Round Bar,Length
 SL0359,50mm Solid Round Bar 6060 aluminium,Aluminium,Round Bar,Length
 SRL0028,50mm Solid Round Bar Acetal Black,Acetal,Round Bar,Length
 SRL0029,50mm x 100mm x 900mm Black Acetal Sheet,Acetal,Sheet,Each

@@ -7,6 +7,26 @@
   <title>Material Orders — Manager</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.19.0/dist/tabler-icons.min.css">
   <link rel="stylesheet" href="css/style.css">
+  <style>
+    /* Inline qty controls inside order cards */
+    .qty-row { display:flex; align-items:center; gap:0; }
+    .qty-row .qty-btn {
+      width:28px; height:28px; font-size:15px;
+      background:var(--bg); border:1px solid var(--border); color:var(--text);
+      display:flex; align-items:center; justify-content:center;
+    }
+    .qty-row .qty-btn:first-child { border-radius:var(--radius) 0 0 var(--radius); }
+    .qty-row .qty-btn:last-child  { border-radius:0 var(--radius) var(--radius) 0; border-left:none; }
+    .qty-row .qty-edit {
+      width:44px; height:28px;
+      border:1px solid var(--border); border-left:none; border-right:none;
+      background:var(--surface); font-size:12px; font-family:var(--mono);
+      text-align:center; outline:none; color:var(--text);
+      -moz-appearance:textfield;
+    }
+    .qty-row .qty-edit::-webkit-inner-spin-button,
+    .qty-row .qty-edit::-webkit-outer-spin-button { -webkit-appearance:none; }
+  </style>
 </head>
 <body>
 <div id="root"></div>
@@ -15,10 +35,12 @@
 <script src="js/shared.js"></script>
 <script src="js/firebase-sync.js"></script>
 <script>
-// Clear any stale service workers
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.getRegistrations().then(rs => rs.forEach(r => r.unregister()));
 }
+
+// Stable global handler — same pattern as worker page, prevents any listener stacking
+const M = {};
 
 const Manager = {
   orders:        [],
@@ -43,36 +65,15 @@ const Manager = {
           <p>Enter your Firebase project config to receive orders from the iPad.</p>
           ${err ? `<div style="background:var(--red-bg);color:var(--red-text);border-radius:var(--radius);
             padding:10px 12px;font-size:13px;margin-bottom:12px">${esc(err)}</div>` : ''}
-          <div class="setup-field"><label>API Key</label>
-            <input id="cfg-apiKey" autocomplete="off" placeholder="AIzaSy..."></div>
-          <div class="setup-field"><label>Project ID</label>
-            <input id="cfg-projectId" autocomplete="off" placeholder="my-project-id"></div>
-          <div class="setup-field"><label>App ID</label>
-            <input id="cfg-appId" autocomplete="off" placeholder="1:123456:web:abc..."></div>
-          <button class="btn btn-primary" style="margin-top:8px" onclick="Manager.saveConfig()">
+          <div class="setup-field"><label>API Key</label><input id="cfg-apiKey" autocomplete="off" placeholder="AIzaSy..."></div>
+          <div class="setup-field"><label>Project ID</label><input id="cfg-projectId" autocomplete="off" placeholder="my-project-id"></div>
+          <div class="setup-field"><label>App ID</label><input id="cfg-appId" autocomplete="off" placeholder="1:123456:web:abc..."></div>
+          <button class="btn btn-primary" style="margin-top:8px" onclick="M.saveConfig()">
             <i class="ti ti-plug"></i> Connect
           </button>
-          <div class="setup-note" style="margin-top:14px">
-            Same config as the iPad. See README.md for full guide.
-          </div>
+          <div class="setup-note" style="margin-top:14px">Same config as the iPad. See README.md.</div>
         </div>
       </div>`;
-  },
-
-  async saveConfig() {
-    const apiKey    = document.getElementById('cfg-apiKey').value.trim();
-    const projectId = document.getElementById('cfg-projectId').value.trim();
-    const appId     = document.getElementById('cfg-appId').value.trim();
-    if (!apiKey || !projectId || !appId) { alert('Please fill in all fields.'); return; }
-    const cfg = { apiKey, projectId, appId,
-      authDomain: `${projectId}.firebaseapp.com`,
-      storageBucket: `${projectId}.appspot.com`,
-      messagingSenderId: '000000000000' };
-    const ok = await DB.init(cfg);
-    if (!ok) { this.showSetup('Connection failed. Double-check your config values.'); return; }
-    FirebaseConfig.save(cfg);
-    this.renderShell();
-    this.startListening();
   },
 
   renderShell() {
@@ -87,44 +88,42 @@ const Manager = {
             </div>
             <div class="header-actions">
               <span class="role-pill">Production Manager</span>
-              <button class="icon-btn" onclick="Manager.openPanel('settings-panel')" title="Settings">
+              <button class="icon-btn" onclick="M.openPanel('settings-panel')" title="Settings">
                 <i class="ti ti-settings"></i>
               </button>
             </div>
           </div></div>
         </div>
 
-        <!-- Mobile tabs -->
         <div class="mobile-tabs">
-          <button class="tab active" id="mtab-pending" onclick="Manager.setView('pending')">
-            Pending
-            <span class="sidebar-count zero" id="mob-pending-count" style="margin-left:4px">0</span>
+          <button class="tab active" id="mtab-pending" onclick="M.setView('pending')">
+            Pending <span class="sidebar-count zero" id="mob-pending-count" style="margin-left:4px">0</span>
           </button>
-          <button class="tab" id="mtab-sent" onclick="Manager.setView('sent')">Sent</button>
-          <button class="tab" id="mtab-all"  onclick="Manager.setView('all')">All</button>
+          <button class="tab" id="mtab-sent" onclick="M.setView('sent')">Sent</button>
+          <button class="tab" id="mtab-all"  onclick="M.setView('all')">All</button>
         </div>
 
         <div class="manager-body">
           <div class="manager-sidebar">
             <div class="sidebar-section">
               <div class="sidebar-title">Orders</div>
-              <button class="sidebar-btn active" id="sb-pending" onclick="Manager.setView('pending')">
+              <button class="sidebar-btn active" id="sb-pending" onclick="M.setView('pending')">
                 <i class="ti ti-clock"></i> Pending
                 <span class="sidebar-count zero" id="pending-count">0</span>
               </button>
-              <button class="sidebar-btn" id="sb-sent" onclick="Manager.setView('sent')">
+              <button class="sidebar-btn" id="sb-sent" onclick="M.setView('sent')">
                 <i class="ti ti-mail-check"></i> Sent
               </button>
-              <button class="sidebar-btn" id="sb-all" onclick="Manager.setView('all')">
+              <button class="sidebar-btn" id="sb-all" onclick="M.setView('all')">
                 <i class="ti ti-list"></i> All
               </button>
             </div>
             <div class="sidebar-section">
               <div class="sidebar-title">Settings</div>
-              <button class="sidebar-btn" onclick="Manager.openPanel('settings-panel')">
+              <button class="sidebar-btn" onclick="M.openPanel('settings-panel')">
                 <i class="ti ti-adjustments"></i> Email &amp; preferences
               </button>
-              <button class="sidebar-btn" onclick="Manager.clearFirebase()">
+              <button class="sidebar-btn" onclick="M.clearFirebase()">
                 <i class="ti ti-plug-x"></i> Reset connection
               </button>
             </div>
@@ -143,12 +142,12 @@ const Manager = {
         <!-- EMAIL PANEL -->
         <div class="panel" id="email-panel">
           <div class="panel-header">
-            <button class="back-btn" onclick="Manager.closePanel('email-panel')">
+            <button class="back-btn" onclick="M.closePanel('email-panel')">
               <i class="ti ti-chevron-left"></i> Back
             </button>
             <div class="panel-title">Order Email</div>
             <button class="btn-green btn" style="width:auto;padding:7px 14px;font-size:13px"
-              onclick="Manager.sendEmail()">
+              onclick="M.sendEmail()">
               <i class="ti ti-send"></i> Send
             </button>
           </div>
@@ -163,11 +162,11 @@ const Manager = {
         <!-- SETTINGS PANEL -->
         <div class="panel" id="settings-panel">
           <div class="panel-header">
-            <button class="back-btn" onclick="Manager.closePanel('settings-panel')">
+            <button class="back-btn" onclick="M.closePanel('settings-panel')">
               <i class="ti ti-chevron-left"></i> Back
             </button>
             <div class="panel-title">Settings</div>
-            <button class="btn-sm btn-sm-save" onclick="Manager.saveSettings()">Save</button>
+            <button class="btn-sm btn-sm-save" onclick="M.saveSettings()">Save</button>
           </div>
           <div class="panel-scroll">
             <div class="panel-col" style="gap:20px" id="settings-body"></div>
@@ -176,6 +175,21 @@ const Manager = {
 
       </div>
       <div id="overlay-wrap"></div>`;
+
+    // Bind stable M.* handlers once
+    M.saveConfig   = () => this.saveConfig();
+    M.openPanel    = id => this.openPanel(id);
+    M.closePanel   = id => this.closePanel(id);
+    M.setView      = v  => this.setView(v);
+    M.clearFirebase= () => this.clearFirebase();
+    M.saveSettings = () => this.saveSettings();
+    M.sendEmail    = () => this.sendEmail();
+    // Order card handlers — bound once, safe to call from any re-rendered card HTML
+    M.toggleCard   = id       => this.toggleCard(id);
+    M.stepQty      = (oid,idx,d) => this.stepQty(oid,idx,d);
+    M.editQty      = (oid,idx,v) => this.editQty(oid,idx,v);
+    M.prepareEmail = id       => this.prepareEmail(id);
+    M.deleteOrder  = id       => this.deleteOrder(id);
 
     this._populateSettings();
   },
@@ -225,7 +239,7 @@ const Manager = {
           <div class="settings-row">
             <div><div class="settings-row-label">Firebase config</div>
               <div class="settings-row-sub">Clear to re-enter connection details</div></div>
-            <button class="btn-sm btn-sm-danger" onclick="Manager.clearFirebase()">Clear</button>
+            <button class="btn-sm btn-sm-danger" onclick="M.clearFirebase()">Clear</button>
           </div>
         </div>
       </div>`;
@@ -237,7 +251,7 @@ const Manager = {
       ccEmail:       document.getElementById('s-cc')?.value.trim(),
       deliveryNote:  document.getElementById('s-delivery')?.value.trim(),
     });
-    const btn = document.querySelector('[onclick="Manager.saveSettings()"]');
+    const btn = document.querySelector('[onclick="M.saveSettings()"]');
     if (btn) { btn.textContent = '✓ Saved'; setTimeout(() => btn.textContent = 'Save', 1500); }
   },
 
@@ -295,42 +309,42 @@ const Manager = {
     const statusLabel = isPending ? 'Pending review' : isSent ? 'Sent' : o.status;
     const statusClass = isPending ? 'status-pending' : 'status-sent';
 
-    // NOTE: stopPropagation on qty inputs/buttons so they don't bubble to the header toggle
     const rows = items.map((item, idx) => `
       <div class="order-line">
         <div class="order-line-info">
           <div class="order-line-name">${esc(item.description)}</div>
           <div class="order-line-code">${esc(item.partCode)}</div>
         </div>
-        <div class="order-line-right" onclick="event.stopPropagation()">
+        <div class="order-line-right">
           ${isPending ? `
-            <button class="qty-btn" style="border-radius:var(--radius) 0 0 var(--radius)"
-              onclick="event.stopPropagation();Manager.stepQty('${o._id}',${idx},-1)">−</button>
-            <input class="qty-edit" type="number" min="0" step="1" value="${item.qty}"
-              onclick="event.stopPropagation()"
-              onchange="event.stopPropagation();Manager.editQty('${o._id}',${idx},this.value)">
-            <button class="qty-btn" style="border-radius:0 var(--radius) var(--radius) 0;border-left:none"
-              onclick="event.stopPropagation();Manager.stepQty('${o._id}',${idx},1)">+</button>
-          ` : `<span class="order-line-qty">× ${item.qty}</span>`}
-          <span style="font-size:11px;color:var(--text3);font-family:var(--mono);margin-left:4px">
+            <div class="qty-row">
+              <button class="qty-btn"
+                onclick="event.stopPropagation();M.stepQty('${o._id}',${idx},-1)">−</button>
+              <input class="qty-edit" type="number" min="0" step="1" value="${item.qty}"
+                onclick="event.stopPropagation()"
+                onchange="event.stopPropagation();M.editQty('${o._id}',${idx},this.value)">
+              <button class="qty-btn"
+                onclick="event.stopPropagation();M.stepQty('${o._id}',${idx},1)">+</button>
+            </div>` : `<span class="order-line-qty">× ${item.qty}</span>`}
+          <span style="font-size:11px;color:var(--text3);font-family:var(--mono);margin-left:6px">
             ${esc(item.qtyType || '')}</span>
         </div>
       </div>`).join('');
 
     const actions = isPending ? `
-      <button class="btn btn-green" onclick="Manager.prepareEmail('${o._id}')">
+      <button class="btn btn-green" onclick="M.prepareEmail('${o._id}')">
         <i class="ti ti-mail"></i> Approve &amp; send email
       </button>
-      <button class="btn btn-danger" onclick="Manager.deleteOrder('${o._id}')">
+      <button class="btn btn-danger" onclick="M.deleteOrder('${o._id}')">
         <i class="ti ti-x"></i> Reject
       </button>` : isSent ? `
       <span class="sent-stamp"><i class="ti ti-circle-check"></i> Email sent</span>
-      <button class="btn btn-outline" style="margin-top:8px" onclick="Manager.deleteOrder('${o._id}')">
+      <button class="btn btn-outline" style="margin-top:8px" onclick="M.deleteOrder('${o._id}')">
         <i class="ti ti-trash"></i> Delete record
       </button>` : '';
 
     return `<div class="order-card" id="card-${o._id}">
-      <div class="order-card-header" onclick="Manager.toggleCard('${o._id}')">
+      <div class="order-card-header" onclick="M.toggleCard('${o._id}')">
         <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%">
           <div>
             <div class="order-ref-text">${esc(o.ref || o._id)}</div>
@@ -355,15 +369,15 @@ const Manager = {
     document.getElementById(`chev-${id}`)?.classList.toggle('open');
   },
 
-  // Step qty by +/- 1 directly
   async stepQty(orderId, idx, delta) {
     const order = this.orders.find(o => o._id === orderId);
     if (!order) return;
     const items = [...order.items];
-    items[idx] = { ...items[idx], qty: Math.max(0, (items[idx].qty || 0) + delta) };
-    // Update input display immediately for responsiveness
+    const newQty = Math.max(0, (items[idx].qty || 0) + delta);
+    items[idx] = { ...items[idx], qty: newQty };
+    // Update input immediately for responsiveness
     const inputs = document.querySelectorAll(`#body-${orderId} .qty-edit`);
-    if (inputs[idx]) inputs[idx].value = items[idx].qty;
+    if (inputs[idx]) inputs[idx].value = newQty;
     try { await DB.updateItems(orderId, items); }
     catch (e) { alert('Update failed: ' + e.message); }
   },
@@ -416,6 +430,22 @@ const Manager = {
         </div>
       </div>`;
     setTimeout(() => { window.location.href = mailto; }, 400);
+  },
+
+  async saveConfig() {
+    const apiKey    = document.getElementById('cfg-apiKey').value.trim();
+    const projectId = document.getElementById('cfg-projectId').value.trim();
+    const appId     = document.getElementById('cfg-appId').value.trim();
+    if (!apiKey || !projectId || !appId) { alert('Please fill in all fields.'); return; }
+    const cfg = { apiKey, projectId, appId,
+      authDomain: `${projectId}.firebaseapp.com`,
+      storageBucket: `${projectId}.appspot.com`,
+      messagingSenderId: '000000000000' };
+    const ok = await DB.init(cfg);
+    if (!ok) { this.showSetup('Connection failed. Double-check your config values.'); return; }
+    FirebaseConfig.save(cfg);
+    this.renderShell();
+    this.startListening();
   },
 };
 
