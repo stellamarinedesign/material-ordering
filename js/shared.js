@@ -180,7 +180,7 @@ function buildEmailBody(orderRef, items, deviceName) {
 
   // Start with the template and fill in placeholders
   let body = (s.emailTemplate || DEFAULT_SETTINGS.emailTemplate)
-    .replace('{orderRef}',   `Order Reference: ${orderRef}${device ? `\nOrdered by: ${device}` : ''}`)
+    .replace('{orderRef}',   `Order Reference: ${orderRef}`)
     .replace('{date}',       `Date: ${date}`)
     .replace('{items}',      itemsStr)
     .replace('{closingNote}',s.deliveryNote);
