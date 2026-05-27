@@ -8,12 +8,12 @@
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.19.0/dist/tabler-icons.min.css">
   <link rel="stylesheet" href="css/style.css">
   <style>
-    /* Inline qty controls inside order cards */
-    .qty-row { display:flex; align-items:center; gap:0; }
+    .qty-row { display:flex; align-items:center; }
     .qty-row .qty-btn {
       width:28px; height:28px; font-size:15px;
       background:var(--bg); border:1px solid var(--border); color:var(--text);
       display:flex; align-items:center; justify-content:center;
+      flex-shrink:0;
     }
     .qty-row .qty-btn:first-child { border-radius:var(--radius) 0 0 var(--radius); }
     .qty-row .qty-btn:last-child  { border-radius:0 var(--radius) var(--radius) 0; border-left:none; }
@@ -38,9 +38,6 @@
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.getRegistrations().then(rs => rs.forEach(r => r.unregister()));
 }
-
-// Stable global handler — same pattern as worker page, prevents any listener stacking
-const M = {};
 
 const Manager = {
   orders:        [],
@@ -68,18 +65,34 @@ const Manager = {
           <div class="setup-field"><label>API Key</label><input id="cfg-apiKey" autocomplete="off" placeholder="AIzaSy..."></div>
           <div class="setup-field"><label>Project ID</label><input id="cfg-projectId" autocomplete="off" placeholder="my-project-id"></div>
           <div class="setup-field"><label>App ID</label><input id="cfg-appId" autocomplete="off" placeholder="1:123456:web:abc..."></div>
-          <button class="btn btn-primary" style="margin-top:8px" onclick="M.saveConfig()">
+          <button id="btn-connect" class="btn btn-primary" style="margin-top:8px">
             <i class="ti ti-plug"></i> Connect
           </button>
           <div class="setup-note" style="margin-top:14px">Same config as the iPad. See README.md.</div>
         </div>
       </div>`;
+    document.getElementById('btn-connect').addEventListener('click', () => this.saveConfig());
+  },
+
+  async saveConfig() {
+    const apiKey    = document.getElementById('cfg-apiKey').value.trim();
+    const projectId = document.getElementById('cfg-projectId').value.trim();
+    const appId     = document.getElementById('cfg-appId').value.trim();
+    if (!apiKey || !projectId || !appId) { alert('Please fill in all fields.'); return; }
+    const cfg = { apiKey, projectId, appId,
+      authDomain: `${projectId}.firebaseapp.com`,
+      storageBucket: `${projectId}.appspot.com`,
+      messagingSenderId: '000000000000' };
+    const ok = await DB.init(cfg);
+    if (!ok) { this.showSetup('Connection failed. Double-check your config values.'); return; }
+    FirebaseConfig.save(cfg);
+    this.renderShell();
+    this.startListening();
   },
 
   renderShell() {
     document.getElementById('root').innerHTML = `
       <div class="app-root manager-root" id="app-root">
-
         <div class="header manager-hdr">
           <div class="col"><div class="header-inner">
             <div class="header-left">
@@ -88,42 +101,42 @@ const Manager = {
             </div>
             <div class="header-actions">
               <span class="role-pill">Production Manager</span>
-              <button class="icon-btn" onclick="M.openPanel('settings-panel')" title="Settings">
+              <button class="icon-btn" id="btn-settings" title="Settings">
                 <i class="ti ti-settings"></i>
               </button>
             </div>
           </div></div>
         </div>
 
-        <div class="mobile-tabs">
-          <button class="tab active" id="mtab-pending" onclick="M.setView('pending')">
+        <div class="mobile-tabs" id="mobile-tabs">
+          <button class="tab active" data-view="pending">
             Pending <span class="sidebar-count zero" id="mob-pending-count" style="margin-left:4px">0</span>
           </button>
-          <button class="tab" id="mtab-sent" onclick="M.setView('sent')">Sent</button>
-          <button class="tab" id="mtab-all"  onclick="M.setView('all')">All</button>
+          <button class="tab" data-view="sent">Sent</button>
+          <button class="tab" data-view="all">All</button>
         </div>
 
         <div class="manager-body">
           <div class="manager-sidebar">
             <div class="sidebar-section">
               <div class="sidebar-title">Orders</div>
-              <button class="sidebar-btn active" id="sb-pending" onclick="M.setView('pending')">
+              <button class="sidebar-btn active" data-sb="pending">
                 <i class="ti ti-clock"></i> Pending
                 <span class="sidebar-count zero" id="pending-count">0</span>
               </button>
-              <button class="sidebar-btn" id="sb-sent" onclick="M.setView('sent')">
+              <button class="sidebar-btn" data-sb="sent">
                 <i class="ti ti-mail-check"></i> Sent
               </button>
-              <button class="sidebar-btn" id="sb-all" onclick="M.setView('all')">
+              <button class="sidebar-btn" data-sb="all">
                 <i class="ti ti-list"></i> All
               </button>
             </div>
             <div class="sidebar-section">
               <div class="sidebar-title">Settings</div>
-              <button class="sidebar-btn" onclick="M.openPanel('settings-panel')">
+              <button class="sidebar-btn" id="sb-settings">
                 <i class="ti ti-adjustments"></i> Email &amp; preferences
               </button>
-              <button class="sidebar-btn" onclick="M.clearFirebase()">
+              <button class="sidebar-btn" id="sb-reset">
                 <i class="ti ti-plug-x"></i> Reset connection
               </button>
             </div>
@@ -139,15 +152,13 @@ const Manager = {
           </div>
         </div>
 
-        <!-- EMAIL PANEL -->
         <div class="panel" id="email-panel">
           <div class="panel-header">
-            <button class="back-btn" onclick="M.closePanel('email-panel')">
+            <button class="back-btn" id="btn-close-email">
               <i class="ti ti-chevron-left"></i> Back
             </button>
             <div class="panel-title">Order Email</div>
-            <button class="btn-green btn" style="width:auto;padding:7px 14px;font-size:13px"
-              onclick="M.sendEmail()">
+            <button class="btn-green btn" id="btn-send-email" style="width:auto;padding:7px 14px;font-size:13px">
               <i class="ti ti-send"></i> Send
             </button>
           </div>
@@ -159,37 +170,39 @@ const Manager = {
           <div class="email-body-wrap"><textarea id="email-body"></textarea></div>
         </div>
 
-        <!-- SETTINGS PANEL -->
         <div class="panel" id="settings-panel">
           <div class="panel-header">
-            <button class="back-btn" onclick="M.closePanel('settings-panel')">
+            <button class="back-btn" id="btn-close-settings">
               <i class="ti ti-chevron-left"></i> Back
             </button>
             <div class="panel-title">Settings</div>
-            <button class="btn-sm btn-sm-save" onclick="M.saveSettings()">Save</button>
+            <button class="btn-sm btn-sm-save" id="btn-save-settings">Save</button>
           </div>
           <div class="panel-scroll">
             <div class="panel-col" style="gap:20px" id="settings-body"></div>
           </div>
         </div>
-
       </div>
       <div id="overlay-wrap"></div>`;
 
-    // Bind stable M.* handlers once
-    M.saveConfig   = () => this.saveConfig();
-    M.openPanel    = id => this.openPanel(id);
-    M.closePanel   = id => this.closePanel(id);
-    M.setView      = v  => this.setView(v);
-    M.clearFirebase= () => this.clearFirebase();
-    M.saveSettings = () => this.saveSettings();
-    M.sendEmail    = () => this.sendEmail();
-    // Order card handlers — bound once, safe to call from any re-rendered card HTML
-    M.toggleCard   = id       => this.toggleCard(id);
-    M.stepQty      = (oid,idx,d) => this.stepQty(oid,idx,d);
-    M.editQty      = (oid,idx,v) => this.editQty(oid,idx,v);
-    M.prepareEmail = id       => this.prepareEmail(id);
-    M.deleteOrder  = id       => this.deleteOrder(id);
+    // ── Bind all static buttons via addEventListener ──
+    document.getElementById('btn-settings').addEventListener('click',       () => this.openPanel('settings-panel'));
+    document.getElementById('sb-settings').addEventListener('click',        () => this.openPanel('settings-panel'));
+    document.getElementById('sb-reset').addEventListener('click',           () => this.clearFirebase());
+    document.getElementById('btn-close-email').addEventListener('click',    () => this.closePanel('email-panel'));
+    document.getElementById('btn-send-email').addEventListener('click',     () => this.sendEmail());
+    document.getElementById('btn-close-settings').addEventListener('click', () => this.closePanel('settings-panel'));
+    document.getElementById('btn-save-settings').addEventListener('click',  () => this.saveSettings());
+
+    // Sidebar view buttons
+    document.querySelectorAll('[data-sb]').forEach(btn => {
+      btn.addEventListener('click', () => this.setView(btn.dataset.sb));
+    });
+    // Mobile tab buttons
+    document.getElementById('mobile-tabs').addEventListener('click', e => {
+      const btn = e.target.closest('[data-view]');
+      if (btn) this.setView(btn.dataset.view);
+    });
 
     this._populateSettings();
   },
@@ -239,10 +252,11 @@ const Manager = {
           <div class="settings-row">
             <div><div class="settings-row-label">Firebase config</div>
               <div class="settings-row-sub">Clear to re-enter connection details</div></div>
-            <button class="btn-sm btn-sm-danger" onclick="M.clearFirebase()">Clear</button>
+            <button class="btn-sm btn-sm-danger" id="btn-clear-firebase">Clear</button>
           </div>
         </div>
       </div>`;
+    document.getElementById('btn-clear-firebase').addEventListener('click', () => this.clearFirebase());
   },
 
   saveSettings() {
@@ -251,7 +265,7 @@ const Manager = {
       ccEmail:       document.getElementById('s-cc')?.value.trim(),
       deliveryNote:  document.getElementById('s-delivery')?.value.trim(),
     });
-    const btn = document.querySelector('[onclick="M.saveSettings()"]');
+    const btn = document.getElementById('btn-save-settings');
     if (btn) { btn.textContent = '✓ Saved'; setTimeout(() => btn.textContent = 'Save', 1500); }
   },
 
@@ -262,10 +276,10 @@ const Manager = {
 
   setView(v) {
     this.activeView = v;
-    ['pending','sent','all'].forEach(x => {
-      document.getElementById(`sb-${x}`)?.classList.toggle('active', x === v);
-      document.getElementById(`mtab-${x}`)?.classList.toggle('active', x === v);
-    });
+    document.querySelectorAll('[data-sb]').forEach(b =>
+      b.classList.toggle('active', b.dataset.sb === v));
+    document.querySelectorAll('#mobile-tabs [data-view]').forEach(b =>
+      b.classList.toggle('active', b.dataset.view === v));
     this.renderQueue();
   },
 
@@ -288,6 +302,7 @@ const Manager = {
     let list = this.orders;
     if (this.activeView === 'pending') list = list.filter(o => o.status === 'pending');
     if (this.activeView === 'sent')    list = list.filter(o => o.status === 'sent');
+
     if (!list.length) {
       const msgs = {
         pending: ['ti-clock','No pending orders yet.<br>Waiting for the worker to submit.'],
@@ -298,7 +313,39 @@ const Manager = {
       wrap.innerHTML = `<div class="empty-queue"><i class="ti ${ic}"></i><p>${msg}</p></div>`;
       return;
     }
+
     wrap.innerHTML = list.map(o => this._orderCard(o)).join('');
+
+    // ── Delegated listener on the queue for ALL order card interactions ──
+    // This is a fresh element each render so there is exactly one listener.
+    // stopPropagation is called here in JS — not in the HTML attribute —
+    // which reliably prevents bubbling to the card header toggle.
+    wrap.addEventListener('click', e => {
+      // Toggle header
+      const header = e.target.closest('.order-card-header');
+
+      // Qty buttons
+      const dec = e.target.closest('[data-qdec]');
+      const inc = e.target.closest('[data-qinc]');
+
+      // Action buttons
+      const approveBtnEl = e.target.closest('[data-approve]');
+      const deleteBtnEl  = e.target.closest('[data-delete]');
+
+      if (dec) { e.stopPropagation(); this.stepQty(dec.dataset.qdec, +dec.dataset.idx, -1); return; }
+      if (inc) { e.stopPropagation(); this.stepQty(inc.dataset.qinc, +inc.dataset.idx,  1); return; }
+      if (approveBtnEl) { e.stopPropagation(); this.prepareEmail(approveBtnEl.dataset.approve); return; }
+      if (deleteBtnEl)  { e.stopPropagation(); this.deleteOrder(deleteBtnEl.dataset.delete);   return; }
+      if (header) { this.toggleCard(header.dataset.cardId); }
+    });
+
+    wrap.addEventListener('change', e => {
+      const inp = e.target.closest('[data-qchange]');
+      if (inp) {
+        e.stopPropagation();
+        this.editQty(inp.dataset.qchange, +inp.dataset.idx, inp.value);
+      }
+    });
   },
 
   _orderCard(o) {
@@ -318,13 +365,10 @@ const Manager = {
         <div class="order-line-right">
           ${isPending ? `
             <div class="qty-row">
-              <button class="qty-btn"
-                onclick="event.stopPropagation();M.stepQty('${o._id}',${idx},-1)">−</button>
+              <button class="qty-btn" data-qdec="${o._id}" data-idx="${idx}">−</button>
               <input class="qty-edit" type="number" min="0" step="1" value="${item.qty}"
-                onclick="event.stopPropagation()"
-                onchange="event.stopPropagation();M.editQty('${o._id}',${idx},this.value)">
-              <button class="qty-btn"
-                onclick="event.stopPropagation();M.stepQty('${o._id}',${idx},1)">+</button>
+                data-qchange="${o._id}" data-idx="${idx}" id="qinp-${o._id}-${idx}">
+              <button class="qty-btn" data-qinc="${o._id}" data-idx="${idx}">+</button>
             </div>` : `<span class="order-line-qty">× ${item.qty}</span>`}
           <span style="font-size:11px;color:var(--text3);font-family:var(--mono);margin-left:6px">
             ${esc(item.qtyType || '')}</span>
@@ -332,19 +376,19 @@ const Manager = {
       </div>`).join('');
 
     const actions = isPending ? `
-      <button class="btn btn-green" onclick="M.prepareEmail('${o._id}')">
+      <button class="btn btn-green" data-approve="${o._id}">
         <i class="ti ti-mail"></i> Approve &amp; send email
       </button>
-      <button class="btn btn-danger" onclick="M.deleteOrder('${o._id}')">
+      <button class="btn btn-danger" data-delete="${o._id}">
         <i class="ti ti-x"></i> Reject
       </button>` : isSent ? `
       <span class="sent-stamp"><i class="ti ti-circle-check"></i> Email sent</span>
-      <button class="btn btn-outline" style="margin-top:8px" onclick="M.deleteOrder('${o._id}')">
+      <button class="btn btn-outline" data-delete="${o._id}" style="margin-top:8px">
         <i class="ti ti-trash"></i> Delete record
       </button>` : '';
 
     return `<div class="order-card" id="card-${o._id}">
-      <div class="order-card-header" onclick="M.toggleCard('${o._id}')">
+      <div class="order-card-header" data-card-id="${o._id}">
         <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%">
           <div>
             <div class="order-ref-text">${esc(o.ref || o._id)}</div>
@@ -372,12 +416,11 @@ const Manager = {
   async stepQty(orderId, idx, delta) {
     const order = this.orders.find(o => o._id === orderId);
     if (!order) return;
-    const items = [...order.items];
+    const items  = [...order.items];
     const newQty = Math.max(0, (items[idx].qty || 0) + delta);
-    items[idx] = { ...items[idx], qty: newQty };
-    // Update input immediately for responsiveness
-    const inputs = document.querySelectorAll(`#body-${orderId} .qty-edit`);
-    if (inputs[idx]) inputs[idx].value = newQty;
+    items[idx]   = { ...items[idx], qty: newQty };
+    const inp    = document.getElementById(`qinp-${orderId}-${idx}`);
+    if (inp) inp.value = newQty;
     try { await DB.updateItems(orderId, items); }
     catch (e) { alert('Update failed: ' + e.message); }
   },
@@ -386,7 +429,7 @@ const Manager = {
     const order = this.orders.find(o => o._id === orderId);
     if (!order) return;
     const items = [...order.items];
-    items[idx] = { ...items[idx], qty: Math.max(0, parseInt(val) || 0) };
+    items[idx]  = { ...items[idx], qty: Math.max(0, parseInt(val) || 0) };
     try { await DB.updateItems(orderId, items); }
     catch (e) { alert('Update failed: ' + e.message); }
   },
@@ -419,33 +462,18 @@ const Manager = {
       try { await DB.updateStatus(this._emailOrderId, 'sent'); } catch {}
     }
     this.closePanel('email-panel');
-    document.getElementById('overlay-wrap').innerHTML = `
+    const ow = document.getElementById('overlay-wrap');
+    ow.innerHTML = `
       <div class="success-overlay">
         <div class="success-card">
           <div class="success-icon blue"><i class="ti ti-mail-forward"></i></div>
           <h3>Opening mail client…</h3>
           <p>Order marked as sent. Outlook will open with the order pre-filled.</p>
-          <button class="btn btn-primary"
-            onclick="document.getElementById('overlay-wrap').innerHTML=''">Done</button>
+          <button class="btn btn-primary" id="btn-done-email">Done</button>
         </div>
       </div>`;
+    document.getElementById('btn-done-email').addEventListener('click', () => { ow.innerHTML = ''; });
     setTimeout(() => { window.location.href = mailto; }, 400);
-  },
-
-  async saveConfig() {
-    const apiKey    = document.getElementById('cfg-apiKey').value.trim();
-    const projectId = document.getElementById('cfg-projectId').value.trim();
-    const appId     = document.getElementById('cfg-appId').value.trim();
-    if (!apiKey || !projectId || !appId) { alert('Please fill in all fields.'); return; }
-    const cfg = { apiKey, projectId, appId,
-      authDomain: `${projectId}.firebaseapp.com`,
-      storageBucket: `${projectId}.appspot.com`,
-      messagingSenderId: '000000000000' };
-    const ok = await DB.init(cfg);
-    if (!ok) { this.showSetup('Connection failed. Double-check your config values.'); return; }
-    FirebaseConfig.save(cfg);
-    this.renderShell();
-    this.startListening();
   },
 };
 

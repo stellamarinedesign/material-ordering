@@ -19,8 +19,7 @@
       background: none; border: none;
       color: var(--red-text); font-size: 15px;
       opacity: 0; pointer-events: none;
-      transition: opacity 0.15s;
-      flex-shrink: 0;
+      transition: opacity 0.15s; flex-shrink: 0;
     }
     .mat-card.in-order .mat-bin { opacity: 1; pointer-events: auto; }
   </style>
@@ -32,16 +31,15 @@
 <script src="js/shared.js"></script>
 <script src="js/firebase-sync.js"></script>
 <script>
-// ── GLOBAL HANDLER OBJECT ──
-// All inline onclick calls go through W.* so there are no closures
-// that stack up and no escaping issues with category/subcategory names.
-const W = {};
-
 const Worker = {
   activeCat:  null,
   activeSub:  null,
   orderRef:   genRef(),
   materials:  [],
+
+  // Category/sub stored by index so no string-in-HTML issues
+  _cats: [],
+  _subs: [],
 
   async init() {
     if ('serviceWorker' in navigator) {
@@ -56,7 +54,6 @@ const Worker = {
     this.renderApp();
   },
 
-  // ── SETUP ──
   showSetup(err) {
     document.getElementById('root').innerHTML = `
       <div class="setup-screen">
@@ -67,7 +64,7 @@ const Worker = {
           <div class="setup-field"><label>API Key</label><input id="cfg-apiKey" autocomplete="off" placeholder="AIzaSy..."></div>
           <div class="setup-field"><label>Project ID</label><input id="cfg-projectId" autocomplete="off" placeholder="my-project-id"></div>
           <div class="setup-field"><label>App ID</label><input id="cfg-appId" autocomplete="off" placeholder="1:123456:web:abc..."></div>
-          <button class="btn btn-primary" style="margin-top:8px" onclick="W.saveConfig()">
+          <button class="btn btn-primary" style="margin-top:8px" onclick="Worker.saveConfig()">
             <i class="ti ti-plug"></i> Connect
           </button>
           <div class="setup-note" style="margin-top:14px">
@@ -77,7 +74,22 @@ const Worker = {
       </div>`;
   },
 
-  // ── APP SHELL — rendered ONCE, never re-rendered ──
+  async saveConfig() {
+    const apiKey    = document.getElementById('cfg-apiKey').value.trim();
+    const projectId = document.getElementById('cfg-projectId').value.trim();
+    const appId     = document.getElementById('cfg-appId').value.trim();
+    if (!apiKey || !projectId || !appId) { alert('Please fill in all fields.'); return; }
+    const cfg = { apiKey, projectId, appId,
+      authDomain: `${projectId}.firebaseapp.com`,
+      storageBucket: `${projectId}.appspot.com`,
+      messagingSenderId: '000000000000' };
+    const ok = await DB.init(cfg);
+    if (!ok) { this.showSetup('Connection failed. Double-check your config values.'); return; }
+    FirebaseConfig.save(cfg);
+    this.materials = await Data.load('./materials.csv');
+    this.renderApp();
+  },
+
   renderApp() {
     document.getElementById('root').innerHTML = `
       <div class="app-root" id="app-root">
@@ -89,7 +101,7 @@ const Worker = {
             </div>
             <div class="header-actions">
               <span class="role-pill">Worker</span>
-              <button class="icon-btn" onclick="W.openReview()" aria-label="Review order">
+              <button class="icon-btn" id="btn-review" aria-label="Review order">
                 <i class="ti ti-clipboard-list"></i>
                 <span class="order-badge" id="order-badge" style="display:none">0</span>
               </button>
@@ -102,8 +114,7 @@ const Worker = {
         <div class="search-bar">
           <div class="col"><div class="search-wrap">
             <i class="ti ti-search"></i>
-            <input type="search" id="search" placeholder="Search part code or description…"
-              autocomplete="off" oninput="W.search()">
+            <input type="search" id="search" placeholder="Search part code or description…" autocomplete="off">
           </div></div>
         </div>
 
@@ -113,10 +124,9 @@ const Worker = {
           </div>
         </div>
 
-        <!-- REVIEW PANEL -->
         <div class="panel" id="review-panel">
           <div class="panel-header">
-            <button class="back-btn" onclick="W.closePanel('review-panel')">
+            <button class="back-btn" id="btn-close-review">
               <i class="ti ti-chevron-left"></i> Back
             </button>
             <div class="panel-title">Order Confirmation</div>
@@ -126,16 +136,15 @@ const Worker = {
             <div class="panel-col" id="review-contents"></div>
           </div>
           <div class="action-bar"><div class="action-bar-inner">
-            <button class="btn btn-orange" onclick="W.confirmSubmit()">
+            <button class="btn btn-orange" id="btn-submit">
               <i class="ti ti-send"></i> Submit to manager
             </button>
-            <button class="btn btn-danger" onclick="W.clearOrder()">
+            <button class="btn btn-danger" id="btn-clear">
               <i class="ti ti-x"></i> Clear order
             </button>
           </div></div>
         </div>
 
-        <!-- SUCCESS PANEL -->
         <div class="panel" id="success-panel" style="background:var(--surface);z-index:30">
           <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;
               flex:1;padding:40px 24px;text-align:center">
@@ -146,7 +155,7 @@ const Worker = {
             <p style="font-size:14px;color:var(--text2);line-height:1.6;max-width:300px;margin-bottom:28px">
               The production manager has been notified and will review your order.
             </p>
-            <button class="btn btn-primary" style="max-width:280px" onclick="W.newOrder()">
+            <button class="btn btn-primary" style="max-width:280px" id="btn-new-order">
               <i class="ti ti-plus"></i> Start new order
             </button>
           </div>
@@ -154,112 +163,125 @@ const Worker = {
       </div>
       <div id="overlay-wrap"></div>`;
 
-    // Wire up W.* handlers now that DOM exists
-    this._bindHandlers();
+    // ── Bind all static buttons via addEventListener — no inline onclick needed ──
+    document.getElementById('btn-review').addEventListener('click', () => this.openReview());
+    document.getElementById('btn-close-review').addEventListener('click', () => this.closePanel('review-panel'));
+    document.getElementById('btn-submit').addEventListener('click', () => this.confirmSubmit());
+    document.getElementById('btn-clear').addEventListener('click', () => this.clearOrder());
+    document.getElementById('btn-new-order').addEventListener('click', () => this.newOrder());
+    document.getElementById('search').addEventListener('input', () => this.renderList());
+
     this.renderTabs();
     this.renderList();
     this.updateBadge();
   },
 
-  // ── BIND ALL HANDLERS ONCE ──
-  // W.* is a stable object — handlers are set once and never duplicated.
-  _bindHandlers() {
-    const self = this;
-
-    W.saveConfig   = () => self.saveConfig();
-    W.openReview   = () => self.openReview();
-    W.closePanel   = id => self.closePanel(id);
-    W.confirmSubmit= () => self.confirmSubmit();
-    W.clearOrder   = () => self.clearOrder();
-    W.closeOverlay = () => self.closeOverlay();
-    W.doSubmit     = () => self.doSubmit();
-    W.newOrder     = () => self.newOrder();
-    W.search       = () => self.renderList();
-
-    // Category/subcategory — store the value in a closure-safe way
-    // These are re-bound each time tabs are rendered (safe — just replaces a function reference)
-    W.setCat = cat => self.setCat(cat);
-    W.setSub = sub => self.setSub(sub);
-
-    // Material card controls — keyed by material id, safe to call repeatedly
-    W.adj      = (id, d)  => self.adj(id, d);
-    W.setQty   = (id, v)  => self.setQty(id, v);
-    W.quickAdd = id       => self.quickAdd(id);
-    W.zeroItem = id       => self.zeroItem(id);
-
-    // Review panel controls
-    W.revAdj    = (id, d) => self.revAdj(id, d);
-    W.revSet    = (id, v) => self.revSet(id, v);
-    W.removeItem= id      => self.removeItem(id);
-  },
-
   // ── TABS ──
-  // Tabs are re-rendered into #tabs-wrap when category changes.
-  // They only contain buttons with onclick="W.setCat(...)" — W is stable so no stacking.
+  // Uses data-index attributes + a single delegated listener on the container.
+  // The listener is attached to a fresh element each time, so there's only ever ONE listener.
   renderTabs() {
     const wrap = document.getElementById('tabs-wrap');
     if (!wrap) return;
-    const cats = Data.categories(this.materials);
 
-    const catBtns = cats.map(c =>
-      `<button class="tab ${this.activeCat === c ? 'active' : ''}"
-        onclick="W.setCat(${JSON.stringify(c)})">${esc(c)}</button>`
+    this._cats = Data.categories(this.materials);
+    this._subs = this.activeCat ? Data.subcategories(this.materials, this.activeCat) : [];
+
+    const catBtns = this._cats.map((c, i) =>
+      `<button class="tab ${this.activeCat === c ? 'active' : ''}" data-cat-idx="${i}">${esc(c)}</button>`
     ).join('');
 
     let subHtml = '';
-    if (this.activeCat) {
-      const subs = Data.subcategories(this.materials, this.activeCat);
-      const subBtns = subs.map(s =>
-        `<button class="tab ${this.activeSub === s ? 'active' : ''}"
-          onclick="W.setSub(${JSON.stringify(s)})">${esc(s)}</button>`
+    if (this.activeCat && this._subs.length) {
+      const subBtns = this._subs.map((s, i) =>
+        `<button class="tab ${this.activeSub === s ? 'active' : ''}" data-sub-idx="${i}">${esc(s)}</button>`
       ).join('');
-      subHtml = `<div class="tabs-bar sub-bar">
+      subHtml = `<div class="tabs-bar sub-bar" id="sub-bar">
         <div class="tabs-inner">
-          <button class="tab ${!this.activeSub ? 'active' : ''}" onclick="W.setSub(null)">All</button>
+          <button class="tab ${!this.activeSub ? 'active' : ''}" data-sub-idx="-1">All</button>
           ${subBtns}
         </div>
       </div>`;
     }
 
-    wrap.innerHTML = `<div class="tabs-bar">
+    // Replace inner HTML — this creates fresh elements, so fresh single listeners
+    wrap.innerHTML = `<div class="tabs-bar" id="cat-bar">
       <div class="tabs-inner">
-        <button class="tab ${!this.activeCat ? 'active' : ''}" onclick="W.setCat(null)">All</button>
+        <button class="tab ${!this.activeCat ? 'active' : ''}" data-cat-idx="-1">All</button>
         ${catBtns}
       </div>
     </div>${subHtml}`;
+
+    // One listener on the new cat-bar element
+    document.getElementById('cat-bar').addEventListener('click', e => {
+      const btn = e.target.closest('[data-cat-idx]');
+      if (!btn) return;
+      const idx = parseInt(btn.dataset.catIdx);
+      this.setCat(idx === -1 ? null : this._cats[idx]);
+    });
+
+    // One listener on the new sub-bar element (if present)
+    const subBar = document.getElementById('sub-bar');
+    if (subBar) {
+      subBar.addEventListener('click', e => {
+        const btn = e.target.closest('[data-sub-idx]');
+        if (!btn) return;
+        const idx = parseInt(btn.dataset.subIdx);
+        this.setSub(idx === -1 ? null : this._subs[idx]);
+      });
+    }
   },
 
   setCat(cat) {
-    this.activeCat = cat || null; this.activeSub = null;
+    this.activeCat = cat; this.activeSub = null;
     this.renderTabs(); this.renderList();
     const s = document.getElementById('app-scroll'); if (s) s.scrollTop = 0;
   },
   setSub(sub) {
-    this.activeSub = sub || null;
+    this.activeSub = sub;
     this.renderTabs(); this.renderList();
     const s = document.getElementById('app-scroll'); if (s) s.scrollTop = 0;
   },
 
   // ── MATERIAL LIST ──
-  // Re-rendered on filter/qty changes. Uses W.* which is stable — no listener stacking possible.
+  // Uses data attributes + a single delegated listener, replaced each render.
   renderList() {
     const q        = document.getElementById('search')?.value || '';
     const filtered = Data.filter(this.materials, this.activeCat, this.activeSub, q);
     const list     = document.getElementById('mat-list');
     if (!list) return;
+
     if (!filtered.length) {
       list.innerHTML = `<div class="empty-state"><i class="ti ti-package-off"></i><p>No materials found.</p></div>`;
       return;
     }
+
     list.innerHTML = filtered.map(m => this._matCard(m)).join('');
+
+    // Single fresh listener on the list container
+    list.addEventListener('click', e => {
+      const dec = e.target.closest('[data-dec]');
+      const inc = e.target.closest('[data-inc]');
+      const add = e.target.closest('[data-add]');
+      const bin = e.target.closest('[data-bin]');
+      if (dec) this.adj(+dec.dataset.dec, -1);
+      if (inc) this.adj(+inc.dataset.inc,  1);
+      if (add) this.quickAdd(+add.dataset.add);
+      if (bin) this.zeroItem(+bin.dataset.bin);
+    });
+    list.addEventListener('change', e => {
+      const inp = e.target.closest('[data-qid]');
+      if (inp) this.setQty(+inp.dataset.qid, inp.value);
+    });
+    // Note: these listeners are on the NEW list element created by innerHTML assignment.
+    // Each render replaces the element's content and attaches exactly one listener pair.
+    // There is no accumulation.
   },
 
   _matCard(m) {
-    const qty     = Order.get(m.id);
-    const inOrder = qty > 0;
-    const ci      = CAT_ICONS[m.category] || CAT_ICONS.default;
+    const qty = Order.get(m.id), inOrder = qty > 0;
+    const ci  = CAT_ICONS[m.category] || CAT_ICONS.default;
     return `<div class="mat-card ${inOrder ? 'in-order' : ''}">
-      <button class="mat-bin" onclick="W.zeroItem(${m.id})" aria-label="Remove">
+      <button class="mat-bin" data-bin="${m.id}" aria-label="Remove">
         <i class="ti ti-trash"></i>
       </button>
       <div class="mat-icon" style="background:${ci.bg}">
@@ -271,42 +293,38 @@ const Worker = {
         <div class="mat-unit">${esc(m.qtyType || '')}</div>
       </div>
       <div class="mat-controls">
-        <button class="qty-btn" onclick="W.adj(${m.id},-1)">−</button>
-        <input class="qty-input" type="number" min="0" step="1" value="${qty}"
-          onchange="W.setQty(${m.id},this.value)">
-        <button class="qty-btn" onclick="W.adj(${m.id},1)">+</button>
-        <button class="add-btn ${inOrder ? 'in-order' : ''}" onclick="W.quickAdd(${m.id})">
+        <button class="qty-btn" data-dec="${m.id}">−</button>
+        <input class="qty-input" type="number" min="0" step="1" value="${qty}" data-qid="${m.id}">
+        <button class="qty-btn" data-inc="${m.id}">+</button>
+        <button class="add-btn ${inOrder ? 'in-order' : ''}" data-add="${m.id}">
           <i class="ti ${inOrder ? 'ti-check' : 'ti-plus'}"></i>
         </button>
       </div>
     </div>`;
   },
 
-  // ── ORDER ACTIONS ──
-  adj(id, d)     { Order.adjust(id, d);           this._changed(); },
-  setQty(id, v)  { Order.set(id, parseInt(v)||0); this._changed(); },
-  quickAdd(id)   { if (!Order.get(id)) Order.set(id, 1); this._changed(); },
-  zeroItem(id)   { Order.remove(id); this._changed(); },
+  adj(id, d)    { Order.adjust(id, d);           this._changed(); },
+  setQty(id, v) { Order.set(id, parseInt(v)||0); this._changed(); },
+  quickAdd(id)  { if (!Order.get(id)) Order.set(id, 1); this._changed(); },
+  zeroItem(id)  { Order.remove(id); this._changed(); },
 
-  // Review panel — only re-renders review contents, NOT the main list
   revAdj(id, d)  { Order.adjust(id, d);           this.updateBadge(); this._syncReview(); },
   revSet(id, v)  { Order.set(id, parseInt(v)||0); this.updateBadge(); this._syncReview(); },
   removeItem(id) { Order.remove(id);              this.updateBadge(); this._syncReview(); },
-  clearOrder()   { if (!confirm('Clear all items?')) return; Order.clear(); this.updateBadge(); this._syncReview(); },
+  clearOrder()   {
+    if (!confirm('Clear all items?')) return;
+    Order.clear(); this.updateBadge(); this._syncReview();
+  },
 
   _changed() {
-    this.updateBadge();
-    this.renderList();
-    // Also refresh review panel contents if it's open, but DON'T re-render the list from inside review
+    this.updateBadge(); this.renderList();
     if (document.getElementById('review-panel')?.classList.contains('open')) {
       this._renderReviewContents();
     }
   },
-
-  // Sync review → also refresh main list so quantities stay consistent
   _syncReview() {
     this._renderReviewContents();
-    this.renderList();  // keeps main list in sync with review edits
+    this.renderList();
   },
 
   updateBadge() {
@@ -318,11 +336,7 @@ const Worker = {
 
   openPanel(id)  { document.getElementById(id)?.classList.add('open'); },
   closePanel(id) { document.getElementById(id)?.classList.remove('open'); },
-
-  openReview() {
-    this._renderReviewContents();
-    this.openPanel('review-panel');
-  },
+  openReview()   { this._renderReviewContents(); this.openPanel('review-panel'); },
 
   _renderReviewContents() {
     const wrap = document.getElementById('review-contents');
@@ -332,9 +346,8 @@ const Worker = {
       wrap.innerHTML = `<div class="empty-state"><i class="ti ti-clipboard"></i><p>No items on this order yet.</p></div>`;
       return;
     }
-    // Review uses W.revAdj / W.revSet — same stable W object, no stacking
     wrap.innerHTML = items.map(i => `
-      <div class="order-item">
+      <div class="order-item" data-rid="${i.id}">
         <div class="order-item-row">
           <div>
             <div class="order-item-name">${esc(i.description)}</div>
@@ -344,13 +357,10 @@ const Worker = {
           <div class="order-item-qty">× ${i.qty}</div>
         </div>
         <div class="order-item-foot">
-          <button class="qty-btn" onclick="W.revAdj(${i.id},-1)">−</button>
-          <input class="qty-input" type="number" min="1" step="1" value="${i.qty}"
-            onchange="W.revSet(${i.id},this.value)">
-          <button class="qty-btn" onclick="W.revAdj(${i.id},1)">+</button>
-          <button class="remove-btn" onclick="W.removeItem(${i.id})">
-            <i class="ti ti-x"></i> Remove
-          </button>
+          <button class="qty-btn" data-rdec="${i.id}">−</button>
+          <input class="qty-input" type="number" min="1" step="1" value="${i.qty}" data-rqid="${i.id}">
+          <button class="qty-btn" data-rinc="${i.id}">+</button>
+          <button class="remove-btn" data-rrem="${i.id}"><i class="ti ti-x"></i> Remove</button>
         </div>
       </div>`).join('') + `
       <div class="order-summary-card">
@@ -359,14 +369,28 @@ const Worker = {
           <span>${items.reduce((s,i)=>s+i.qty,0)} across ${items.length} line${items.length!==1?'s':''}</span>
         </div>
       </div>`;
+
+    // Single fresh listener on the new review-contents element
+    wrap.addEventListener('click', e => {
+      const dec = e.target.closest('[data-rdec]');
+      const inc = e.target.closest('[data-rinc]');
+      const rem = e.target.closest('[data-rrem]');
+      if (dec) this.revAdj(+dec.dataset.rdec, -1);
+      if (inc) this.revAdj(+inc.dataset.rinc,  1);
+      if (rem) this.removeItem(+rem.dataset.rrem);
+    });
+    wrap.addEventListener('change', e => {
+      const inp = e.target.closest('[data-rqid]');
+      if (inp) this.revSet(+inp.dataset.rqid, inp.value);
+    });
   },
 
-  // ── SUBMIT ──
   confirmSubmit() {
     if (Order.isEmpty()) { alert('No items on this order.'); return; }
     const items = Order.items(this.materials);
     const lines = items.map(i => `${i.partCode}  ×${i.qty}  ${i.description}`).join('\n');
-    document.getElementById('overlay-wrap').innerHTML = `
+    const overlay = document.getElementById('overlay-wrap');
+    overlay.innerHTML = `
       <div class="overlay" id="submit-confirm">
         <div class="sheet">
           <div class="sheet-handle"></div>
@@ -375,13 +399,15 @@ const Worker = {
             border-radius:var(--radius);margin-bottom:12px;white-space:pre-wrap;line-height:1.6">${esc(lines)}</pre>
           <p>The production manager will review and forward to purchasing.</p>
           <div class="sheet-btns">
-            <button class="btn btn-orange" onclick="W.doSubmit()">
+            <button class="btn btn-orange" id="btn-confirm-yes">
               <i class="ti ti-send"></i> Confirm and submit
             </button>
-            <button class="btn btn-outline" onclick="W.closeOverlay()">Cancel</button>
+            <button class="btn btn-outline" id="btn-confirm-no">Cancel</button>
           </div>
         </div>
       </div>`;
+    document.getElementById('btn-confirm-yes').addEventListener('click', () => this.doSubmit());
+    document.getElementById('btn-confirm-no').addEventListener('click',  () => this.closeOverlay());
     requestAnimationFrame(() => document.getElementById('submit-confirm')?.classList.add('show'));
   },
 
@@ -408,35 +434,14 @@ const Worker = {
     }
   },
 
-  async saveConfig() {
-    const apiKey    = document.getElementById('cfg-apiKey').value.trim();
-    const projectId = document.getElementById('cfg-projectId').value.trim();
-    const appId     = document.getElementById('cfg-appId').value.trim();
-    if (!apiKey || !projectId || !appId) { alert('Please fill in all fields.'); return; }
-    const cfg = { apiKey, projectId, appId,
-      authDomain: `${projectId}.firebaseapp.com`,
-      storageBucket: `${projectId}.appspot.com`,
-      messagingSenderId: '000000000000' };
-    const ok = await DB.init(cfg);
-    if (!ok) { this.showSetup('Connection failed. Double-check your config values.'); return; }
-    FirebaseConfig.save(cfg);
-    this.materials = await Data.load('./materials.csv');
-    this.renderApp();
-  },
-
   newOrder() {
     Order.clear();
-    this.orderRef  = genRef();
-    this.activeCat = null;
-    this.activeSub = null;
+    this.orderRef = genRef(); this.activeCat = null; this.activeSub = null;
     this.closePanel('success-panel');
     this.updateBadge();
-    const ref = document.getElementById('order-ref');
-    if (ref) ref.textContent = this.orderRef;
-    const search = document.getElementById('search');
-    if (search) search.value = '';
-    this.renderTabs();
-    this.renderList();
+    const ref = document.getElementById('order-ref'); if (ref) ref.textContent = this.orderRef;
+    const srch = document.getElementById('search'); if (srch) srch.value = '';
+    this.renderTabs(); this.renderList();
   },
 };
 
