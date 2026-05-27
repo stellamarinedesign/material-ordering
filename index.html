@@ -14,14 +14,11 @@
   <link rel="stylesheet" href="css/style.css">
   <style>
     .mat-bin {
-      width: 30px; height: 32px;
-      display: flex; align-items: center; justify-content: center;
-      background: none; border: none;
-      color: var(--red-text); font-size: 15px;
-      opacity: 0; pointer-events: none;
-      transition: opacity 0.15s; flex-shrink: 0;
+      width:30px; height:32px; display:flex; align-items:center; justify-content:center;
+      background:none; border:none; color:var(--red-text); font-size:15px;
+      opacity:0; pointer-events:none; transition:opacity 0.15s; flex-shrink:0;
     }
-    .mat-card.in-order .mat-bin { opacity: 1; pointer-events: auto; }
+    .mat-card.in-order .mat-bin { opacity:1; pointer-events:auto; }
   </style>
 </head>
 <body>
@@ -36,10 +33,8 @@ const Worker = {
   activeSub:  null,
   orderRef:   genRef(),
   materials:  [],
-
-  // Category/sub stored by index so no string-in-HTML issues
-  _cats: [],
-  _subs: [],
+  _cats:      [],   // current category list — populated by renderTabs
+  _subs:      [],   // current subcategory list — populated by renderTabs
 
   async init() {
     if ('serviceWorker' in navigator) {
@@ -64,7 +59,7 @@ const Worker = {
           <div class="setup-field"><label>API Key</label><input id="cfg-apiKey" autocomplete="off" placeholder="AIzaSy..."></div>
           <div class="setup-field"><label>Project ID</label><input id="cfg-projectId" autocomplete="off" placeholder="my-project-id"></div>
           <div class="setup-field"><label>App ID</label><input id="cfg-appId" autocomplete="off" placeholder="1:123456:web:abc..."></div>
-          <button class="btn btn-primary" style="margin-top:8px" onclick="Worker.saveConfig()">
+          <button id="btn-connect" class="btn btn-primary" style="margin-top:8px">
             <i class="ti ti-plug"></i> Connect
           </button>
           <div class="setup-note" style="margin-top:14px">
@@ -72,6 +67,7 @@ const Worker = {
           </div>
         </div>
       </div>`;
+    document.getElementById('btn-connect').addEventListener('click', () => this.saveConfig());
   },
 
   async saveConfig() {
@@ -80,9 +76,9 @@ const Worker = {
     const appId     = document.getElementById('cfg-appId').value.trim();
     if (!apiKey || !projectId || !appId) { alert('Please fill in all fields.'); return; }
     const cfg = { apiKey, projectId, appId,
-      authDomain: `${projectId}.firebaseapp.com`,
-      storageBucket: `${projectId}.appspot.com`,
-      messagingSenderId: '000000000000' };
+      authDomain:`${projectId}.firebaseapp.com`,
+      storageBucket:`${projectId}.appspot.com`,
+      messagingSenderId:'000000000000' };
     const ok = await DB.init(cfg);
     if (!ok) { this.showSetup('Connection failed. Double-check your config values.'); return; }
     FirebaseConfig.save(cfg);
@@ -90,6 +86,7 @@ const Worker = {
     this.renderApp();
   },
 
+  // ── APP SHELL — rendered exactly once ──
   renderApp() {
     document.getElementById('root').innerHTML = `
       <div class="app-root" id="app-root">
@@ -163,26 +160,71 @@ const Worker = {
       </div>
       <div id="overlay-wrap"></div>`;
 
-    // ── Bind all static buttons via addEventListener — no inline onclick needed ──
-    document.getElementById('btn-review').addEventListener('click', () => this.openReview());
+    // ── ALL LISTENERS ATTACHED ONCE HERE, NEVER AGAIN ──
+
+    // Static buttons
+    document.getElementById('btn-review')      .addEventListener('click', () => this.openReview());
     document.getElementById('btn-close-review').addEventListener('click', () => this.closePanel('review-panel'));
-    document.getElementById('btn-submit').addEventListener('click', () => this.confirmSubmit());
-    document.getElementById('btn-clear').addEventListener('click', () => this.clearOrder());
-    document.getElementById('btn-new-order').addEventListener('click', () => this.newOrder());
-    document.getElementById('search').addEventListener('input', () => this.renderList());
+    document.getElementById('btn-submit')      .addEventListener('click', () => this.confirmSubmit());
+    document.getElementById('btn-clear')       .addEventListener('click', () => this.clearOrder());
+    document.getElementById('btn-new-order')   .addEventListener('click', () => this.newOrder());
+    document.getElementById('search')          .addEventListener('input', () => this.renderList());
+
+    // ── MATERIAL LIST — single permanent delegated listener on #mat-list ──
+    // #mat-list persists for the lifetime of the app. We attach ONE listener here.
+    // renderList() only sets innerHTML — it never touches listeners.
+    document.getElementById('mat-list').addEventListener('click', e => {
+      const dec = e.target.closest('[data-dec]');
+      const inc = e.target.closest('[data-inc]');
+      const add = e.target.closest('[data-add]');
+      const bin = e.target.closest('[data-bin]');
+      if (dec) { e.stopPropagation(); this.adj(+dec.dataset.dec, -1); }
+      if (inc) { e.stopPropagation(); this.adj(+inc.dataset.inc,  1); }
+      if (add) { e.stopPropagation(); this.quickAdd(+add.dataset.add); }
+      if (bin) { e.stopPropagation(); this.zeroItem(+bin.dataset.bin); }
+    });
+    document.getElementById('mat-list').addEventListener('change', e => {
+      const inp = e.target.closest('[data-qid]');
+      if (inp) this.setQty(+inp.dataset.qid, inp.value);
+    });
+
+    // ── REVIEW PANEL — single permanent delegated listener on #review-contents ──
+    document.getElementById('review-contents').addEventListener('click', e => {
+      const dec = e.target.closest('[data-rdec]');
+      const inc = e.target.closest('[data-rinc]');
+      const rem = e.target.closest('[data-rrem]');
+      if (dec) this.revAdj(+dec.dataset.rdec, -1);
+      if (inc) this.revAdj(+inc.dataset.rinc,  1);
+      if (rem) this.removeItem(+rem.dataset.rrem);
+    });
+    document.getElementById('review-contents').addEventListener('change', e => {
+      const inp = e.target.closest('[data-rqid]');
+      if (inp) this.revSet(+inp.dataset.rqid, inp.value);
+    });
+
+    // Tabs — delegated listeners on #tabs-wrap (also permanent)
+    // renderTabs() only sets innerHTML of tabs-wrap, listener stays on the wrapper
+    document.getElementById('tabs-wrap').addEventListener('click', e => {
+      const catBtn = e.target.closest('[data-cat-idx]');
+      const subBtn = e.target.closest('[data-sub-idx]');
+      if (catBtn) {
+        const idx = parseInt(catBtn.dataset.catIdx);
+        this.setCat(idx === -1 ? null : this._cats[idx]);
+      } else if (subBtn) {
+        const idx = parseInt(subBtn.dataset.subIdx);
+        this.setSub(idx === -1 ? null : this._subs[idx]);
+      }
+    });
 
     this.renderTabs();
     this.renderList();
     this.updateBadge();
   },
 
-  // ── TABS ──
-  // Uses data-index attributes + a single delegated listener on the container.
-  // The listener is attached to a fresh element each time, so there's only ever ONE listener.
+  // ── TABS — only sets innerHTML, no listeners ──
   renderTabs() {
     const wrap = document.getElementById('tabs-wrap');
     if (!wrap) return;
-
     this._cats = Data.categories(this.materials);
     this._subs = this.activeCat ? Data.subcategories(this.materials, this.activeCat) : [];
 
@@ -195,7 +237,7 @@ const Worker = {
       const subBtns = this._subs.map((s, i) =>
         `<button class="tab ${this.activeSub === s ? 'active' : ''}" data-sub-idx="${i}">${esc(s)}</button>`
       ).join('');
-      subHtml = `<div class="tabs-bar sub-bar" id="sub-bar">
+      subHtml = `<div class="tabs-bar sub-bar">
         <div class="tabs-inner">
           <button class="tab ${!this.activeSub ? 'active' : ''}" data-sub-idx="-1">All</button>
           ${subBtns}
@@ -203,32 +245,12 @@ const Worker = {
       </div>`;
     }
 
-    // Replace inner HTML — this creates fresh elements, so fresh single listeners
-    wrap.innerHTML = `<div class="tabs-bar" id="cat-bar">
+    wrap.innerHTML = `<div class="tabs-bar">
       <div class="tabs-inner">
         <button class="tab ${!this.activeCat ? 'active' : ''}" data-cat-idx="-1">All</button>
         ${catBtns}
       </div>
     </div>${subHtml}`;
-
-    // One listener on the new cat-bar element
-    document.getElementById('cat-bar').addEventListener('click', e => {
-      const btn = e.target.closest('[data-cat-idx]');
-      if (!btn) return;
-      const idx = parseInt(btn.dataset.catIdx);
-      this.setCat(idx === -1 ? null : this._cats[idx]);
-    });
-
-    // One listener on the new sub-bar element (if present)
-    const subBar = document.getElementById('sub-bar');
-    if (subBar) {
-      subBar.addEventListener('click', e => {
-        const btn = e.target.closest('[data-sub-idx]');
-        if (!btn) return;
-        const idx = parseInt(btn.dataset.subIdx);
-        this.setSub(idx === -1 ? null : this._subs[idx]);
-      });
-    }
   },
 
   setCat(cat) {
@@ -242,39 +264,17 @@ const Worker = {
     const s = document.getElementById('app-scroll'); if (s) s.scrollTop = 0;
   },
 
-  // ── MATERIAL LIST ──
-  // Uses data attributes + a single delegated listener, replaced each render.
+  // ── MATERIAL LIST — only sets innerHTML, no listeners ──
   renderList() {
     const q        = document.getElementById('search')?.value || '';
     const filtered = Data.filter(this.materials, this.activeCat, this.activeSub, q);
     const list     = document.getElementById('mat-list');
     if (!list) return;
-
     if (!filtered.length) {
       list.innerHTML = `<div class="empty-state"><i class="ti ti-package-off"></i><p>No materials found.</p></div>`;
       return;
     }
-
     list.innerHTML = filtered.map(m => this._matCard(m)).join('');
-
-    // Single fresh listener on the list container
-    list.addEventListener('click', e => {
-      const dec = e.target.closest('[data-dec]');
-      const inc = e.target.closest('[data-inc]');
-      const add = e.target.closest('[data-add]');
-      const bin = e.target.closest('[data-bin]');
-      if (dec) this.adj(+dec.dataset.dec, -1);
-      if (inc) this.adj(+inc.dataset.inc,  1);
-      if (add) this.quickAdd(+add.dataset.add);
-      if (bin) this.zeroItem(+bin.dataset.bin);
-    });
-    list.addEventListener('change', e => {
-      const inp = e.target.closest('[data-qid]');
-      if (inp) this.setQty(+inp.dataset.qid, inp.value);
-    });
-    // Note: these listeners are on the NEW list element created by innerHTML assignment.
-    // Each render replaces the element's content and attaches exactly one listener pair.
-    // There is no accumulation.
   },
 
   _matCard(m) {
@@ -303,11 +303,11 @@ const Worker = {
     </div>`;
   },
 
-  adj(id, d)    { Order.adjust(id, d);           this._changed(); },
-  setQty(id, v) { Order.set(id, parseInt(v)||0); this._changed(); },
-  quickAdd(id)  { if (!Order.get(id)) Order.set(id, 1); this._changed(); },
-  zeroItem(id)  { Order.remove(id); this._changed(); },
-
+  // ── ORDER ACTIONS ──
+  adj(id, d)     { Order.adjust(id, d);           this._changed(); },
+  setQty(id, v)  { Order.set(id, parseInt(v)||0); this._changed(); },
+  quickAdd(id)   { if (!Order.get(id)) Order.set(id, 1); this._changed(); },
+  zeroItem(id)   { Order.remove(id); this._changed(); },
   revAdj(id, d)  { Order.adjust(id, d);           this.updateBadge(); this._syncReview(); },
   revSet(id, v)  { Order.set(id, parseInt(v)||0); this.updateBadge(); this._syncReview(); },
   removeItem(id) { Order.remove(id);              this.updateBadge(); this._syncReview(); },
@@ -317,7 +317,8 @@ const Worker = {
   },
 
   _changed() {
-    this.updateBadge(); this.renderList();
+    this.updateBadge();
+    this.renderList();
     if (document.getElementById('review-panel')?.classList.contains('open')) {
       this._renderReviewContents();
     }
@@ -338,6 +339,7 @@ const Worker = {
   closePanel(id) { document.getElementById(id)?.classList.remove('open'); },
   openReview()   { this._renderReviewContents(); this.openPanel('review-panel'); },
 
+  // ── REVIEW CONTENTS — only sets innerHTML, no listeners ──
   _renderReviewContents() {
     const wrap = document.getElementById('review-contents');
     if (!wrap) return;
@@ -347,7 +349,7 @@ const Worker = {
       return;
     }
     wrap.innerHTML = items.map(i => `
-      <div class="order-item" data-rid="${i.id}">
+      <div class="order-item">
         <div class="order-item-row">
           <div>
             <div class="order-item-name">${esc(i.description)}</div>
@@ -369,28 +371,15 @@ const Worker = {
           <span>${items.reduce((s,i)=>s+i.qty,0)} across ${items.length} line${items.length!==1?'s':''}</span>
         </div>
       </div>`;
-
-    // Single fresh listener on the new review-contents element
-    wrap.addEventListener('click', e => {
-      const dec = e.target.closest('[data-rdec]');
-      const inc = e.target.closest('[data-rinc]');
-      const rem = e.target.closest('[data-rrem]');
-      if (dec) this.revAdj(+dec.dataset.rdec, -1);
-      if (inc) this.revAdj(+inc.dataset.rinc,  1);
-      if (rem) this.removeItem(+rem.dataset.rrem);
-    });
-    wrap.addEventListener('change', e => {
-      const inp = e.target.closest('[data-rqid]');
-      if (inp) this.revSet(+inp.dataset.rqid, inp.value);
-    });
   },
 
+  // ── SUBMIT ──
   confirmSubmit() {
     if (Order.isEmpty()) { alert('No items on this order.'); return; }
     const items = Order.items(this.materials);
     const lines = items.map(i => `${i.partCode}  ×${i.qty}  ${i.description}`).join('\n');
-    const overlay = document.getElementById('overlay-wrap');
-    overlay.innerHTML = `
+    const ow = document.getElementById('overlay-wrap');
+    ow.innerHTML = `
       <div class="overlay" id="submit-confirm">
         <div class="sheet">
           <div class="sheet-handle"></div>
@@ -407,7 +396,7 @@ const Worker = {
         </div>
       </div>`;
     document.getElementById('btn-confirm-yes').addEventListener('click', () => this.doSubmit());
-    document.getElementById('btn-confirm-no').addEventListener('click',  () => this.closeOverlay());
+    document.getElementById('btn-confirm-no') .addEventListener('click', () => this.closeOverlay());
     requestAnimationFrame(() => document.getElementById('submit-confirm')?.classList.add('show'));
   },
 
@@ -421,15 +410,14 @@ const Worker = {
   async doSubmit() {
     this.closeOverlay();
     const items = Order.items(this.materials).map(i => ({
-      id: i.id, partCode: i.partCode, description: i.description,
-      category: i.category, subcategory: i.subcategory,
-      qtyType: i.qtyType || '', qty: i.qty,
+      id:i.id, partCode:i.partCode, description:i.description,
+      category:i.category, subcategory:i.subcategory, qtyType:i.qtyType||'', qty:i.qty,
     }));
     try {
-      await DB.submitOrder({ ref: this.orderRef, items });
+      await DB.submitOrder({ ref:this.orderRef, items });
       this.closePanel('review-panel');
       this.openPanel('success-panel');
-    } catch (e) {
+    } catch(e) {
       alert('Failed to submit. Check your internet connection.\n\n' + e.message);
     }
   },
@@ -439,9 +427,10 @@ const Worker = {
     this.orderRef = genRef(); this.activeCat = null; this.activeSub = null;
     this.closePanel('success-panel');
     this.updateBadge();
-    const ref = document.getElementById('order-ref'); if (ref) ref.textContent = this.orderRef;
-    const srch = document.getElementById('search'); if (srch) srch.value = '';
-    this.renderTabs(); this.renderList();
+    const ref  = document.getElementById('order-ref');  if (ref)  ref.textContent = this.orderRef;
+    const srch = document.getElementById('search');     if (srch) srch.value = '';
+    this.renderTabs();
+    this.renderList();
   },
 };
 

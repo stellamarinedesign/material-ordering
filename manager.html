@@ -12,8 +12,7 @@
     .qty-row .qty-btn {
       width:28px; height:28px; font-size:15px;
       background:var(--bg); border:1px solid var(--border); color:var(--text);
-      display:flex; align-items:center; justify-content:center;
-      flex-shrink:0;
+      display:flex; align-items:center; justify-content:center; flex-shrink:0;
     }
     .qty-row .qty-btn:first-child { border-radius:var(--radius) 0 0 var(--radius); }
     .qty-row .qty-btn:last-child  { border-radius:0 var(--radius) var(--radius) 0; border-left:none; }
@@ -80,9 +79,9 @@ const Manager = {
     const appId     = document.getElementById('cfg-appId').value.trim();
     if (!apiKey || !projectId || !appId) { alert('Please fill in all fields.'); return; }
     const cfg = { apiKey, projectId, appId,
-      authDomain: `${projectId}.firebaseapp.com`,
-      storageBucket: `${projectId}.appspot.com`,
-      messagingSenderId: '000000000000' };
+      authDomain:`${projectId}.firebaseapp.com`,
+      storageBucket:`${projectId}.appspot.com`,
+      messagingSenderId:'000000000000' };
     const ok = await DB.init(cfg);
     if (!ok) { this.showSetup('Connection failed. Double-check your config values.'); return; }
     FirebaseConfig.save(cfg);
@@ -90,6 +89,7 @@ const Manager = {
     this.startListening();
   },
 
+  // ── SHELL — rendered once, all listeners attached here ──
   renderShell() {
     document.getElementById('root').innerHTML = `
       <div class="app-root manager-root" id="app-root">
@@ -143,12 +143,8 @@ const Manager = {
           </div>
 
           <div class="manager-main">
-            <div class="order-queue" id="order-queue">
-              <div class="empty-queue">
-                <i class="ti ti-loader" style="animation:spin 1s linear infinite"></i>
-                <p>Loading orders…</p>
-              </div>
-            </div>
+            <!-- order-queue innerHTML is replaced by renderQueue(); the listener is on this element -->
+            <div class="order-queue" id="order-queue"></div>
           </div>
         </div>
 
@@ -185,26 +181,54 @@ const Manager = {
       </div>
       <div id="overlay-wrap"></div>`;
 
-    // ── Bind all static buttons via addEventListener ──
-    document.getElementById('btn-settings').addEventListener('click',       () => this.openPanel('settings-panel'));
-    document.getElementById('sb-settings').addEventListener('click',        () => this.openPanel('settings-panel'));
-    document.getElementById('sb-reset').addEventListener('click',           () => this.clearFirebase());
-    document.getElementById('btn-close-email').addEventListener('click',    () => this.closePanel('email-panel'));
-    document.getElementById('btn-send-email').addEventListener('click',     () => this.sendEmail());
-    document.getElementById('btn-close-settings').addEventListener('click', () => this.closePanel('settings-panel'));
-    document.getElementById('btn-save-settings').addEventListener('click',  () => this.saveSettings());
+    // ── ALL LISTENERS ATTACHED ONCE ──
 
-    // Sidebar view buttons
-    document.querySelectorAll('[data-sb]').forEach(btn => {
-      btn.addEventListener('click', () => this.setView(btn.dataset.sb));
-    });
-    // Mobile tab buttons
+    document.getElementById('btn-settings')      .addEventListener('click', () => this.openPanel('settings-panel'));
+    document.getElementById('sb-settings')       .addEventListener('click', () => this.openPanel('settings-panel'));
+    document.getElementById('sb-reset')          .addEventListener('click', () => this.clearFirebase());
+    document.getElementById('btn-close-email')   .addEventListener('click', () => this.closePanel('email-panel'));
+    document.getElementById('btn-send-email')    .addEventListener('click', () => this.sendEmail());
+    document.getElementById('btn-close-settings').addEventListener('click', () => this.closePanel('settings-panel'));
+    document.getElementById('btn-save-settings') .addEventListener('click', () => this.saveSettings());
+
+    document.querySelectorAll('[data-sb]').forEach(btn =>
+      btn.addEventListener('click', () => this.setView(btn.dataset.sb))
+    );
     document.getElementById('mobile-tabs').addEventListener('click', e => {
       const btn = e.target.closest('[data-view]');
       if (btn) this.setView(btn.dataset.view);
     });
 
+    // ── ORDER QUEUE — single permanent delegated listener ──
+    // renderQueue() only sets innerHTML of #order-queue.
+    // This listener is on #order-queue itself and is attached exactly once.
+    // stopPropagation is called in JS for qty/action buttons so they don't
+    // bubble to the card header toggle handler.
+    const queue = document.getElementById('order-queue');
+    queue.addEventListener('click', e => {
+      // Check from most-specific to least-specific
+      const dec     = e.target.closest('[data-qdec]');
+      const inc     = e.target.closest('[data-qinc]');
+      const approve = e.target.closest('[data-approve]');
+      const del     = e.target.closest('[data-delete]');
+      const header  = e.target.closest('.order-card-header');
+
+      if (dec)     { e.stopPropagation(); this.stepQty(dec.dataset.qdec,     +dec.dataset.idx,    -1); return; }
+      if (inc)     { e.stopPropagation(); this.stepQty(inc.dataset.qinc,     +inc.dataset.idx,     1); return; }
+      if (approve) { e.stopPropagation(); this.prepareEmail(approve.dataset.approve);                  return; }
+      if (del)     { e.stopPropagation(); this.deleteOrder(del.dataset.delete);                        return; }
+      if (header)  { this.toggleCard(header.dataset.cardId); }
+    });
+    queue.addEventListener('change', e => {
+      const inp = e.target.closest('[data-qchange]');
+      if (inp) {
+        e.stopPropagation();
+        this.editQty(inp.dataset.qchange, +inp.dataset.idx, inp.value);
+      }
+    });
+
     this._populateSettings();
+    this.renderQueue();
   },
 
   openPanel(id)  { document.getElementById(id)?.classList.add('open'); },
@@ -296,6 +320,7 @@ const Manager = {
     });
   },
 
+  // ── RENDER QUEUE — only sets innerHTML, no listeners ──
   renderQueue() {
     const wrap = document.getElementById('order-queue');
     if (!wrap) return;
@@ -313,39 +338,7 @@ const Manager = {
       wrap.innerHTML = `<div class="empty-queue"><i class="ti ${ic}"></i><p>${msg}</p></div>`;
       return;
     }
-
     wrap.innerHTML = list.map(o => this._orderCard(o)).join('');
-
-    // ── Delegated listener on the queue for ALL order card interactions ──
-    // This is a fresh element each render so there is exactly one listener.
-    // stopPropagation is called here in JS — not in the HTML attribute —
-    // which reliably prevents bubbling to the card header toggle.
-    wrap.addEventListener('click', e => {
-      // Toggle header
-      const header = e.target.closest('.order-card-header');
-
-      // Qty buttons
-      const dec = e.target.closest('[data-qdec]');
-      const inc = e.target.closest('[data-qinc]');
-
-      // Action buttons
-      const approveBtnEl = e.target.closest('[data-approve]');
-      const deleteBtnEl  = e.target.closest('[data-delete]');
-
-      if (dec) { e.stopPropagation(); this.stepQty(dec.dataset.qdec, +dec.dataset.idx, -1); return; }
-      if (inc) { e.stopPropagation(); this.stepQty(inc.dataset.qinc, +inc.dataset.idx,  1); return; }
-      if (approveBtnEl) { e.stopPropagation(); this.prepareEmail(approveBtnEl.dataset.approve); return; }
-      if (deleteBtnEl)  { e.stopPropagation(); this.deleteOrder(deleteBtnEl.dataset.delete);   return; }
-      if (header) { this.toggleCard(header.dataset.cardId); }
-    });
-
-    wrap.addEventListener('change', e => {
-      const inp = e.target.closest('[data-qchange]');
-      if (inp) {
-        e.stopPropagation();
-        this.editQty(inp.dataset.qchange, +inp.dataset.idx, inp.value);
-      }
-    });
   },
 
   _orderCard(o) {
@@ -371,7 +364,7 @@ const Manager = {
               <button class="qty-btn" data-qinc="${o._id}" data-idx="${idx}">+</button>
             </div>` : `<span class="order-line-qty">× ${item.qty}</span>`}
           <span style="font-size:11px;color:var(--text3);font-family:var(--mono);margin-left:6px">
-            ${esc(item.qtyType || '')}</span>
+            ${esc(item.qtyType||'')}</span>
         </div>
       </div>`).join('');
 
@@ -391,8 +384,8 @@ const Manager = {
       <div class="order-card-header" data-card-id="${o._id}">
         <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%">
           <div>
-            <div class="order-ref-text">${esc(o.ref || o._id)}</div>
-            <div class="order-meta">${ts} · ${items.length} line${items.length !== 1 ? 's' : ''}</div>
+            <div class="order-ref-text">${esc(o.ref||o._id)}</div>
+            <div class="order-meta">${ts} · ${items.length} line${items.length!==1?'s':''}</div>
           </div>
           <div style="display:flex;align-items:center;gap:8px">
             <span class="status-pill ${statusClass}">${statusLabel}</span>
@@ -417,27 +410,27 @@ const Manager = {
     const order = this.orders.find(o => o._id === orderId);
     if (!order) return;
     const items  = [...order.items];
-    const newQty = Math.max(0, (items[idx].qty || 0) + delta);
+    const newQty = Math.max(0, (items[idx].qty||0) + delta);
     items[idx]   = { ...items[idx], qty: newQty };
-    const inp    = document.getElementById(`qinp-${orderId}-${idx}`);
+    const inp = document.getElementById(`qinp-${orderId}-${idx}`);
     if (inp) inp.value = newQty;
     try { await DB.updateItems(orderId, items); }
-    catch (e) { alert('Update failed: ' + e.message); }
+    catch(e) { alert('Update failed: ' + e.message); }
   },
 
   async editQty(orderId, idx, val) {
     const order = this.orders.find(o => o._id === orderId);
     if (!order) return;
     const items = [...order.items];
-    items[idx]  = { ...items[idx], qty: Math.max(0, parseInt(val) || 0) };
+    items[idx]  = { ...items[idx], qty: Math.max(0, parseInt(val)||0) };
     try { await DB.updateItems(orderId, items); }
-    catch (e) { alert('Update failed: ' + e.message); }
+    catch(e) { alert('Update failed: ' + e.message); }
   },
 
   async deleteOrder(id) {
     if (!confirm('Delete this order?')) return;
     try { await DB.deleteOrder(id); }
-    catch (e) { alert('Delete failed: ' + e.message); }
+    catch(e) { alert('Delete failed: ' + e.message); }
   },
 
   prepareEmail(orderId) {
@@ -447,8 +440,8 @@ const Manager = {
     const s = Settings.get();
     document.getElementById('email-to').value      = s.supplierEmail;
     document.getElementById('email-cc').value      = s.ccEmail;
-    document.getElementById('email-subject').value = `Material Order — ${order.ref || order._id}`;
-    document.getElementById('email-body').value    = buildEmailBody(order.ref || order._id, order.items || []);
+    document.getElementById('email-subject').value = `Material Order — ${order.ref||order._id}`;
+    document.getElementById('email-body').value    = buildEmailBody(order.ref||order._id, order.items||[]);
     this.openPanel('email-panel');
   },
 
