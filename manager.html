@@ -307,6 +307,9 @@ const Manager = {
     this.renderQueue();
   },
 
+  // Track which order cards are currently expanded
+  _openCards: new Set(),
+
   startListening() {
     if (this.unsubscribe) this.unsubscribe();
     this.unsubscribe = DB.listenOrders(orders => {
@@ -321,12 +324,27 @@ const Manager = {
   },
 
   // ── RENDER QUEUE — only sets innerHTML, no listeners ──
+  // Preserves open/closed state of cards across re-renders.
   renderQueue() {
     const wrap = document.getElementById('order-queue');
     if (!wrap) return;
+
+    // Snapshot which cards are currently open in the DOM before replacing HTML
+    wrap.querySelectorAll('.order-card-body.open').forEach(el => {
+      // body id is "body-<orderId>"
+      const orderId = el.id.replace('body-', '');
+      this._openCards.add(orderId);
+    });
+
     let list = this.orders;
     if (this.activeView === 'pending') list = list.filter(o => o.status === 'pending');
     if (this.activeView === 'sent')    list = list.filter(o => o.status === 'sent');
+
+    // Remove any tracked IDs that are no longer in the list
+    const listIds = new Set(list.map(o => o._id));
+    for (const id of this._openCards) {
+      if (!listIds.has(id)) this._openCards.delete(id);
+    }
 
     if (!list.length) {
       const msgs = {
@@ -338,7 +356,14 @@ const Manager = {
       wrap.innerHTML = `<div class="empty-queue"><i class="ti ${ic}"></i><p>${msg}</p></div>`;
       return;
     }
+
     wrap.innerHTML = list.map(o => this._orderCard(o)).join('');
+
+    // Restore open state for any cards that were open before the re-render
+    for (const id of this._openCards) {
+      document.getElementById(`body-${id}`)?.classList.add('open');
+      document.getElementById(`chev-${id}`)?.classList.add('open');
+    }
   },
 
   _orderCard(o) {
@@ -402,8 +427,15 @@ const Manager = {
   },
 
   toggleCard(id) {
-    document.getElementById(`body-${id}`)?.classList.toggle('open');
-    document.getElementById(`chev-${id}`)?.classList.toggle('open');
+    const body = document.getElementById(`body-${id}`);
+    const chev = document.getElementById(`chev-${id}`);
+    if (!body) return;
+    const opening = !body.classList.contains('open');
+    body.classList.toggle('open', opening);
+    chev?.classList.toggle('open', opening);
+    // Keep _openCards in sync
+    if (opening) { this._openCards.add(id); }
+    else         { this._openCards.delete(id); }
   },
 
   async stepQty(orderId, idx, delta) {
