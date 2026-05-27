@@ -8,6 +8,7 @@
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.19.0/dist/tabler-icons.min.css">
   <link rel="stylesheet" href="css/style.css">
   <style>
+    /* Qty controls inside order cards */
     .qty-row { display:flex; align-items:center; }
     .qty-row .qty-btn {
       width:28px; height:28px; font-size:15px;
@@ -25,6 +26,20 @@
     }
     .qty-row .qty-edit::-webkit-inner-spin-button,
     .qty-row .qty-edit::-webkit-outer-spin-button { -webkit-appearance:none; }
+
+    /* Bin button for new order tab */
+    .mat-bin {
+      width:30px; height:32px; display:flex; align-items:center; justify-content:center;
+      background:none; border:none; color:var(--red-text); font-size:15px;
+      opacity:0; pointer-events:none; transition:opacity 0.15s; flex-shrink:0;
+    }
+    .mat-card.in-order .mat-bin { opacity:1; pointer-events:auto; }
+
+    /* Active main tab indicator */
+    .main-tab { padding:11px 18px; font-size:13px; font-weight:500; color:var(--text3);
+      border-bottom:2px solid transparent; background:none;
+      border-top:none; border-left:none; border-right:none; cursor:pointer; white-space:nowrap; }
+    .main-tab.active { color:var(--text); border-bottom-color:#1e3a5f; }
   </style>
 </head>
 <body>
@@ -39,16 +54,29 @@ if ('serviceWorker' in navigator) {
 }
 
 const Manager = {
+  // ── Order queue state ──
   orders:        [],
   activeView:    'pending',
   unsubscribe:   null,
+  _openCards:    new Set(),
   _emailOrderId: null,
+
+  // ── New order (manager direct order) state ──
+  mainTab:       'queue',   // 'queue' | 'new-order'
+  materials:     [],
+  activeCat:     null,
+  activeSub:     null,
+  orderRef:      '',
+  _cats:         [],
+  _subs:         [],
 
   async init() {
     const cfg = FirebaseConfig.get();
     if (!cfg) { this.showSetup(); return; }
     const ok = await DB.init(cfg);
     if (!ok) { this.showSetup('Could not connect. Check your Firebase config.'); return; }
+    this.materials = await Data.load('./materials.csv');
+    this.orderRef  = genRef();
     this.renderShell();
     this.startListening();
   },
@@ -85,14 +113,20 @@ const Manager = {
     const ok = await DB.init(cfg);
     if (!ok) { this.showSetup('Connection failed. Double-check your config values.'); return; }
     FirebaseConfig.save(cfg);
+    this.materials = await Data.load('./materials.csv');
+    this.orderRef  = genRef();
     this.renderShell();
     this.startListening();
   },
 
-  // ── SHELL — rendered once, all listeners attached here ──
+  // ══════════════════════════════════════════════════════
+  // SHELL — rendered once, all listeners attached here
+  // ══════════════════════════════════════════════════════
   renderShell() {
     document.getElementById('root').innerHTML = `
       <div class="app-root manager-root" id="app-root">
+
+        <!-- HEADER -->
         <div class="header manager-hdr">
           <div class="col"><div class="header-inner">
             <div class="header-left">
@@ -108,15 +142,38 @@ const Manager = {
           </div></div>
         </div>
 
-        <div class="mobile-tabs" id="mobile-tabs">
-          <button class="tab active" data-view="pending">
-            Pending <span class="sidebar-count zero" id="mob-pending-count" style="margin-left:4px">0</span>
-          </button>
-          <button class="tab" data-view="sent">Sent</button>
-          <button class="tab" data-view="all">All</button>
+        <!-- MAIN TABS: Order Queue | New Order -->
+        <div style="background:var(--surface);border-bottom:1px solid var(--border);flex-shrink:0">
+          <div class="col" style="padding-left:0;padding-right:0">
+            <div style="display:flex;overflow-x:auto;scrollbar-width:none">
+              <button class="main-tab active" id="main-tab-queue">
+                <i class="ti ti-inbox" style="margin-right:5px"></i>Order Queue
+                <span class="sidebar-count zero" id="queue-pending-badge" style="margin-left:5px">0</span>
+              </button>
+              <button class="main-tab" id="main-tab-new">
+                <i class="ti ti-plus" style="margin-right:5px"></i>New Order
+                <span class="order-badge" id="new-order-badge"
+                  style="display:none;position:relative;top:0;right:0;margin-left:5px;
+                  background:#ef4444;color:#fff;border-radius:50%;width:17px;height:17px;
+                  font-size:10px;font-weight:600;align-items:center;justify-content:center;
+                  border:none">0</span>
+              </button>
+            </div>
+          </div>
         </div>
 
-        <div class="manager-body">
+        <!-- QUEUE VIEW -->
+        <div id="view-queue" class="manager-body" style="flex:1;overflow:hidden">
+
+          <!-- Mobile sub-tabs for queue filter -->
+          <div class="mobile-tabs" id="mobile-tabs">
+            <button class="tab active" data-view="pending">
+              Pending <span class="sidebar-count zero" id="mob-pending-count" style="margin-left:4px">0</span>
+            </button>
+            <button class="tab" data-view="sent">Sent</button>
+            <button class="tab" data-view="all">All</button>
+          </div>
+
           <div class="manager-sidebar">
             <div class="sidebar-section">
               <div class="sidebar-title">Orders</div>
@@ -143,11 +200,29 @@ const Manager = {
           </div>
 
           <div class="manager-main">
-            <!-- order-queue innerHTML is replaced by renderQueue(); the listener is on this element -->
             <div class="order-queue" id="order-queue"></div>
           </div>
         </div>
 
+        <!-- NEW ORDER VIEW (hidden initially) -->
+        <div id="view-new-order" style="display:none;flex:1;flex-direction:column;overflow:hidden">
+          <div id="no-tabs-wrap"></div>
+          <div class="search-bar">
+            <div class="col"><div class="search-wrap">
+              <i class="ti ti-search"></i>
+              <input type="search" id="no-search" placeholder="Search part code or description…" autocomplete="off">
+            </div></div>
+          </div>
+          <div class="app-scroll" id="no-scroll">
+            <div class="col">
+              <div class="mat-list" id="no-mat-list"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ── PANELS (all inside app-root) ── -->
+
+        <!-- EMAIL PANEL -->
         <div class="panel" id="email-panel">
           <div class="panel-header">
             <button class="back-btn" id="btn-close-email">
@@ -166,6 +241,29 @@ const Manager = {
           <div class="email-body-wrap"><textarea id="email-body"></textarea></div>
         </div>
 
+        <!-- ORDER REVIEW PANEL (manager new order) -->
+        <div class="panel" id="no-review-panel">
+          <div class="panel-header">
+            <button class="back-btn" id="btn-close-no-review">
+              <i class="ti ti-chevron-left"></i> Back
+            </button>
+            <div class="panel-title">Order Confirmation</div>
+            <div class="panel-spacer"></div>
+          </div>
+          <div class="panel-scroll">
+            <div class="panel-col" id="no-review-contents"></div>
+          </div>
+          <div class="action-bar"><div class="action-bar-inner">
+            <button class="btn btn-green" id="btn-no-email">
+              <i class="ti ti-mail"></i> Compose email
+            </button>
+            <button class="btn btn-danger" id="btn-no-clear">
+              <i class="ti ti-x"></i> Clear order
+            </button>
+          </div></div>
+        </div>
+
+        <!-- SETTINGS PANEL -->
         <div class="panel" id="settings-panel">
           <div class="panel-header">
             <button class="back-btn" id="btn-close-settings">
@@ -178,19 +276,28 @@ const Manager = {
             <div class="panel-col" style="gap:20px" id="settings-body"></div>
           </div>
         </div>
+
       </div>
       <div id="overlay-wrap"></div>`;
 
     // ── ALL LISTENERS ATTACHED ONCE ──
 
+    // Header / settings
     document.getElementById('btn-settings')      .addEventListener('click', () => this.openPanel('settings-panel'));
     document.getElementById('sb-settings')       .addEventListener('click', () => this.openPanel('settings-panel'));
     document.getElementById('sb-reset')          .addEventListener('click', () => this.clearFirebase());
-    document.getElementById('btn-close-email')   .addEventListener('click', () => this.closePanel('email-panel'));
-    document.getElementById('btn-send-email')    .addEventListener('click', () => this.sendEmail());
     document.getElementById('btn-close-settings').addEventListener('click', () => this.closePanel('settings-panel'));
     document.getElementById('btn-save-settings') .addEventListener('click', () => this.saveSettings());
 
+    // Email panel
+    document.getElementById('btn-close-email') .addEventListener('click', () => this.closePanel('email-panel'));
+    document.getElementById('btn-send-email')  .addEventListener('click', () => this.sendEmail());
+
+    // Main tabs
+    document.getElementById('main-tab-queue').addEventListener('click', () => this.setMainTab('queue'));
+    document.getElementById('main-tab-new')  .addEventListener('click', () => this.setMainTab('new-order'));
+
+    // Queue view/filter buttons
     document.querySelectorAll('[data-sb]').forEach(btn =>
       btn.addEventListener('click', () => this.setView(btn.dataset.sb))
     );
@@ -199,105 +306,92 @@ const Manager = {
       if (btn) this.setView(btn.dataset.view);
     });
 
-    // ── ORDER QUEUE — single permanent delegated listener ──
-    // renderQueue() only sets innerHTML of #order-queue.
-    // This listener is on #order-queue itself and is attached exactly once.
-    // stopPropagation is called in JS for qty/action buttons so they don't
-    // bubble to the card header toggle handler.
+    // Order queue — single permanent delegated listener
     const queue = document.getElementById('order-queue');
     queue.addEventListener('click', e => {
-      // Check from most-specific to least-specific
       const dec     = e.target.closest('[data-qdec]');
       const inc     = e.target.closest('[data-qinc]');
       const approve = e.target.closest('[data-approve]');
       const del     = e.target.closest('[data-delete]');
       const header  = e.target.closest('.order-card-header');
-
-      if (dec)     { e.stopPropagation(); this.stepQty(dec.dataset.qdec,     +dec.dataset.idx,    -1); return; }
-      if (inc)     { e.stopPropagation(); this.stepQty(inc.dataset.qinc,     +inc.dataset.idx,     1); return; }
-      if (approve) { e.stopPropagation(); this.prepareEmail(approve.dataset.approve);                  return; }
-      if (del)     { e.stopPropagation(); this.deleteOrder(del.dataset.delete);                        return; }
+      if (dec)     { e.stopPropagation(); this.stepQty(dec.dataset.qdec,  +dec.dataset.idx,    -1); return; }
+      if (inc)     { e.stopPropagation(); this.stepQty(inc.dataset.qinc,  +inc.dataset.idx,     1); return; }
+      if (approve) { e.stopPropagation(); this.prepareEmail(approve.dataset.approve);               return; }
+      if (del)     { e.stopPropagation(); this.deleteOrder(del.dataset.delete);                     return; }
       if (header)  { this.toggleCard(header.dataset.cardId); }
     });
     queue.addEventListener('change', e => {
       const inp = e.target.closest('[data-qchange]');
-      if (inp) {
-        e.stopPropagation();
-        this.editQty(inp.dataset.qchange, +inp.dataset.idx, inp.value);
-      }
+      if (inp) { e.stopPropagation(); this.editQty(inp.dataset.qchange, +inp.dataset.idx, inp.value); }
+    });
+
+    // New order — tabs-wrap (permanent wrapper, renderNoTabs only sets innerHTML)
+    document.getElementById('no-tabs-wrap').addEventListener('click', e => {
+      const catBtn = e.target.closest('[data-cat-idx]');
+      const subBtn = e.target.closest('[data-sub-idx]');
+      if (catBtn) { const i = +catBtn.dataset.catIdx; this.noSetCat(i === -1 ? null : this._cats[i]); }
+      else if (subBtn) { const i = +subBtn.dataset.subIdx; this.noSetSub(i === -1 ? null : this._subs[i]); }
+    });
+
+    // New order — mat list (permanent element)
+    document.getElementById('no-mat-list').addEventListener('click', e => {
+      const dec = e.target.closest('[data-dec]');
+      const inc = e.target.closest('[data-inc]');
+      const add = e.target.closest('[data-add]');
+      const bin = e.target.closest('[data-bin]');
+      if (dec) { e.stopPropagation(); this.noAdj(+dec.dataset.dec, -1); }
+      if (inc) { e.stopPropagation(); this.noAdj(+inc.dataset.inc,  1); }
+      if (add) { e.stopPropagation(); this.noQuickAdd(+add.dataset.add); }
+      if (bin) { e.stopPropagation(); this.noZero(+bin.dataset.bin); }
+    });
+    document.getElementById('no-mat-list').addEventListener('change', e => {
+      const inp = e.target.closest('[data-qid]');
+      if (inp) this.noSetQty(+inp.dataset.qid, inp.value);
+    });
+
+    // New order search
+    document.getElementById('no-search').addEventListener('input', () => this.renderNoList());
+
+    // New order review panel
+    document.getElementById('btn-close-no-review').addEventListener('click', () => this.closePanel('no-review-panel'));
+    document.getElementById('btn-no-email')       .addEventListener('click', () => this.noComposeEmail());
+    document.getElementById('btn-no-clear')       .addEventListener('click', () => this.noClearOrder());
+
+    // New order review contents (permanent element)
+    document.getElementById('no-review-contents').addEventListener('click', e => {
+      const dec = e.target.closest('[data-rdec]');
+      const inc = e.target.closest('[data-rinc]');
+      const rem = e.target.closest('[data-rrem]');
+      if (dec) this.noRevAdj(+dec.dataset.rdec, -1);
+      if (inc) this.noRevAdj(+inc.dataset.rinc,  1);
+      if (rem) this.noRemove(+rem.dataset.rrem);
+    });
+    document.getElementById('no-review-contents').addEventListener('change', e => {
+      const inp = e.target.closest('[data-rqid]');
+      if (inp) this.noRevSet(+inp.dataset.rqid, inp.value);
     });
 
     this._populateSettings();
     this.renderQueue();
+    this.renderNoTabs();
+    this.renderNoList();
   },
 
-  openPanel(id)  { document.getElementById(id)?.classList.add('open'); },
-  closePanel(id) { document.getElementById(id)?.classList.remove('open'); },
-
-  _populateSettings() {
-    const s  = Settings.get();
-    const el = document.getElementById('settings-body');
-    if (!el) return;
-    el.innerHTML = `
-      <div class="settings-section">
-        <div class="settings-label">Email</div>
-        <div class="settings-card">
-          <div class="settings-row">
-            <div><div class="settings-row-label">To (purchasing)</div>
-              <div class="settings-row-sub">Auto-filled in To: field</div></div>
-            <input type="email" id="s-supplier" value="${esc(s.supplierEmail)}">
-          </div>
-          <div class="settings-row">
-            <div><div class="settings-row-label">CC email</div>
-              <div class="settings-row-sub">Always CC'd on orders</div></div>
-            <input type="email" id="s-cc" value="${esc(s.ccEmail)}">
-          </div>
-          <div class="settings-row">
-            <div><div class="settings-row-label">Closing note</div>
-              <div class="settings-row-sub">Added at end of email</div></div>
-            <input type="text" id="s-delivery" value="${esc(s.deliveryNote)}">
-          </div>
-        </div>
-      </div>
-      <div class="settings-section">
-        <div class="settings-label">Materials catalogue</div>
-        <div class="settings-card">
-          <div class="settings-row" style="flex-direction:column;align-items:flex-start;gap:6px">
-            <div class="settings-row-sub">
-              Edit <strong>materials.csv</strong> in the GitHub repository and commit.
-              Both devices reload automatically on next open.
-            </div>
-          </div>
-        </div>
-      </div>
-      <div class="settings-section">
-        <div class="settings-label">Connection</div>
-        <div class="settings-card">
-          <div class="settings-row">
-            <div><div class="settings-row-label">Firebase config</div>
-              <div class="settings-row-sub">Clear to re-enter connection details</div></div>
-            <button class="btn-sm btn-sm-danger" id="btn-clear-firebase">Clear</button>
-          </div>
-        </div>
-      </div>`;
-    document.getElementById('btn-clear-firebase').addEventListener('click', () => this.clearFirebase());
+  // ══════════════════════════════════════════════════════
+  // MAIN TAB SWITCHING
+  // ══════════════════════════════════════════════════════
+  setMainTab(tab) {
+    this.mainTab = tab;
+    const isQueue = tab === 'queue';
+    document.getElementById('view-queue')    .style.display = isQueue ? 'flex'  : 'none';
+    document.getElementById('view-new-order').style.display = isQueue ? 'none'  : 'flex';
+    document.getElementById('main-tab-queue').classList.toggle('active',  isQueue);
+    document.getElementById('main-tab-new')  .classList.toggle('active', !isQueue);
   },
 
-  saveSettings() {
-    Settings.save({
-      supplierEmail: document.getElementById('s-supplier')?.value.trim(),
-      ccEmail:       document.getElementById('s-cc')?.value.trim(),
-      deliveryNote:  document.getElementById('s-delivery')?.value.trim(),
-    });
-    const btn = document.getElementById('btn-save-settings');
-    if (btn) { btn.textContent = '✓ Saved'; setTimeout(() => btn.textContent = 'Save', 1500); }
-  },
-
-  clearFirebase() {
-    if (!confirm('Clear Firebase config? You will need to re-enter it.')) return;
-    FirebaseConfig.clear(); location.reload();
-  },
-
+  // ══════════════════════════════════════════════════════
+  // QUEUE VIEW
+  // ══════════════════════════════════════════════════════
   setView(v) {
     this.activeView = v;
     document.querySelectorAll('[data-sb]').forEach(b =>
@@ -307,15 +401,12 @@ const Manager = {
     this.renderQueue();
   },
 
-  // Track which order cards are currently expanded
-  _openCards: new Set(),
-
   startListening() {
     if (this.unsubscribe) this.unsubscribe();
     this.unsubscribe = DB.listenOrders(orders => {
       this.orders = orders;
       const n = orders.filter(o => o.status === 'pending').length;
-      ['pending-count','mob-pending-count'].forEach(id => {
+      ['pending-count','mob-pending-count','queue-pending-badge'].forEach(id => {
         const el = document.getElementById(id);
         if (el) { el.textContent = n; el.classList.toggle('zero', n === 0); }
       });
@@ -323,28 +414,20 @@ const Manager = {
     });
   },
 
-  // ── RENDER QUEUE — only sets innerHTML, no listeners ──
-  // Preserves open/closed state of cards across re-renders.
   renderQueue() {
     const wrap = document.getElementById('order-queue');
     if (!wrap) return;
 
-    // Snapshot which cards are currently open in the DOM before replacing HTML
+    // Preserve open card state
     wrap.querySelectorAll('.order-card-body.open').forEach(el => {
-      // body id is "body-<orderId>"
-      const orderId = el.id.replace('body-', '');
-      this._openCards.add(orderId);
+      this._openCards.add(el.id.replace('body-', ''));
     });
 
     let list = this.orders;
     if (this.activeView === 'pending') list = list.filter(o => o.status === 'pending');
     if (this.activeView === 'sent')    list = list.filter(o => o.status === 'sent');
-
-    // Remove any tracked IDs that are no longer in the list
     const listIds = new Set(list.map(o => o._id));
-    for (const id of this._openCards) {
-      if (!listIds.has(id)) this._openCards.delete(id);
-    }
+    for (const id of this._openCards) { if (!listIds.has(id)) this._openCards.delete(id); }
 
     if (!list.length) {
       const msgs = {
@@ -356,10 +439,7 @@ const Manager = {
       wrap.innerHTML = `<div class="empty-queue"><i class="ti ${ic}"></i><p>${msg}</p></div>`;
       return;
     }
-
     wrap.innerHTML = list.map(o => this._orderCard(o)).join('');
-
-    // Restore open state for any cards that were open before the re-render
     for (const id of this._openCards) {
       document.getElementById(`body-${id}`)?.classList.add('open');
       document.getElementById(`chev-${id}`)?.classList.add('open');
@@ -433,14 +513,11 @@ const Manager = {
     const opening = !body.classList.contains('open');
     body.classList.toggle('open', opening);
     chev?.classList.toggle('open', opening);
-    // Keep _openCards in sync
-    if (opening) { this._openCards.add(id); }
-    else         { this._openCards.delete(id); }
+    if (opening) this._openCards.add(id); else this._openCards.delete(id);
   },
 
   async stepQty(orderId, idx, delta) {
-    const order = this.orders.find(o => o._id === orderId);
-    if (!order) return;
+    const order = this.orders.find(o => o._id === orderId); if (!order) return;
     const items  = [...order.items];
     const newQty = Math.max(0, (items[idx].qty||0) + delta);
     items[idx]   = { ...items[idx], qty: newQty };
@@ -449,25 +526,24 @@ const Manager = {
     try { await DB.updateItems(orderId, items); }
     catch(e) { alert('Update failed: ' + e.message); }
   },
-
   async editQty(orderId, idx, val) {
-    const order = this.orders.find(o => o._id === orderId);
-    if (!order) return;
+    const order = this.orders.find(o => o._id === orderId); if (!order) return;
     const items = [...order.items];
     items[idx]  = { ...items[idx], qty: Math.max(0, parseInt(val)||0) };
     try { await DB.updateItems(orderId, items); }
     catch(e) { alert('Update failed: ' + e.message); }
   },
-
   async deleteOrder(id) {
     if (!confirm('Delete this order?')) return;
     try { await DB.deleteOrder(id); }
     catch(e) { alert('Delete failed: ' + e.message); }
   },
 
+  // ══════════════════════════════════════════════════════
+  // EMAIL (shared by queue approve + new order)
+  // ══════════════════════════════════════════════════════
   prepareEmail(orderId) {
-    const order = this.orders.find(o => o._id === orderId);
-    if (!order) return;
+    const order = this.orders.find(o => o._id === orderId); if (!order) return;
     this._emailOrderId = orderId;
     const s = Settings.get();
     document.getElementById('email-to').value      = s.supplierEmail;
@@ -483,26 +559,304 @@ const Manager = {
     const subject = document.getElementById('email-subject').value;
     const body    = document.getElementById('email-body').value;
     const mailto  = `mailto:${to}?cc=${encodeURIComponent(cc)}&subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+
+    // If this came from queue approval, mark it sent
     if (this._emailOrderId) {
       try { await DB.updateStatus(this._emailOrderId, 'sent'); } catch {}
+      this._emailOrderId = null;
     }
+
     this.closePanel('email-panel');
+
     const ow = document.getElementById('overlay-wrap');
     ow.innerHTML = `
       <div class="success-overlay">
         <div class="success-card">
           <div class="success-icon blue"><i class="ti ti-mail-forward"></i></div>
           <h3>Opening mail client…</h3>
-          <p>Order marked as sent. Outlook will open with the order pre-filled.</p>
+          <p>Outlook will open with the order pre-filled.</p>
           <button class="btn btn-primary" id="btn-done-email">Done</button>
         </div>
       </div>`;
     document.getElementById('btn-done-email').addEventListener('click', () => { ow.innerHTML = ''; });
     setTimeout(() => { window.location.href = mailto; }, 400);
   },
+
+  // ══════════════════════════════════════════════════════
+  // NEW ORDER TAB — material selection
+  // ══════════════════════════════════════════════════════
+
+  // Separate Order instance for the manager's own orders
+  // (avoids conflicts with any shared state)
+  _no: {_items:{}},
+  noGet(id)       { return this._no._items[id] || 0; },
+  noSet(id, qty)  { if (qty<=0) delete this._no._items[id]; else this._no._items[id]=qty; },
+  noAdj(id, d)    { this.noSet(id, (this.noGet(id))+d); this._noChanged(); },
+  noSetQty(id, v) { this.noSet(id, parseInt(v)||0);     this._noChanged(); },
+  noQuickAdd(id)  { if (!this.noGet(id)) this.noSet(id, 1); this._noChanged(); },
+  noZero(id)      { delete this._no._items[id]; this._noChanged(); },
+  noRevAdj(id, d) { this.noAdj(id, d); },
+  noRevSet(id, v) { this.noSetQty(id, v); },
+  noRemove(id)    { this.noZero(id); },
+  noCount()       { return Object.keys(this._no._items).length; },
+  noItems()       {
+    return Object.keys(this._no._items).map(id => {
+      const m = this.materials.find(x => x.id==id);
+      return m ? {...m, qty: this._no._items[id]} : null;
+    }).filter(Boolean);
+  },
+
+  _noChanged() {
+    this._updateNoBadge();
+    this.renderNoList();
+    if (document.getElementById('no-review-panel')?.classList.contains('open')) {
+      this._renderNoReview();
+    }
+  },
+
+  _updateNoBadge() {
+    const b = document.getElementById('new-order-badge');
+    if (!b) return;
+    const n = this.noCount();
+    b.textContent = n; b.style.display = n > 0 ? 'flex' : 'none';
+  },
+
+  renderNoTabs() {
+    const wrap = document.getElementById('no-tabs-wrap');
+    if (!wrap) return;
+    this._cats = Data.categories(this.materials);
+    this._subs = this.activeCat ? Data.subcategories(this.materials, this.activeCat) : [];
+
+    const catBtns = this._cats.map((c, i) =>
+      `<button class="tab ${this.activeCat===c?'active':''}" data-cat-idx="${i}">${esc(c)}</button>`
+    ).join('');
+    let subHtml = '';
+    if (this.activeCat && this._subs.length) {
+      const subBtns = this._subs.map((s, i) =>
+        `<button class="tab ${this.activeSub===s?'active':''}" data-sub-idx="${i}">${esc(s)}</button>`
+      ).join('');
+      subHtml = `<div class="tabs-bar sub-bar">
+        <div class="tabs-inner">
+          <button class="tab ${!this.activeSub?'active':''}" data-sub-idx="-1">All</button>
+          ${subBtns}
+        </div>
+      </div>`;
+    }
+    wrap.innerHTML = `<div class="tabs-bar">
+      <div class="tabs-inner">
+        <button class="tab ${!this.activeCat?'active':''}" data-cat-idx="-1">All</button>
+        ${catBtns}
+      </div>
+    </div>${subHtml}`;
+  },
+
+  noSetCat(cat) {
+    this.activeCat = cat; this.activeSub = null;
+    this.renderNoTabs(); this.renderNoList();
+    const s = document.getElementById('no-scroll'); if (s) s.scrollTop = 0;
+  },
+  noSetSub(sub) {
+    this.activeSub = sub;
+    this.renderNoTabs(); this.renderNoList();
+    const s = document.getElementById('no-scroll'); if (s) s.scrollTop = 0;
+  },
+
+  renderNoList() {
+    const q        = document.getElementById('no-search')?.value || '';
+    const filtered = Data.filter(this.materials, this.activeCat, this.activeSub, q);
+    const list     = document.getElementById('no-mat-list');
+    if (!list) return;
+    if (!filtered.length) {
+      list.innerHTML = `<div class="empty-state"><i class="ti ti-package-off"></i><p>No materials found.</p></div>`;
+      return;
+    }
+    list.innerHTML = filtered.map(m => this._noMatCard(m)).join('');
+  },
+
+  _noMatCard(m) {
+    const qty = this.noGet(m.id), inOrder = qty > 0;
+    const ci  = CAT_ICONS[m.category] || CAT_ICONS.default;
+    return `<div class="mat-card ${inOrder?'in-order':''}">
+      <button class="mat-bin" data-bin="${m.id}" aria-label="Remove">
+        <i class="ti ti-trash"></i>
+      </button>
+      <div class="mat-icon" style="background:${ci.bg}">
+        <i class="ti ${ci.icon}" style="color:${ci.color}"></i>
+      </div>
+      <div class="mat-info">
+        <div class="mat-name">${esc(m.description)}</div>
+        <div class="mat-partcode">${esc(m.partCode)}</div>
+        <div class="mat-unit">${esc(m.qtyType||'')}</div>
+      </div>
+      <div class="mat-controls">
+        <button class="qty-btn" data-dec="${m.id}">−</button>
+        <input class="qty-input" type="number" min="0" step="1" value="${qty}" data-qid="${m.id}">
+        <button class="qty-btn" data-inc="${m.id}">+</button>
+        <button class="add-btn ${inOrder?'in-order':''}" data-add="${m.id}">
+          <i class="ti ${inOrder?'ti-check':'ti-plus'}"></i>
+        </button>
+      </div>
+    </div>`;
+  },
+
+  noClearOrder() {
+    if (!confirm('Clear all items from this order?')) return;
+    this._no._items = {};
+    this._updateNoBadge();
+    this.renderNoList();
+    if (document.getElementById('no-review-panel')?.classList.contains('open')) {
+      this._renderNoReview();
+    }
+  },
+
+  noOpenReview() {
+    this._renderNoReview();
+    this.openPanel('no-review-panel');
+  },
+
+  _renderNoReview() {
+    const wrap  = document.getElementById('no-review-contents');
+    if (!wrap) return;
+    const items = this.noItems();
+    if (!items.length) {
+      wrap.innerHTML = `<div class="empty-state"><i class="ti ti-clipboard"></i><p>No items on this order yet.</p></div>`;
+      return;
+    }
+    wrap.innerHTML = items.map(i => `
+      <div class="order-item">
+        <div class="order-item-row">
+          <div>
+            <div class="order-item-name">${esc(i.description)}</div>
+            <div class="order-item-code">${esc(i.partCode)}</div>
+            <div class="order-item-unit">${esc(i.qtyType||'')}</div>
+          </div>
+          <div class="order-item-qty">× ${i.qty}</div>
+        </div>
+        <div class="order-item-foot">
+          <button class="qty-btn" data-rdec="${i.id}">−</button>
+          <input class="qty-input" type="number" min="1" step="1" value="${i.qty}" data-rqid="${i.id}">
+          <button class="qty-btn" data-rinc="${i.id}">+</button>
+          <button class="remove-btn" data-rrem="${i.id}"><i class="ti ti-x"></i> Remove</button>
+        </div>
+      </div>`).join('') + `
+      <div class="order-summary-card">
+        <div class="order-summary-row total">
+          <span>Total items</span>
+          <span>${items.reduce((s,i)=>s+i.qty,0)} across ${items.length} line${items.length!==1?'s':''}</span>
+        </div>
+      </div>`;
+  },
+
+  // "New Order" review button — adds a review button in the new-order view footer
+  // We show it via a floating action button approach: the review panel button is shown
+  // when the badge count > 0. We wire a button in the view itself.
+  noComposeEmail() {
+    const items = this.noItems();
+    if (!items.length) { alert('No items on this order.'); return; }
+    // Build email directly from new order items
+    this._emailOrderId = null;  // not a queue order, don't mark as sent
+    const s = Settings.get();
+    document.getElementById('email-to').value      = s.supplierEmail;
+    document.getElementById('email-cc').value      = s.ccEmail;
+    document.getElementById('email-subject').value = `Material Order — ${this.orderRef}`;
+    document.getElementById('email-body').value    = buildEmailBody(this.orderRef, items);
+    this.closePanel('no-review-panel');
+    this.openPanel('email-panel');
+  },
+
+  // ══════════════════════════════════════════════════════
+  // SETTINGS
+  // ══════════════════════════════════════════════════════
+  openPanel(id)  { document.getElementById(id)?.classList.add('open'); },
+  closePanel(id) { document.getElementById(id)?.classList.remove('open'); },
+
+  _populateSettings() {
+    const s  = Settings.get();
+    const el = document.getElementById('settings-body');
+    if (!el) return;
+    el.innerHTML = `
+      <div class="settings-section">
+        <div class="settings-label">Email</div>
+        <div class="settings-card">
+          <div class="settings-row">
+            <div><div class="settings-row-label">To (purchasing)</div>
+              <div class="settings-row-sub">Auto-filled in To: field</div></div>
+            <input type="email" id="s-supplier" value="${esc(s.supplierEmail)}">
+          </div>
+          <div class="settings-row">
+            <div><div class="settings-row-label">CC email</div>
+              <div class="settings-row-sub">Always CC'd on orders</div></div>
+            <input type="email" id="s-cc" value="${esc(s.ccEmail)}">
+          </div>
+          <div class="settings-row">
+            <div><div class="settings-row-label">Closing note</div>
+              <div class="settings-row-sub">Added at end of email</div></div>
+            <input type="text" id="s-delivery" value="${esc(s.deliveryNote)}">
+          </div>
+        </div>
+      </div>
+      <div class="settings-section">
+        <div class="settings-label">Materials catalogue</div>
+        <div class="settings-card">
+          <div class="settings-row" style="flex-direction:column;align-items:flex-start;gap:6px">
+            <div class="settings-row-sub">
+              Edit <strong>materials.csv</strong> in the GitHub repository and commit.
+              Both devices reload automatically on next open.
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="settings-section">
+        <div class="settings-label">Connection</div>
+        <div class="settings-card">
+          <div class="settings-row">
+            <div><div class="settings-row-label">Firebase config</div>
+              <div class="settings-row-sub">Clear to re-enter connection details</div></div>
+            <button class="btn-sm btn-sm-danger" id="btn-clear-firebase">Clear</button>
+          </div>
+        </div>
+      </div>`;
+    document.getElementById('btn-clear-firebase').addEventListener('click', () => this.clearFirebase());
+  },
+
+  saveSettings() {
+    Settings.save({
+      supplierEmail: document.getElementById('s-supplier')?.value.trim(),
+      ccEmail:       document.getElementById('s-cc')?.value.trim(),
+      deliveryNote:  document.getElementById('s-delivery')?.value.trim(),
+    });
+    const btn = document.getElementById('btn-save-settings');
+    if (btn) { btn.textContent = '✓ Saved'; setTimeout(() => btn.textContent = 'Save', 1500); }
+  },
+
+  clearFirebase() {
+    if (!confirm('Clear Firebase config? You will need to re-enter it.')) return;
+    FirebaseConfig.clear(); location.reload();
+  },
 };
 
+// Wire up the "review" button in the new-order view — rendered after shell
+// We watch for it via a small MutationObserver since it's inside the new-order view
 document.addEventListener('DOMContentLoaded', () => Manager.init());
+
+// After shell renders, add a floating review button to the new-order view
+const _noReviewObserver = new MutationObserver(() => {
+  const view = document.getElementById('view-new-order');
+  if (view && !document.getElementById('btn-no-review')) {
+    // Insert a sticky action bar at the bottom of the new-order view
+    const bar = document.createElement('div');
+    bar.className = 'action-bar';
+    bar.innerHTML = `<div class="action-bar-inner">
+      <button class="btn btn-primary" id="btn-no-review">
+        <i class="ti ti-clipboard-list"></i> Review &amp; compose email
+      </button>
+    </div>`;
+    view.appendChild(bar);
+    document.getElementById('btn-no-review').addEventListener('click', () => Manager.noOpenReview());
+    _noReviewObserver.disconnect();
+  }
+});
+_noReviewObserver.observe(document.getElementById('root'), { childList: true, subtree: true });
 </script>
 </body>
 </html>
