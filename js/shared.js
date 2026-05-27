@@ -1,4 +1,4 @@
-// shared.js — v7
+// shared.js — v13
 
 const DEFAULT_MATERIALS = [
   { id:1,  category:'Stainless Steel', subcategory:'Box Section', partCode:'SL0300', description:'100 x 50 x 3mm x 6m Box Section 316 S/S', qtyType:'Length' },
@@ -18,12 +18,22 @@ const DEFAULT_SETTINGS = {
   supplierEmail: 'procurement@supplier.com',
   ccEmail:       'orders@yourcompany.com',
   deliveryNote:  'Please confirm availability and expected delivery date.',
+  // Email template — use {orderRef}, {date}, {items}, {closingNote} as placeholders
+  emailTemplate: '{orderRef}\n{date}\n\n────────────────────────────────────────────────────\nMATERIAL ORDER\n────────────────────────────────────────────────────\n\n{items}\n────────────────────────────────────────────────────\n{closingNote}',
 };
 
 const CAT_ICONS = {
   'Stainless Steel': { icon:'ti-atom-2',  bg:'#dbeafe', color:'#1d4ed8' },
   'Aluminium':       { icon:'ti-diamond', bg:'#f0fdf4', color:'#15803d' },
   'default':         { icon:'ti-package', bg:'#f3f4f6', color:'#6b7280' },
+};
+
+// ── DEVICE NAME — set once during setup, read-only thereafter ──
+const DeviceName = {
+  _key: 'mo_device_name',
+  get()      { return localStorage.getItem(this._key) || ''; },
+  save(name) { localStorage.setItem(this._key, name.trim()); },
+  isSet()    { return !!this.get(); },
 };
 
 // ── SETTINGS ──
@@ -50,13 +60,11 @@ const Data = {
       const res = await fetch(csvUrl + '?nocache=' + Date.now());
       if (!res.ok) throw new Error('HTTP ' + res.status);
       const text = await res.text();
-      // Guard: if server returned HTML (e.g. 404 page), bail out
       if (text.trim().startsWith('<')) throw new Error('Got HTML instead of CSV — check file exists in repo');
       const parsed = this._parseCsv(text);
       if (parsed.length) {
         this._list = parsed;
         try { localStorage.setItem('mo_mat_cache', JSON.stringify(parsed)); } catch {}
-        console.log('[Materials] Loaded', parsed.length, 'items from CSV');
         return parsed;
       }
       throw new Error('CSV parsed to 0 rows — check column headers');
@@ -65,14 +73,8 @@ const Data = {
     }
     try {
       const c = localStorage.getItem('mo_mat_cache');
-      if (c) {
-        const cached = JSON.parse(c);
-        console.log('[Materials] Using localStorage cache:', cached.length, 'items');
-        this._list = cached;
-        return cached;
-      }
+      if (c) { this._list = JSON.parse(c); return this._list; }
     } catch {}
-    console.log('[Materials] Using built-in defaults');
     this._list = [...DEFAULT_MATERIALS];
     return this._list;
   },
@@ -82,91 +84,49 @@ const Data = {
   _parseCsv(text) {
     const lines = text.trim().split(/\r?\n/).filter(l => l.trim() !== '');
     if (lines.length < 2) return [];
-
     const rawHeaders = this._splitLine(lines[0]);
     const headers    = rawHeaders.map(h => h.toLowerCase().trim());
-    console.log('[CSV] Headers:', headers);
-
-    const findCol = (...names) => {
-      for (const n of names) {
-        const i = headers.indexOf(n);
-        if (i >= 0) return i;
-      }
-      return -1;
-    };
-
-    const iCode = findCol('part code', 'part_code', 'partcode', 'code');
-    const iDesc = findCol('description', 'desc');
-    const iCat  = findCol('category', 'cat');
-    const iSub  = findCol('subcategory', 'sub category', 'sub_category', 'sub');
-    const iQty  = findCol('quantity type', 'quantity_type', 'quantitytype', 'qty type', 'qty_type', 'unit');
-
-    console.log(`[CSV] Columns → code:${iCode} desc:${iDesc} cat:${iCat} sub:${iSub} qty:${iQty}`);
-
-    if (iCode < 0 || iDesc < 0) {
-      console.error('[CSV] Missing required columns. Got:', headers);
-      return [];
-    }
-
+    const findCol    = (...names) => { for (const n of names) { const i = headers.indexOf(n); if (i >= 0) return i; } return -1; };
+    const iCode = findCol('part code','part_code','partcode','code');
+    const iDesc = findCol('description','desc');
+    const iCat  = findCol('category','cat');
+    const iSub  = findCol('subcategory','sub category','sub_category','sub');
+    const iQty  = findCol('quantity type','quantity_type','quantitytype','qty type','qty_type','unit');
+    if (iCode < 0 || iDesc < 0) { console.error('[CSV] Missing required columns. Got:', headers); return []; }
     return lines.slice(1).map((line, i) => {
       const cols = this._splitLine(line);
       const get  = idx => (idx >= 0 && idx < cols.length) ? cols[idx].trim() : '';
-      const code = get(iCode);
-      const desc = get(iDesc);
+      const code = get(iCode), desc = get(iDesc);
       if (!code && !desc) return null;
-      return {
-        id:          i + 1,
-        partCode:    code,
-        description: desc,
-        category:    get(iCat)  || 'Uncategorised',
-        subcategory: get(iSub)  || 'General',
-        qtyType:     get(iQty)  || 'Each',
-      };
+      return { id:i+1, partCode:code, description:desc, category:get(iCat)||'Uncategorised', subcategory:get(iSub)||'General', qtyType:get(iQty)||'Each' };
     }).filter(Boolean);
   },
 
   _splitLine(line) {
-    const cols = [];
-    let cur = '', inQ = false;
+    const cols = []; let cur = '', inQ = false;
     for (let i = 0; i < line.length; i++) {
       const ch = line[i];
-      if (ch === '"') {
-        if (inQ && line[i+1] === '"') { cur += '"'; i++; }
-        else inQ = !inQ;
-      } else if (ch === ',' && !inQ) {
-        cols.push(cur); cur = '';
-      } else {
-        cur += ch;
-      }
+      if (ch==='"') { if (inQ && line[i+1]==='"') { cur+='"'; i++; } else inQ=!inQ; }
+      else if (ch===',' && !inQ) { cols.push(cur); cur=''; }
+      else cur+=ch;
     }
-    cols.push(cur);
-    return cols;
+    cols.push(cur); return cols;
   },
 
   categories(list) {
     const seen = new Set();
-    return (list || this.get()).map(m => m.category)
-      .filter(c => { if (seen.has(c)) return false; seen.add(c); return true; });
+    return (list||this.get()).map(m=>m.category).filter(c=>{ if(seen.has(c)) return false; seen.add(c); return true; });
   },
-
   subcategories(list, category) {
     const seen = new Set();
-    return (list || this.get()).filter(m => m.category === category)
-      .map(m => m.subcategory)
-      .filter(s => { if (seen.has(s)) return false; seen.add(s); return true; });
+    return (list||this.get()).filter(m=>m.category===category).map(m=>m.subcategory)
+      .filter(s=>{ if(seen.has(s)) return false; seen.add(s); return true; });
   },
-
   filter(list, category, subcategory, query) {
-    let out = list || this.get();
-    if (category)    out = out.filter(m => m.category === category);
-    if (subcategory) out = out.filter(m => m.subcategory === subcategory);
-    if (query) {
-      const q = query.toLowerCase();
-      out = out.filter(m =>
-        m.description.toLowerCase().includes(q) ||
-        m.partCode.toLowerCase().includes(q)
-      );
-    }
+    let out = list||this.get();
+    if (category)    out = out.filter(m=>m.category===category);
+    if (subcategory) out = out.filter(m=>m.subcategory===subcategory);
+    if (query) { const q=query.toLowerCase(); out=out.filter(m=>m.description.toLowerCase().includes(q)||m.partCode.toLowerCase().includes(q)); }
     return out;
   },
 };
@@ -174,51 +134,56 @@ const Data = {
 // ── ORDER STATE ──
 const Order = {
   _items: {},
-  get(id)       { return this._items[id] || 0; },
-  set(id, qty)  { if (qty <= 0) delete this._items[id]; else this._items[id] = qty; },
-  adjust(id, d) { this.set(id, (this._items[id] || 0) + d); },
+  get(id)       { return this._items[id]||0; },
+  set(id,qty)   { if(qty<=0) delete this._items[id]; else this._items[id]=qty; },
+  adjust(id,d)  { this.set(id,(this._items[id]||0)+d); },
   remove(id)    { delete this._items[id]; },
-  clear()       { this._items = {}; },
+  clear()       { this._items={}; },
   count()       { return Object.keys(this._items).length; },
-  isEmpty()     { return this.count() === 0; },
+  isEmpty()     { return this.count()===0; },
   items(mats)   {
-    return Object.keys(this._items)
-      .map(id => { const m = mats.find(x => x.id == id); return m ? { ...m, qty: this._items[id] } : null; })
-      .filter(Boolean);
+    return Object.keys(this._items).map(id=>{
+      const m=mats.find(x=>x.id==id); return m?{...m,qty:this._items[id]}:null;
+    }).filter(Boolean);
   },
 };
 
 // ── FIREBASE CONFIG ──
 const FirebaseConfig = {
   _key: 'mo_firebase_config',
-  get()     { try { const s = localStorage.getItem(this._key); return s ? JSON.parse(s) : null; } catch { return null; } },
+  get()     { try { const s=localStorage.getItem(this._key); return s?JSON.parse(s):null; } catch { return null; } },
   save(cfg) { localStorage.setItem(this._key, JSON.stringify(cfg)); },
   clear()   { localStorage.removeItem(this._key); },
 };
 
 // ── UTILITIES ──
 function esc(str) {
-  return String(str || '')
-    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+  return String(str||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
     .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
 function genRef() {
-  const d = new Date();
+  const d=new Date();
   return `ORD-${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}-${Math.floor(Math.random()*900+100)}`;
 }
 function fmtTime(ts) {
   if (!ts) return '';
-  const d = ts instanceof Date ? ts : new Date(ts);
-  return d.toLocaleString('en-AU', { day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit' });
+  const d=ts instanceof Date?ts:new Date(ts);
+  return d.toLocaleString('en-AU',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'});
 }
-function buildEmailBody(orderRef, items) {
-  const s    = Settings.get();
-  const date = new Date().toLocaleDateString('en-AU', { day:'2-digit', month:'long', year:'numeric' });
-  const line = '─'.repeat(52);
-  let body   = `Order Reference: ${orderRef}\nDate: ${date}\n\n${line}\nMATERIAL ORDER\n${line}\n\n`;
-  items.forEach(i => {
-    body += `${i.partCode} - ${i.description}\n  Qty: ${i.qty} ${i.qtyType || ''}\n\n`;
-  });
-  body += `${line}\n${s.deliveryNote}`;
+
+// ── EMAIL BUILDER — uses template from settings ──
+function buildEmailBody(orderRef, items, deviceName) {
+  const s        = Settings.get();
+  const date     = new Date().toLocaleDateString('en-AU',{day:'2-digit',month:'long',year:'numeric'});
+  const device   = deviceName || DeviceName.get();
+  const itemsStr = items.map(i => `${i.partCode} - ${i.description}\n  Qty: ${i.qty} ${i.qtyType||''}`).join('\n\n');
+
+  // Start with the template and fill in placeholders
+  let body = (s.emailTemplate || DEFAULT_SETTINGS.emailTemplate)
+    .replace('{orderRef}',   `Order Reference: ${orderRef}${device ? `\nOrdered by: ${device}` : ''}`)
+    .replace('{date}',       `Date: ${date}`)
+    .replace('{items}',      itemsStr)
+    .replace('{closingNote}',s.deliveryNote);
+
   return body;
 }

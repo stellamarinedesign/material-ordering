@@ -19,6 +19,11 @@
       opacity:0; pointer-events:none; transition:opacity 0.15s; flex-shrink:0;
     }
     .mat-card.in-order .mat-bin { opacity:1; pointer-events:auto; }
+    .device-chip {
+      font-size:11px; font-family:var(--mono); color:rgba(255,255,255,0.7);
+      background:rgba(255,255,255,0.1); border-radius:20px;
+      padding:2px 10px; letter-spacing:0.04em;
+    }
   </style>
 </head>
 <body>
@@ -33,8 +38,8 @@ const Worker = {
   activeSub:  null,
   orderRef:   genRef(),
   materials:  [],
-  _cats:      [],   // current category list — populated by renderTabs
-  _subs:      [],   // current subcategory list — populated by renderTabs
+  _cats:      [],
+  _subs:      [],
 
   async init() {
     if ('serviceWorker' in navigator) {
@@ -42,20 +47,37 @@ const Worker = {
       for (const r of regs) await r.unregister();
     }
     const cfg = FirebaseConfig.get();
-    if (!cfg) { this.showSetup(); return; }
+    if (!cfg || !DeviceName.isSet()) { this.showSetup(); return; }
     const ok = await DB.init(cfg);
     if (!ok) { this.showSetup('Could not connect. Check your Firebase config.'); return; }
     this.materials = await Data.load('./materials.csv');
     this.renderApp();
   },
 
+  // ── SETUP — includes device name field ──
   showSetup(err) {
     document.getElementById('root').innerHTML = `
       <div class="setup-screen">
         <div class="setup-card">
-          <h2><i class="ti ti-flame" style="color:#ea580c;vertical-align:-2px"></i> Connect to Firebase</h2>
-          <p>Enter your Firebase project config once to start syncing orders.</p>
+          <h2><i class="ti ti-flame" style="color:#ea580c;vertical-align:-2px"></i> Device Setup</h2>
+          <p>Enter a name for this device and your Firebase project config. This only needs to be done once.</p>
           ${err ? `<div style="background:var(--red-bg);color:var(--red-text);border-radius:var(--radius);padding:10px 12px;font-size:13px;margin-bottom:12px">${esc(err)}</div>` : ''}
+
+          <div style="background:var(--bg2);border-radius:var(--radius);padding:12px;margin-bottom:16px">
+            <div style="font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:0.06em;
+              color:var(--text3);font-family:var(--mono);margin-bottom:10px">This Device</div>
+            <div class="setup-field" style="margin-bottom:0">
+              <label>Device Name</label>
+              <input id="cfg-device" autocomplete="off" placeholder="e.g. Workshop iPad, Bay 2 Tablet"
+                value="${esc(DeviceName.get())}">
+            </div>
+            <div style="font-size:11px;color:var(--text3);margin-top:6px;line-height:1.5">
+              Shown on orders so the manager knows which device submitted. Cannot be changed after setup.
+            </div>
+          </div>
+
+          <div style="font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:0.06em;
+            color:var(--text3);font-family:var(--mono);margin-bottom:10px">Firebase Connection</div>
           <div class="setup-field"><label>API Key</label><input id="cfg-apiKey" autocomplete="off" placeholder="AIzaSy..."></div>
           <div class="setup-field"><label>Project ID</label><input id="cfg-projectId" autocomplete="off" placeholder="my-project-id"></div>
           <div class="setup-field"><label>App ID</label><input id="cfg-appId" autocomplete="off" placeholder="1:123456:web:abc..."></div>
@@ -63,7 +85,8 @@ const Worker = {
             <i class="ti ti-plug"></i> Connect
           </button>
           <div class="setup-note" style="margin-top:14px">
-            Get these from <a href="https://console.firebase.google.com" target="_blank">console.firebase.google.com</a> → Project settings → Web app.
+            Get Firebase config from <a href="https://console.firebase.google.com" target="_blank">console.firebase.google.com</a>
+            → Project settings → Web app.
           </div>
         </div>
       </div>`;
@@ -71,23 +94,27 @@ const Worker = {
   },
 
   async saveConfig() {
-    const apiKey    = document.getElementById('cfg-apiKey').value.trim();
-    const projectId = document.getElementById('cfg-projectId').value.trim();
-    const appId     = document.getElementById('cfg-appId').value.trim();
-    if (!apiKey || !projectId || !appId) { alert('Please fill in all fields.'); return; }
+    const deviceName = document.getElementById('cfg-device').value.trim();
+    const apiKey     = document.getElementById('cfg-apiKey').value.trim();
+    const projectId  = document.getElementById('cfg-projectId').value.trim();
+    const appId      = document.getElementById('cfg-appId').value.trim();
+    if (!deviceName) { alert('Please enter a device name.'); return; }
+    if (!apiKey || !projectId || !appId) { alert('Please fill in all Firebase fields.'); return; }
     const cfg = { apiKey, projectId, appId,
       authDomain:`${projectId}.firebaseapp.com`,
       storageBucket:`${projectId}.appspot.com`,
       messagingSenderId:'000000000000' };
     const ok = await DB.init(cfg);
-    if (!ok) { this.showSetup('Connection failed. Double-check your config values.'); return; }
+    if (!ok) { this.showSetup('Connection failed. Double-check your Firebase config values.'); return; }
+    DeviceName.save(deviceName);
     FirebaseConfig.save(cfg);
     this.materials = await Data.load('./materials.csv');
     this.renderApp();
   },
 
-  // ── APP SHELL — rendered exactly once ──
+  // ── APP SHELL ──
   renderApp() {
+    const device = DeviceName.get();
     document.getElementById('root').innerHTML = `
       <div class="app-root" id="app-root">
         <div class="header">
@@ -97,7 +124,7 @@ const Worker = {
               <div class="header-ref" id="order-ref">${esc(this.orderRef)}</div>
             </div>
             <div class="header-actions">
-              <span class="role-pill">Worker</span>
+              <span class="device-chip">${esc(device)}</span>
               <button class="icon-btn" id="btn-review" aria-label="Review order">
                 <i class="ti ti-clipboard-list"></i>
                 <span class="order-badge" id="order-badge" style="display:none">0</span>
@@ -160,9 +187,7 @@ const Worker = {
       </div>
       <div id="overlay-wrap"></div>`;
 
-    // ── ALL LISTENERS ATTACHED ONCE HERE, NEVER AGAIN ──
-
-    // Static buttons
+    // ── ALL LISTENERS ATTACHED ONCE ──
     document.getElementById('btn-review')      .addEventListener('click', () => this.openReview());
     document.getElementById('btn-close-review').addEventListener('click', () => this.closePanel('review-panel'));
     document.getElementById('btn-submit')      .addEventListener('click', () => this.confirmSubmit());
@@ -170,9 +195,6 @@ const Worker = {
     document.getElementById('btn-new-order')   .addEventListener('click', () => this.newOrder());
     document.getElementById('search')          .addEventListener('input', () => this.renderList());
 
-    // ── MATERIAL LIST — single permanent delegated listener on #mat-list ──
-    // #mat-list persists for the lifetime of the app. We attach ONE listener here.
-    // renderList() only sets innerHTML — it never touches listeners.
     document.getElementById('mat-list').addEventListener('click', e => {
       const dec = e.target.closest('[data-dec]');
       const inc = e.target.closest('[data-inc]');
@@ -188,7 +210,6 @@ const Worker = {
       if (inp) this.setQty(+inp.dataset.qid, inp.value);
     });
 
-    // ── REVIEW PANEL — single permanent delegated listener on #review-contents ──
     document.getElementById('review-contents').addEventListener('click', e => {
       const dec = e.target.closest('[data-rdec]');
       const inc = e.target.closest('[data-rinc]');
@@ -202,18 +223,11 @@ const Worker = {
       if (inp) this.revSet(+inp.dataset.rqid, inp.value);
     });
 
-    // Tabs — delegated listeners on #tabs-wrap (also permanent)
-    // renderTabs() only sets innerHTML of tabs-wrap, listener stays on the wrapper
     document.getElementById('tabs-wrap').addEventListener('click', e => {
       const catBtn = e.target.closest('[data-cat-idx]');
       const subBtn = e.target.closest('[data-sub-idx]');
-      if (catBtn) {
-        const idx = parseInt(catBtn.dataset.catIdx);
-        this.setCat(idx === -1 ? null : this._cats[idx]);
-      } else if (subBtn) {
-        const idx = parseInt(subBtn.dataset.subIdx);
-        this.setSub(idx === -1 ? null : this._subs[idx]);
-      }
+      if (catBtn) { const i=+catBtn.dataset.catIdx; this.setCat(i===-1?null:this._cats[i]); }
+      else if (subBtn) { const i=+subBtn.dataset.subIdx; this.setSub(i===-1?null:this._subs[i]); }
     });
 
     this.renderTabs();
@@ -221,140 +235,90 @@ const Worker = {
     this.updateBadge();
   },
 
-  // ── TABS — only sets innerHTML, no listeners ──
   renderTabs() {
     const wrap = document.getElementById('tabs-wrap');
     if (!wrap) return;
     this._cats = Data.categories(this.materials);
     this._subs = this.activeCat ? Data.subcategories(this.materials, this.activeCat) : [];
-
-    const catBtns = this._cats.map((c, i) =>
-      `<button class="tab ${this.activeCat === c ? 'active' : ''}" data-cat-idx="${i}">${esc(c)}</button>`
-    ).join('');
-
+    const catBtns = this._cats.map((c,i) =>
+      `<button class="tab ${this.activeCat===c?'active':''}" data-cat-idx="${i}">${esc(c)}</button>`).join('');
     let subHtml = '';
     if (this.activeCat && this._subs.length) {
-      const subBtns = this._subs.map((s, i) =>
-        `<button class="tab ${this.activeSub === s ? 'active' : ''}" data-sub-idx="${i}">${esc(s)}</button>`
-      ).join('');
-      subHtml = `<div class="tabs-bar sub-bar">
-        <div class="tabs-inner">
-          <button class="tab ${!this.activeSub ? 'active' : ''}" data-sub-idx="-1">All</button>
-          ${subBtns}
-        </div>
-      </div>`;
+      const subBtns = this._subs.map((s,i) =>
+        `<button class="tab ${this.activeSub===s?'active':''}" data-sub-idx="${i}">${esc(s)}</button>`).join('');
+      subHtml = `<div class="tabs-bar sub-bar"><div class="tabs-inner">
+        <button class="tab ${!this.activeSub?'active':''}" data-sub-idx="-1">All</button>${subBtns}
+      </div></div>`;
     }
-
-    wrap.innerHTML = `<div class="tabs-bar">
-      <div class="tabs-inner">
-        <button class="tab ${!this.activeCat ? 'active' : ''}" data-cat-idx="-1">All</button>
-        ${catBtns}
-      </div>
-    </div>${subHtml}`;
+    wrap.innerHTML = `<div class="tabs-bar"><div class="tabs-inner">
+      <button class="tab ${!this.activeCat?'active':''}" data-cat-idx="-1">All</button>${catBtns}
+    </div></div>${subHtml}`;
   },
 
-  setCat(cat) {
-    this.activeCat = cat; this.activeSub = null;
-    this.renderTabs(); this.renderList();
-    const s = document.getElementById('app-scroll'); if (s) s.scrollTop = 0;
-  },
-  setSub(sub) {
-    this.activeSub = sub;
-    this.renderTabs(); this.renderList();
-    const s = document.getElementById('app-scroll'); if (s) s.scrollTop = 0;
-  },
+  setCat(cat) { this.activeCat=cat; this.activeSub=null; this.renderTabs(); this.renderList(); const s=document.getElementById('app-scroll'); if(s)s.scrollTop=0; },
+  setSub(sub) { this.activeSub=sub; this.renderTabs(); this.renderList(); const s=document.getElementById('app-scroll'); if(s)s.scrollTop=0; },
 
-  // ── MATERIAL LIST — only sets innerHTML, no listeners ──
   renderList() {
-    const q        = document.getElementById('search')?.value || '';
-    const filtered = Data.filter(this.materials, this.activeCat, this.activeSub, q);
-    const list     = document.getElementById('mat-list');
-    if (!list) return;
-    if (!filtered.length) {
-      list.innerHTML = `<div class="empty-state"><i class="ti ti-package-off"></i><p>No materials found.</p></div>`;
-      return;
-    }
-    list.innerHTML = filtered.map(m => this._matCard(m)).join('');
+    const q=document.getElementById('search')?.value||'';
+    const filtered=Data.filter(this.materials,this.activeCat,this.activeSub,q);
+    const list=document.getElementById('mat-list'); if(!list) return;
+    if(!filtered.length){list.innerHTML=`<div class="empty-state"><i class="ti ti-package-off"></i><p>No materials found.</p></div>`;return;}
+    list.innerHTML=filtered.map(m=>this._matCard(m)).join('');
   },
 
   _matCard(m) {
-    const qty = Order.get(m.id), inOrder = qty > 0;
-    const ci  = CAT_ICONS[m.category] || CAT_ICONS.default;
-    return `<div class="mat-card ${inOrder ? 'in-order' : ''}">
-      <button class="mat-bin" data-bin="${m.id}" aria-label="Remove">
-        <i class="ti ti-trash"></i>
-      </button>
-      <div class="mat-icon" style="background:${ci.bg}">
-        <i class="ti ${ci.icon}" style="color:${ci.color}"></i>
-      </div>
+    const qty=Order.get(m.id),inOrder=qty>0;
+    const ci=CAT_ICONS[m.category]||CAT_ICONS.default;
+    return `<div class="mat-card ${inOrder?'in-order':''}">
+      <button class="mat-bin" data-bin="${m.id}" aria-label="Remove"><i class="ti ti-trash"></i></button>
+      <div class="mat-icon" style="background:${ci.bg}"><i class="ti ${ci.icon}" style="color:${ci.color}"></i></div>
       <div class="mat-info">
         <div class="mat-name">${esc(m.description)}</div>
         <div class="mat-partcode">${esc(m.partCode)}</div>
-        <div class="mat-unit">${esc(m.qtyType || '')}</div>
+        <div class="mat-unit">${esc(m.qtyType||'')}</div>
       </div>
       <div class="mat-controls">
         <button class="qty-btn" data-dec="${m.id}">−</button>
         <input class="qty-input" type="number" min="0" step="1" value="${qty}" data-qid="${m.id}">
         <button class="qty-btn" data-inc="${m.id}">+</button>
-        <button class="add-btn ${inOrder ? 'in-order' : ''}" data-add="${m.id}">
-          <i class="ti ${inOrder ? 'ti-check' : 'ti-plus'}"></i>
+        <button class="add-btn ${inOrder?'in-order':''}" data-add="${m.id}">
+          <i class="ti ${inOrder?'ti-check':'ti-plus'}"></i>
         </button>
       </div>
     </div>`;
   },
 
-  // ── ORDER ACTIONS ──
-  adj(id, d)     { Order.adjust(id, d);           this._changed(); },
-  setQty(id, v)  { Order.set(id, parseInt(v)||0); this._changed(); },
-  quickAdd(id)   { if (!Order.get(id)) Order.set(id, 1); this._changed(); },
-  zeroItem(id)   { Order.remove(id); this._changed(); },
-  revAdj(id, d)  { Order.adjust(id, d);           this.updateBadge(); this._syncReview(); },
-  revSet(id, v)  { Order.set(id, parseInt(v)||0); this.updateBadge(); this._syncReview(); },
-  removeItem(id) { Order.remove(id);              this.updateBadge(); this._syncReview(); },
-  clearOrder()   {
-    if (!confirm('Clear all items?')) return;
-    Order.clear(); this.updateBadge(); this._syncReview();
-  },
+  adj(id,d)     { Order.adjust(id,d);           this._changed(); },
+  setQty(id,v)  { Order.set(id,parseInt(v)||0); this._changed(); },
+  quickAdd(id)  { if(!Order.get(id)) Order.set(id,1); this._changed(); },
+  zeroItem(id)  { Order.remove(id); this._changed(); },
+  revAdj(id,d)  { Order.adjust(id,d);           this.updateBadge(); this._syncReview(); },
+  revSet(id,v)  { Order.set(id,parseInt(v)||0); this.updateBadge(); this._syncReview(); },
+  removeItem(id){ Order.remove(id);              this.updateBadge(); this._syncReview(); },
+  clearOrder()  { if(!confirm('Clear all items?')) return; Order.clear(); this.updateBadge(); this._syncReview(); },
 
-  _changed() {
-    this.updateBadge();
-    this.renderList();
-    if (document.getElementById('review-panel')?.classList.contains('open')) {
-      this._renderReviewContents();
-    }
-  },
-  _syncReview() {
-    this._renderReviewContents();
-    this.renderList();
-  },
+  _changed()    { this.updateBadge(); this.renderList(); if(document.getElementById('review-panel')?.classList.contains('open')) this._renderReviewContents(); },
+  _syncReview() { this._renderReviewContents(); this.renderList(); },
 
   updateBadge() {
-    const b = document.getElementById('order-badge');
-    if (!b) return;
-    const n = Order.count();
-    b.textContent = n; b.style.display = n > 0 ? 'flex' : 'none';
+    const b=document.getElementById('order-badge'); if(!b) return;
+    const n=Order.count(); b.textContent=n; b.style.display=n>0?'flex':'none';
   },
-
   openPanel(id)  { document.getElementById(id)?.classList.add('open'); },
   closePanel(id) { document.getElementById(id)?.classList.remove('open'); },
   openReview()   { this._renderReviewContents(); this.openPanel('review-panel'); },
 
-  // ── REVIEW CONTENTS — only sets innerHTML, no listeners ──
   _renderReviewContents() {
-    const wrap = document.getElementById('review-contents');
-    if (!wrap) return;
-    const items = Order.items(this.materials);
-    if (!items.length) {
-      wrap.innerHTML = `<div class="empty-state"><i class="ti ti-clipboard"></i><p>No items on this order yet.</p></div>`;
-      return;
-    }
-    wrap.innerHTML = items.map(i => `
+    const wrap=document.getElementById('review-contents'); if(!wrap) return;
+    const items=Order.items(this.materials);
+    if(!items.length){ wrap.innerHTML=`<div class="empty-state"><i class="ti ti-clipboard"></i><p>No items on this order yet.</p></div>`; return; }
+    wrap.innerHTML=items.map(i=>`
       <div class="order-item">
         <div class="order-item-row">
           <div>
             <div class="order-item-name">${esc(i.description)}</div>
             <div class="order-item-code">${esc(i.partCode)}</div>
-            <div class="order-item-unit">${esc(i.qtyType || '')}</div>
+            <div class="order-item-unit">${esc(i.qtyType||'')}</div>
           </div>
           <div class="order-item-qty">× ${i.qty}</div>
         </div>
@@ -364,7 +328,7 @@ const Worker = {
           <button class="qty-btn" data-rinc="${i.id}">+</button>
           <button class="remove-btn" data-rrem="${i.id}"><i class="ti ti-x"></i> Remove</button>
         </div>
-      </div>`).join('') + `
+      </div>`).join('')+`
       <div class="order-summary-card">
         <div class="order-summary-row total">
           <span>Total items</span>
@@ -373,13 +337,12 @@ const Worker = {
       </div>`;
   },
 
-  // ── SUBMIT ──
   confirmSubmit() {
-    if (Order.isEmpty()) { alert('No items on this order.'); return; }
-    const items = Order.items(this.materials);
-    const lines = items.map(i => `${i.partCode}  ×${i.qty}  ${i.description}`).join('\n');
-    const ow = document.getElementById('overlay-wrap');
-    ow.innerHTML = `
+    if(Order.isEmpty()){ alert('No items on this order.'); return; }
+    const items=Order.items(this.materials);
+    const lines=items.map(i=>`${i.partCode}  ×${i.qty}  ${i.description}`).join('\n');
+    const ow=document.getElementById('overlay-wrap');
+    ow.innerHTML=`
       <div class="overlay" id="submit-confirm">
         <div class="sheet">
           <div class="sheet-handle"></div>
@@ -388,53 +351,48 @@ const Worker = {
             border-radius:var(--radius);margin-bottom:12px;white-space:pre-wrap;line-height:1.6">${esc(lines)}</pre>
           <p>The production manager will review and forward to purchasing.</p>
           <div class="sheet-btns">
-            <button class="btn btn-orange" id="btn-confirm-yes">
-              <i class="ti ti-send"></i> Confirm and submit
-            </button>
+            <button class="btn btn-orange" id="btn-confirm-yes"><i class="ti ti-send"></i> Confirm and submit</button>
             <button class="btn btn-outline" id="btn-confirm-no">Cancel</button>
           </div>
         </div>
       </div>`;
-    document.getElementById('btn-confirm-yes').addEventListener('click', () => this.doSubmit());
-    document.getElementById('btn-confirm-no') .addEventListener('click', () => this.closeOverlay());
-    requestAnimationFrame(() => document.getElementById('submit-confirm')?.classList.add('show'));
+    document.getElementById('btn-confirm-yes').addEventListener('click', ()=>this.doSubmit());
+    document.getElementById('btn-confirm-no') .addEventListener('click', ()=>this.closeOverlay());
+    requestAnimationFrame(()=>document.getElementById('submit-confirm')?.classList.add('show'));
   },
 
   closeOverlay() {
-    const el = document.getElementById('submit-confirm');
-    if (!el) return;
+    const el=document.getElementById('submit-confirm'); if(!el) return;
     el.classList.remove('show');
-    setTimeout(() => { document.getElementById('overlay-wrap').innerHTML = ''; }, 300);
+    setTimeout(()=>{ document.getElementById('overlay-wrap').innerHTML=''; },300);
   },
 
   async doSubmit() {
     this.closeOverlay();
-    const items = Order.items(this.materials).map(i => ({
-      id:i.id, partCode:i.partCode, description:i.description,
-      category:i.category, subcategory:i.subcategory, qtyType:i.qtyType||'', qty:i.qty,
+    const items=Order.items(this.materials).map(i=>({
+      id:i.id,partCode:i.partCode,description:i.description,
+      category:i.category,subcategory:i.subcategory,qtyType:i.qtyType||'',qty:i.qty,
     }));
     try {
-      await DB.submitOrder({ ref:this.orderRef, items });
+      // Include device name with the order
+      await DB.submitOrder({ ref:this.orderRef, deviceName:DeviceName.get(), items });
       this.closePanel('review-panel');
       this.openPanel('success-panel');
     } catch(e) {
-      alert('Failed to submit. Check your internet connection.\n\n' + e.message);
+      alert('Failed to submit. Check your internet connection.\n\n'+e.message);
     }
   },
 
   newOrder() {
-    Order.clear();
-    this.orderRef = genRef(); this.activeCat = null; this.activeSub = null;
-    this.closePanel('success-panel');
-    this.updateBadge();
-    const ref  = document.getElementById('order-ref');  if (ref)  ref.textContent = this.orderRef;
-    const srch = document.getElementById('search');     if (srch) srch.value = '';
-    this.renderTabs();
-    this.renderList();
+    Order.clear(); this.orderRef=genRef(); this.activeCat=null; this.activeSub=null;
+    this.closePanel('success-panel'); this.updateBadge();
+    const ref=document.getElementById('order-ref'); if(ref) ref.textContent=this.orderRef;
+    const srch=document.getElementById('search');   if(srch) srch.value='';
+    this.renderTabs(); this.renderList();
   },
 };
 
-document.addEventListener('DOMContentLoaded', () => Worker.init());
+document.addEventListener('DOMContentLoaded', ()=>Worker.init());
 </script>
 </body>
 </html>
