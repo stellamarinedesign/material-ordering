@@ -1,4 +1,4 @@
-// shared.js — v13
+// shared.js — v16
 
 const DEFAULT_MATERIALS = [
   { id:1,  category:'Stainless Steel', subcategory:'Box Section', partCode:'SL0300', description:'100 x 50 x 3mm x 6m Box Section 316 S/S', qtyType:'Length' },
@@ -15,11 +15,12 @@ const DEFAULT_MATERIALS = [
 ];
 
 const DEFAULT_SETTINGS = {
-  supplierEmail: 'procurement@supplier.com',
-  ccEmail:       'orders@yourcompany.com',
-  deliveryNote:  'Please confirm availability and expected delivery date.',
-  // Email template — use {orderRef}, {date}, {items}, {closingNote} as placeholders
-  emailTemplate: '{orderRef}\n{date}\n\n────────────────────────────────────────────────────\nMATERIAL ORDER\n────────────────────────────────────────────────────\n\n{items}\n────────────────────────────────────────────────────\n{closingNote}',
+  supplierEmail:  'procurement@supplier.com',
+  ccEmail:        'orders@yourcompany.com',
+  deliveryNote:   'Please confirm availability and expected delivery date.',
+  emailSubject:   'Material Order - {category}',
+  // Placeholders: {orderRefs} {date} {items} {closingNote}
+  emailTemplate:  '{orderRefs}\r\n{date}\r\n\r\n────────────────────────────────────────────────────\r\nMATERIAL ORDER - {category}\r\n────────────────────────────────────────────────────\r\n\r\n{items}\r\n────────────────────────────────────────────────────\r\n{closingNote}',
 };
 
 const CAT_ICONS = {
@@ -28,7 +29,7 @@ const CAT_ICONS = {
   'default':         { icon:'ti-package', bg:'#f3f4f6', color:'#6b7280' },
 };
 
-// ── DEVICE NAME — set once during setup, read-only thereafter ──
+// ── DEVICE NAME ──
 const DeviceName = {
   _key: 'mo_device_name',
   get()      { return localStorage.getItem(this._key) || ''; },
@@ -60,21 +61,16 @@ const Data = {
       const res = await fetch(csvUrl + '?nocache=' + Date.now());
       if (!res.ok) throw new Error('HTTP ' + res.status);
       const text = await res.text();
-      if (text.trim().startsWith('<')) throw new Error('Got HTML instead of CSV — check file exists in repo');
+      if (text.trim().startsWith('<')) throw new Error('Got HTML — check file exists in repo');
       const parsed = this._parseCsv(text);
       if (parsed.length) {
         this._list = parsed;
         try { localStorage.setItem('mo_mat_cache', JSON.stringify(parsed)); } catch {}
         return parsed;
       }
-      throw new Error('CSV parsed to 0 rows — check column headers');
-    } catch (e) {
-      console.warn('[Materials] CSV load failed:', e.message);
-    }
-    try {
-      const c = localStorage.getItem('mo_mat_cache');
-      if (c) { this._list = JSON.parse(c); return this._list; }
-    } catch {}
+      throw new Error('CSV parsed to 0 rows');
+    } catch (e) { console.warn('[Materials] CSV load failed:', e.message); }
+    try { const c = localStorage.getItem('mo_mat_cache'); if (c) { this._list = JSON.parse(c); return this._list; } } catch {}
     this._list = [...DEFAULT_MATERIALS];
     return this._list;
   },
@@ -84,9 +80,8 @@ const Data = {
   _parseCsv(text) {
     const lines = text.trim().split(/\r?\n/).filter(l => l.trim() !== '');
     if (lines.length < 2) return [];
-    const rawHeaders = this._splitLine(lines[0]);
-    const headers    = rawHeaders.map(h => h.toLowerCase().trim());
-    const findCol    = (...names) => { for (const n of names) { const i = headers.indexOf(n); if (i >= 0) return i; } return -1; };
+    const headers = this._splitLine(lines[0]).map(h => h.toLowerCase().trim());
+    const findCol = (...names) => { for (const n of names) { const i = headers.indexOf(n); if (i >= 0) return i; } return -1; };
     const iCode = findCol('part code','part_code','partcode','code');
     const iDesc = findCol('description','desc');
     const iCat  = findCol('category','cat');
@@ -171,19 +166,60 @@ function fmtTime(ts) {
   return d.toLocaleString('en-AU',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'});
 }
 
-// ── EMAIL BUILDER — uses template from settings ──
-function buildEmailBody(orderRef, items, deviceName) {
-  const s        = Settings.get();
-  const date     = new Date().toLocaleDateString('en-AU',{day:'2-digit',month:'long',year:'numeric'});
-  const device   = deviceName || DeviceName.get();
-  const itemsStr = items.map(i => `${i.partCode} - ${i.description}\n  Qty: ${i.qty} ${i.qtyType||''}`).join('\n\n');
+// ── BUILD EMAIL FOR A SINGLE CATEGORY ──
+// orderRefs: array of order reference strings (one per contributing order)
+// items: array of {partCode, description, qtyType, qty} — already summed if combined
+// category: string
+function buildCategoryEmail(orderRefs, items, category) {
+  const s    = Settings.get();
+  const date = new Date().toLocaleDateString('en-AU',{day:'2-digit',month:'long',year:'numeric'});
 
-  // Start with the template and fill in placeholders
-  let body = (s.emailTemplate || DEFAULT_SETTINGS.emailTemplate)
-    .replace('{orderRef}',   `Order Reference: ${orderRef}`)
-    .replace('{date}',       `Date: ${date}`)
-    .replace('{items}',      itemsStr)
-    .replace('{closingNote}',s.deliveryNote);
+  // Refs line — one ref per line if multiple orders combined
+  const refsStr  = orderRefs.map(r => `Order Reference: ${r}`).join('\r\n');
 
-  return body;
+  // Items block
+  const itemsStr = items.map(i => `${i.partCode} - ${i.description}\r\n  Qty: ${i.qty} ${i.qtyType||''}`).join('\r\n\r\n');
+
+  // Subject — replace {category}
+  const subjectTpl = s.emailSubject || DEFAULT_SETTINGS.emailSubject;
+  const subject    = subjectTpl.replace('{category}', category);
+
+  // Body — fill all placeholders, use \r\n throughout for Outlook Classic
+  const tpl  = (s.emailTemplate || DEFAULT_SETTINGS.emailTemplate);
+  const body = tpl
+    .replace('{orderRefs}', refsStr)
+    .replace('{date}',      `Date: ${date}`)
+    .replace('{category}',  category)
+    .replace('{items}',     itemsStr)
+    .replace('{closingNote}', s.deliveryNote);
+
+  return { subject, body };
+}
+
+// ── GROUP ITEMS BY CATEGORY ──
+// Takes an array of order objects (each with .ref and .items[])
+// Returns { category: { refs: [], items: [] } } with quantities summed across orders
+function groupByCategory(orders) {
+  const groups = {};
+  for (const order of orders) {
+    for (const item of (order.items || [])) {
+      const cat = item.category || 'Uncategorised';
+      if (!groups[cat]) groups[cat] = { refs: new Set(), items: {} };
+      groups[cat].refs.add(order.ref || order._id);
+      const key = item.partCode;
+      if (!groups[cat].items[key]) {
+        groups[cat].items[key] = { ...item, qty: 0 };
+      }
+      groups[cat].items[key].qty += item.qty;
+    }
+  }
+  // Convert to arrays
+  const result = {};
+  for (const [cat, data] of Object.entries(groups)) {
+    result[cat] = {
+      refs:  [...data.refs],
+      items: Object.values(data.items),
+    };
+  }
+  return result;
 }
