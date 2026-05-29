@@ -70,6 +70,7 @@ const Manager = {
     this.materials = await Data.load('./materials.csv');
     this.orderRef  = genRef();
     this.renderShell();
+    const verEl=document.getElementById('app-version'); if(verEl) verEl.textContent=APP_VERSION;
     this.startListening();
   },
 
@@ -112,7 +113,7 @@ const Manager = {
           <div class="col"><div class="header-inner">
             <div class="header-left">
               <div class="header-title">Material Orders — Manager</div>
-              <div class="header-ref"><span class="live-dot"></span>Live</div>
+              <div class="header-ref"><span class="live-dot"></span>Live &nbsp;·&nbsp; <span id="app-version"></span></div>
             </div>
             <div class="header-actions">
               <span class="role-pill">Production Manager</span>
@@ -138,7 +139,8 @@ const Manager = {
         </div>
 
         <!-- QUEUE VIEW -->
-        <div id="view-queue" class="manager-body" style="flex:1;overflow:hidden">
+        <div id="view-queue" style="flex:1;overflow:hidden;display:flex;flex-direction:column;min-height:0">
+          <div style="flex:1;display:flex;flex-direction:column;overflow:hidden;min-height:0">
           <div class="mobile-tabs" id="mobile-tabs">
             <button class="tab active" data-view="pending">Pending <span class="sidebar-count zero" id="mob-pending-count" style="margin-left:4px">0</span></button>
             <button class="tab" data-view="sent">Sent</button>
@@ -160,6 +162,7 @@ const Manager = {
           <div class="manager-main">
             <div class="order-queue" id="order-queue"></div>
           </div>
+          </div><!-- end inner flex wrapper -->
         </div>
 
         <!-- NEW ORDER VIEW -->
@@ -619,7 +622,8 @@ const Manager = {
       </div>`;
     document.getElementById('btn-done-email').addEventListener('click',()=>{ ow.innerHTML=''; });
 
-    // Hidden anchor click — most reliable method for Outlook Classic
+    // window.location.href via openMailto — most reliable for Outlook Classic
+    // Small delay to let the success overlay render first
     setTimeout(()=>{
       openMailto(to, cc, subject, body);
     },300);

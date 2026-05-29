@@ -119,7 +119,7 @@ const Worker = {
           <div class="col"><div class="header-inner">
             <div class="header-left">
               <div class="header-title">Material Orders</div>
-              <div class="header-ref" id="order-ref">${esc(this.orderRef)}</div>
+              <div class="header-ref" style="display:flex;gap:6px;align-items:center"><span id="order-ref"></span><span style="opacity:0.45">·</span><span id="app-version" style="opacity:0.6;font-family:var(--mono)"></span></div>
             </div>
             <div class="header-actions">
               <span class="device-chip">${esc(device)}</span>
@@ -228,6 +228,8 @@ const Worker = {
       else if (subBtn) { const i=+subBtn.dataset.subIdx; this.setSub(i===-1?null:this._subs[i]); }
     });
 
+    const _v=document.getElementById('app-version'); if(_v) _v.textContent=APP_VERSION;
+    const _r=document.getElementById('order-ref'); if(_r) _r.textContent=this.orderRef;
     this.renderTabs();
     this.renderList();
     this.updateBadge();

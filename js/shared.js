@@ -1,4 +1,6 @@
-// shared.js — v17
+// shared.js — v18
+
+const APP_VERSION = 'v18';
 
 const DEFAULT_MATERIALS = [
   { id:1,  category:'Stainless Steel', subcategory:'Box Section', partCode:'SL0300', description:'100 x 50 x 3mm x 6m Box Section 316 S/S', qtyType:'Length' },
@@ -18,9 +20,7 @@ const DEFAULT_SETTINGS = {
   supplierEmail:  'procurement@supplier.com',
   ccEmail:        'orders@yourcompany.com',
   deliveryNote:   'Please confirm availability and expected delivery date.',
-  emailSubject:   'Material Order - {category}',
-  // Placeholders: {date} {category} {items} {closingNote}
-  // Note: {orderRefs} removed from default — orders are now per-category
+  emailSubject:   'Material Order - {category} - {date}',
   emailTemplate:  '{date}\r\n\r\n────────────────────────────────────────────────────\r\nMATERIAL ORDER - {category}\r\n────────────────────────────────────────────────────\r\n\r\n{items}\r\n────────────────────────────────────────────────────\r\n{closingNote}',
 };
 
@@ -30,7 +30,6 @@ const CAT_ICONS = {
   'default':         { icon:'ti-package', bg:'#f3f4f6', color:'#6b7280' },
 };
 
-// ── DEVICE NAME ──
 const DeviceName = {
   _key: 'mo_device_name',
   get()      { return localStorage.getItem(this._key) || ''; },
@@ -38,7 +37,6 @@ const DeviceName = {
   isSet()    { return !!this.get(); },
 };
 
-// ── SETTINGS ──
 const Settings = {
   get() {
     try {
@@ -53,7 +51,6 @@ const Settings = {
   },
 };
 
-// ── DATA ──
 const Data = {
   _list: null,
   async load(csvUrl) {
@@ -122,7 +119,6 @@ const Data = {
   },
 };
 
-// ── ORDER STATE ──
 const Order = {
   _items: {},
   get(id)       { return this._items[id]||0; },
@@ -139,7 +135,6 @@ const Order = {
   },
 };
 
-// ── FIREBASE CONFIG ──
 const FirebaseConfig = {
   _key: 'mo_firebase_config',
   get()     { try { const s=localStorage.getItem(this._key); return s?JSON.parse(s):null; } catch { return null; } },
@@ -147,7 +142,6 @@ const FirebaseConfig = {
   clear()   { localStorage.removeItem(this._key); },
 };
 
-// ── UTILITIES ──
 function esc(str) {
   return String(str||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
     .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
@@ -162,47 +156,62 @@ function fmtTime(ts) {
   return d.toLocaleString('en-AU',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'});
 }
 
-// ── BUILD EMAIL FOR A SINGLE CATEGORY ──
+// Apply all template placeholders to a string (works for both subject and body)
+function applyPlaceholders(str, category, date, items, closingNote) {
+  return str
+    .replace(/\{category\}/g, category || '')
+    .replace(/\{date\}/g,     date     || '')
+    .replace(/\{items\}/g,    items    || '')
+    .replace(/\{closingNote\}/g, closingNote || '')
+    .replace(/\{orderRefs\}/g, ''); // legacy compat
+}
+
+// Build email for a single category.
+// items: array of {partCode, description, qtyType, qty} — NOT pre-summed, kept per-order
 function buildCategoryEmail(items, category) {
-  const s       = Settings.get();
-  const date    = new Date().toLocaleDateString('en-AU',{day:'2-digit',month:'long',year:'numeric'});
-  const itemsStr= items.map(i=>`${i.partCode} - ${i.description}\r\n  Qty: ${i.qty} ${i.qtyType||''}`).join('\r\n\r\n');
-  const subjectTpl = s.emailSubject || DEFAULT_SETTINGS.emailSubject;
-  const subject    = subjectTpl.replace('{category}', category);
-  const tpl  = s.emailTemplate || DEFAULT_SETTINGS.emailTemplate;
-  const body = tpl
-    .replace('{date}',       `Date: ${date}`)
-    .replace('{category}',   category)
-    .replace('{orderRefs}',  '') // kept for backwards compat if someone has old template
-    .replace('{items}',      itemsStr)
-    .replace('{closingNote}',s.deliveryNote);
+  const s        = Settings.get();
+  const dateStr  = new Date().toLocaleDateString('en-AU',{day:'2-digit',month:'long',year:'numeric'});
+  const dateShort= new Date().toLocaleDateString('en-AU',{day:'2-digit',month:'short',year:'numeric'});
+
+  // Items block — kept per line as passed in (caller controls grouping)
+  const itemsStr = items.map(i=>`${i.partCode} - ${i.description}\r\n  Qty: ${i.qty} ${i.qtyType||''}`).join('\r\n\r\n');
+
+  const subject = applyPlaceholders(
+    s.emailSubject || DEFAULT_SETTINGS.emailSubject,
+    category, dateShort, '', ''
+  );
+  const body = applyPlaceholders(
+    s.emailTemplate || DEFAULT_SETTINGS.emailTemplate,
+    category, `Date: ${dateStr}`, itemsStr, s.deliveryNote
+  );
   return { subject, body };
 }
 
-// ── GROUP ITEMS BY CATEGORY across orders, tracking device per item ──
-// Returns { category: { items: [{...item, deviceName, orderId}] } }
+// Group items by category across orders.
+// Returns per-category array of items, each with their own order/device context.
+// Items from DIFFERENT orders with the same partCode are kept SEPARATE (not summed),
+// so the email clearly shows each order's contribution.
+// Items from the SAME order with the same partCode are summed (shouldn't happen but defensive).
 function groupByCategory(orders) {
   const groups = {};
   for (const order of orders) {
     for (const item of (order.items||[])) {
-      // Skip items that have already been emailed
       if (item.emailed) continue;
       const cat = item.category || 'Uncategorised';
       if (!groups[cat]) groups[cat] = { items: [] };
-      // Check if this partCode already exists in the group (combining quantities)
-      const existing = groups[cat].items.find(x => x.partCode === item.partCode);
+
+      // Check if same orderId + partCode already exists (same order, same part — sum)
+      const existing = groups[cat].items.find(
+        x => x.orderId === order._id && x.partCode === item.partCode
+      );
       if (existing) {
         existing.qty += item.qty;
-        // Track multiple device names if different
-        if (item.deviceName && !existing.deviceNames.includes(item.deviceName)) {
-          existing.deviceNames.push(item.deviceName);
-        }
       } else {
         groups[cat].items.push({
           ...item,
           deviceName:  order.deviceName || '',
-          deviceNames: order.deviceName ? [order.deviceName] : [],
           orderId:     order._id,
+          orderRef:    order.ref || order._id,
         });
       }
     }
@@ -210,17 +219,25 @@ function groupByCategory(orders) {
   return groups;
 }
 
-// ── OUTLOOK-COMPATIBLE MAILTO ──
-// Opens email via a hidden anchor click — more reliable than window.location.href for Outlook Classic
+// Outlook Classic compatible mailto opener.
+// Uses window.location.href which Outlook Classic handles more reliably than anchor clicks.
+// Key: do NOT encode the to/cc addresses themselves, only encode subject and body.
+// Do NOT use encodeURIComponent on the whole string — build it manually.
 function openMailto(to, cc, subject, body) {
-  const mailto = 'mailto:' + to
-    + '?cc='      + encodeURIComponent(cc)
-    + '&subject=' + encodeURIComponent(subject)
-    + '&body='    + encodeURIComponent(body);
-  const a = document.createElement('a');
-  a.href = mailto;
-  a.style.display = 'none';
-  document.body.appendChild(a);
-  a.click();
-  setTimeout(() => document.body.removeChild(a), 1000);
+  // Build the mailto string carefully for Outlook Classic:
+  // - 'to' and 'cc' addresses must NOT be encoded (Outlook Classic fails on %40)
+  // - subject and body must be encoded but use %0D%0A for line breaks (not %0A)
+  const encodedSubject = encodeURIComponent(subject);
+  // Replace any %0A-only line breaks with %0D%0A for Outlook Classic
+  const encodedBody = encodeURIComponent(body).replace(/%0A/g, '%0D%0A');
+
+  let mailto = 'mailto:' + to;
+  const params = [];
+  if (cc)      params.push('cc='      + cc);
+  if (subject) params.push('subject=' + encodedSubject);
+  if (body)    params.push('body='    + encodedBody);
+  if (params.length) mailto += '?' + params.join('&');
+
+  // window.location.href is most reliable for Outlook Classic
+  window.location.href = mailto;
 }

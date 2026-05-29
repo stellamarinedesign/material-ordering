@@ -455,7 +455,7 @@ button { cursor: pointer; }
    MANAGER — TWO-COLUMN LAYOUT
    ═══════════════════════════════════════════════════ */
 .manager-body {
-  flex: 1; display: flex; overflow: hidden;
+  flex: 1; display: flex; overflow: hidden; min-height: 0;
 }
 
 .manager-sidebar {
@@ -467,6 +467,7 @@ button { cursor: pointer; }
 .manager-main {
   flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden;
   background: var(--bg);
+  min-height: 0;
 }
 
 /* Mobile: hide sidebar, show tab strip */
@@ -507,6 +508,7 @@ button { cursor: pointer; }
   flex: 1; overflow-y: auto; padding: 12px;
   display: flex; flex-direction: column; gap: 8px;
   -webkit-overflow-scrolling: touch;
+  min-height: 0;  /* critical: allows flex child to shrink and scroll */
 }
 .order-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; }
 .order-card-header {
