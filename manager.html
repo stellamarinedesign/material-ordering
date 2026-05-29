@@ -9,44 +9,30 @@
   <link rel="stylesheet" href="css/style.css">
   <style>
     .qty-row { display:flex; align-items:center; }
-    .qty-row .qty-btn {
-      width:28px; height:28px; font-size:15px;
-      background:var(--bg); border:1px solid var(--border); color:var(--text);
-      display:flex; align-items:center; justify-content:center; flex-shrink:0;
-    }
+    .qty-row .qty-btn { width:28px;height:28px;font-size:15px;background:var(--bg);border:1px solid var(--border);color:var(--text);display:flex;align-items:center;justify-content:center;flex-shrink:0; }
     .qty-row .qty-btn:first-child { border-radius:var(--radius) 0 0 var(--radius); }
-    .qty-row .qty-btn:last-child  { border-radius:0 var(--radius) var(--radius) 0; border-left:none; }
-    .qty-row .qty-edit {
-      width:44px; height:28px;
-      border:1px solid var(--border); border-left:none; border-right:none;
-      background:var(--surface); font-size:12px; font-family:var(--mono);
-      text-align:center; outline:none; color:var(--text);
-      -moz-appearance:textfield;
-    }
-    .qty-row .qty-edit::-webkit-inner-spin-button,
-    .qty-row .qty-edit::-webkit-outer-spin-button { -webkit-appearance:none; }
-    .mat-bin {
-      width:30px; height:32px; display:flex; align-items:center; justify-content:center;
-      background:none; border:none; color:var(--red-text); font-size:15px;
-      opacity:0; pointer-events:none; transition:opacity 0.15s; flex-shrink:0;
-    }
-    .mat-card.in-order .mat-bin { opacity:1; pointer-events:auto; }
-    .main-tab { padding:11px 18px; font-size:13px; font-weight:500; color:var(--text3);
-      border-bottom:2px solid transparent; background:none;
-      border-top:none; border-left:none; border-right:none; cursor:pointer; white-space:nowrap; }
-    .main-tab.active { color:var(--text); border-bottom-color:#1e3a5f; }
-    /* Category email group inside order card */
-    .cat-email-row {
-      display:flex; align-items:center; justify-content:space-between;
-      padding:8px 0; border-bottom:1px solid var(--border); gap:10px;
-    }
-    .cat-email-row:last-child { border-bottom:none; }
-    .cat-label { font-size:13px; font-weight:500; color:var(--text); display:flex; align-items:center; gap:6px; }
-    .cat-count { font-size:11px; color:var(--text3); font-family:var(--mono); }
-    /* Combined order badge */
-    .combine-note { font-size:11px; color:var(--blue-text); font-family:var(--mono);
-      background:var(--blue-bg); padding:2px 8px; border-radius:20px;
-      display:inline-flex; align-items:center; gap:4px; margin-bottom:8px; }
+    .qty-row .qty-btn:last-child  { border-radius:0 var(--radius) var(--radius) 0;border-left:none; }
+    .qty-row .qty-edit { width:44px;height:28px;border:1px solid var(--border);border-left:none;border-right:none;background:var(--surface);font-size:12px;font-family:var(--mono);text-align:center;outline:none;color:var(--text);-moz-appearance:textfield; }
+    .qty-row .qty-edit::-webkit-inner-spin-button,.qty-row .qty-edit::-webkit-outer-spin-button{-webkit-appearance:none;}
+    .mat-bin { width:30px;height:32px;display:flex;align-items:center;justify-content:center;background:none;border:none;color:var(--red-text);font-size:15px;opacity:0;pointer-events:none;transition:opacity 0.15s;flex-shrink:0; }
+    .mat-card.in-order .mat-bin { opacity:1;pointer-events:auto; }
+    .main-tab { padding:11px 18px;font-size:13px;font-weight:500;color:var(--text3);border-bottom:2px solid transparent;background:none;border-top:none;border-left:none;border-right:none;cursor:pointer;white-space:nowrap;display:inline-flex;align-items:center;gap:6px; }
+    .main-tab.active { color:var(--text);border-bottom-color:#1e3a5f; }
+    /* Emailed items in order card */
+    .order-line.emailed { opacity:0.4; }
+    .emailed-badge { font-size:10px;font-family:var(--mono);background:var(--green-bg);color:var(--green-text);padding:1px 6px;border-radius:20px;white-space:nowrap; }
+    /* Combined section */
+    .combined-card { background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);overflow:hidden;margin-bottom:4px; }
+    .combined-header { padding:12px 14px;border-bottom:1px solid var(--border);cursor:pointer;user-select:none;display:flex;align-items:center;justify-content:space-between; }
+    .combined-header:hover { background:var(--bg); }
+    .combined-cat-body { display:none;padding:0 14px 12px; }
+    .combined-cat-body.open { display:block; }
+    .combined-item-row { display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border); }
+    .combined-item-row:last-child { border-bottom:none; }
+    .combined-item-info { flex:1;min-width:0; }
+    .combined-item-name { font-size:13px;font-weight:500;color:var(--text); }
+    .combined-item-code { font-size:11px;color:var(--text3);font-family:var(--mono); }
+    .combined-item-device { font-size:10px;color:var(--text3);font-family:var(--mono);margin-top:1px; }
   </style>
 </head>
 <body>
@@ -57,16 +43,16 @@
 <script src="js/firebase-sync.js"></script>
 <script>
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.getRegistrations().then(rs => rs.forEach(r => r.unregister()));
+  navigator.serviceWorker.getRegistrations().then(rs=>rs.forEach(r=>r.unregister()));
 }
 
 const Manager = {
-  orders:        [],
-  activeView:    'pending',
-  unsubscribe:   null,
-  _openCards:    new Set(),
+  orders:      [],
+  activeView:  'pending',
+  unsubscribe: null,
+  _openCards:  new Set(),
+  _openCombinedCats: new Set(), // tracks expanded cats in combined section
 
-  // New order tab state
   mainTab:    'queue',
   materials:  [],
   activeCat:  null,
@@ -74,7 +60,7 @@ const Manager = {
   orderRef:   '',
   _cats:      [],
   _subs:      [],
-  _no:        { _items: {} },
+  _no:        { _items:{} },
 
   async init() {
     const cfg = FirebaseConfig.get();
@@ -97,23 +83,21 @@ const Manager = {
           <div class="setup-field"><label>API Key</label><input id="cfg-apiKey" autocomplete="off" placeholder="AIzaSy..."></div>
           <div class="setup-field"><label>Project ID</label><input id="cfg-projectId" autocomplete="off" placeholder="my-project-id"></div>
           <div class="setup-field"><label>App ID</label><input id="cfg-appId" autocomplete="off" placeholder="1:123456:web:abc..."></div>
-          <button id="btn-connect" class="btn btn-primary" style="margin-top:8px">
-            <i class="ti ti-plug"></i> Connect
-          </button>
+          <button id="btn-connect" class="btn btn-primary" style="margin-top:8px"><i class="ti ti-plug"></i> Connect</button>
           <div class="setup-note" style="margin-top:14px">Same config as the iPad. See README.md.</div>
         </div>
       </div>`;
-    document.getElementById('btn-connect').addEventListener('click', () => this.saveConfig());
+    document.getElementById('btn-connect').addEventListener('click',()=>this.saveConfig());
   },
 
   async saveConfig() {
     const apiKey=document.getElementById('cfg-apiKey').value.trim();
     const projectId=document.getElementById('cfg-projectId').value.trim();
     const appId=document.getElementById('cfg-appId').value.trim();
-    if (!apiKey||!projectId||!appId) { alert('Please fill in all fields.'); return; }
+    if(!apiKey||!projectId||!appId){alert('Please fill in all fields.');return;}
     const cfg={apiKey,projectId,appId,authDomain:`${projectId}.firebaseapp.com`,storageBucket:`${projectId}.appspot.com`,messagingSenderId:'000000000000'};
     const ok=await DB.init(cfg);
-    if (!ok) { this.showSetup('Connection failed. Double-check your config values.'); return; }
+    if(!ok){this.showSetup('Connection failed.');return;}
     FirebaseConfig.save(cfg);
     this.materials=await Data.load('./materials.csv');
     this.orderRef=genRef();
@@ -121,13 +105,9 @@ const Manager = {
     this.startListening();
   },
 
-  // ══════════════════════════════════════════════════════
-  // SHELL
-  // ══════════════════════════════════════════════════════
   renderShell() {
     document.getElementById('root').innerHTML = `
       <div class="app-root manager-root" id="app-root">
-
         <div class="header manager-hdr">
           <div class="col"><div class="header-inner">
             <div class="header-left">
@@ -136,27 +116,22 @@ const Manager = {
             </div>
             <div class="header-actions">
               <span class="role-pill">Production Manager</span>
-              <button class="icon-btn" id="btn-settings" title="Settings">
-                <i class="ti ti-settings"></i>
-              </button>
+              <button class="icon-btn" id="btn-settings" title="Settings"><i class="ti ti-settings"></i></button>
             </div>
           </div></div>
         </div>
 
         <!-- MAIN TABS -->
         <div style="background:var(--surface);border-bottom:1px solid var(--border);flex-shrink:0">
-          <div class="col" style="padding-left:0;padding-right:0">
+          <div class="col" style="padding:0">
             <div style="display:flex;overflow-x:auto;scrollbar-width:none">
               <button class="main-tab active" id="main-tab-queue">
-                <i class="ti ti-inbox" style="margin-right:5px"></i>Order Queue
-                <span class="sidebar-count zero" id="queue-pending-badge" style="margin-left:5px">0</span>
+                <i class="ti ti-inbox"></i>Order Queue
+                <span class="sidebar-count zero" id="queue-pending-badge">0</span>
               </button>
               <button class="main-tab" id="main-tab-new">
-                <i class="ti ti-plus" style="margin-right:5px"></i>New Order
-                <span class="order-badge" id="new-order-badge"
-                  style="display:none;position:relative;top:0;right:0;margin-left:5px;
-                  background:#ef4444;color:#fff;border-radius:50%;width:17px;height:17px;
-                  font-size:10px;font-weight:600;align-items:center;justify-content:center;border:none">0</span>
+                <i class="ti ti-plus"></i>New Order
+                <span class="sidebar-count zero" id="new-order-badge">0</span>
               </button>
             </div>
           </div>
@@ -165,9 +140,7 @@ const Manager = {
         <!-- QUEUE VIEW -->
         <div id="view-queue" class="manager-body" style="flex:1;overflow:hidden">
           <div class="mobile-tabs" id="mobile-tabs">
-            <button class="tab active" data-view="pending">
-              Pending <span class="sidebar-count zero" id="mob-pending-count" style="margin-left:4px">0</span>
-            </button>
+            <button class="tab active" data-view="pending">Pending <span class="sidebar-count zero" id="mob-pending-count" style="margin-left:4px">0</span></button>
             <button class="tab" data-view="sent">Sent</button>
             <button class="tab" data-view="all">All</button>
           </div>
@@ -192,32 +165,22 @@ const Manager = {
         <!-- NEW ORDER VIEW -->
         <div id="view-new-order" style="display:none;flex:1;flex-direction:column;overflow:hidden">
           <div id="no-tabs-wrap"></div>
-          <div class="search-bar">
-            <div class="col"><div class="search-wrap">
-              <i class="ti ti-search"></i>
-              <input type="search" id="no-search" placeholder="Search part code or description…" autocomplete="off">
-            </div></div>
-          </div>
-          <div class="app-scroll" id="no-scroll">
-            <div class="col"><div class="mat-list" id="no-mat-list"></div></div>
-          </div>
+          <div class="search-bar"><div class="col"><div class="search-wrap">
+            <i class="ti ti-search"></i>
+            <input type="search" id="no-search" placeholder="Search part code or description…" autocomplete="off">
+          </div></div></div>
+          <div class="app-scroll" id="no-scroll"><div class="col"><div class="mat-list" id="no-mat-list"></div></div></div>
           <div class="action-bar"><div class="action-bar-inner">
-            <button class="btn btn-primary" id="btn-no-review">
-              <i class="ti ti-clipboard-list"></i> Review &amp; compose email
-            </button>
+            <button class="btn btn-primary" id="btn-no-review"><i class="ti ti-clipboard-list"></i> Review &amp; compose email</button>
           </div></div>
         </div>
-
-        <!-- PANELS -->
 
         <!-- EMAIL PANEL -->
         <div class="panel" id="email-panel">
           <div class="panel-header">
             <button class="back-btn" id="btn-close-email"><i class="ti ti-chevron-left"></i> Back</button>
             <div class="panel-title" id="email-panel-title">Order Email</div>
-            <button class="btn-green btn" id="btn-send-email" style="width:auto;padding:7px 14px;font-size:13px">
-              <i class="ti ti-send"></i> Send
-            </button>
+            <button class="btn-green btn" id="btn-send-email" style="width:auto;padding:7px 14px;font-size:13px"><i class="ti ti-send"></i> Send</button>
           </div>
           <div class="email-fields">
             <div class="email-field"><label>To</label><input type="email" id="email-to"></div>
@@ -234,9 +197,7 @@ const Manager = {
             <div class="panel-title">Order Confirmation</div>
             <div class="panel-spacer"></div>
           </div>
-          <div class="panel-scroll">
-            <div class="panel-col" id="no-review-contents"></div>
-          </div>
+          <div class="panel-scroll"><div class="panel-col" id="no-review-contents"></div></div>
           <div class="action-bar"><div class="action-bar-inner" id="no-email-buttons"></div></div>
         </div>
 
@@ -247,48 +208,57 @@ const Manager = {
             <div class="panel-title">Settings</div>
             <button class="btn-sm btn-sm-save" id="btn-save-settings">Save</button>
           </div>
-          <div class="panel-scroll">
-            <div class="panel-col" style="gap:20px" id="settings-body"></div>
-          </div>
+          <div class="panel-scroll"><div class="panel-col" style="gap:20px" id="settings-body"></div></div>
         </div>
 
       </div>
       <div id="overlay-wrap"></div>`;
 
-    // ── ALL LISTENERS ATTACHED ONCE ──
-    document.getElementById('btn-settings')      .addEventListener('click', ()=>this.openPanel('settings-panel'));
-    document.getElementById('sb-settings')       .addEventListener('click', ()=>this.openPanel('settings-panel'));
-    document.getElementById('sb-reset')          .addEventListener('click', ()=>this.clearFirebase());
-    document.getElementById('btn-close-settings').addEventListener('click', ()=>this.closePanel('settings-panel'));
-    document.getElementById('btn-save-settings') .addEventListener('click', ()=>this.saveSettings());
-    document.getElementById('btn-close-email')   .addEventListener('click', ()=>this.closePanel('email-panel'));
-    document.getElementById('btn-send-email')    .addEventListener('click', ()=>this.sendEmail());
-    document.getElementById('main-tab-queue')    .addEventListener('click', ()=>this.setMainTab('queue'));
-    document.getElementById('main-tab-new')      .addEventListener('click', ()=>this.setMainTab('new-order'));
-    document.getElementById('btn-no-review')     .addEventListener('click', ()=>this.noOpenReview());
+    // ── ALL LISTENERS ONCE ──
+    document.getElementById('btn-settings')       .addEventListener('click',()=>this.openPanel('settings-panel'));
+    document.getElementById('sb-settings')        .addEventListener('click',()=>this.openPanel('settings-panel'));
+    document.getElementById('sb-reset')           .addEventListener('click',()=>this.clearFirebase());
+    document.getElementById('btn-close-settings') .addEventListener('click',()=>this.closePanel('settings-panel'));
+    document.getElementById('btn-save-settings')  .addEventListener('click',()=>this.saveSettings());
+    document.getElementById('btn-close-email')    .addEventListener('click',()=>this.closePanel('email-panel'));
+    document.getElementById('btn-send-email')     .addEventListener('click',()=>this.sendEmail());
+    document.getElementById('main-tab-queue')     .addEventListener('click',()=>this.setMainTab('queue'));
+    document.getElementById('main-tab-new')       .addEventListener('click',()=>this.setMainTab('new-order'));
+    document.getElementById('btn-no-review')      .addEventListener('click',()=>this.noOpenReview());
     document.getElementById('btn-close-no-review').addEventListener('click',()=>this.closePanel('no-review-panel'));
 
-    document.querySelectorAll('[data-sb]').forEach(btn=>btn.addEventListener('click',()=>this.setView(btn.dataset.sb)));
+    document.querySelectorAll('[data-sb]').forEach(b=>b.addEventListener('click',()=>this.setView(b.dataset.sb)));
     document.getElementById('mobile-tabs').addEventListener('click',e=>{ const b=e.target.closest('[data-view]'); if(b) this.setView(b.dataset.view); });
 
-    // Order queue — single permanent delegated listener
+    // Queue delegated listener
     const queue=document.getElementById('order-queue');
     queue.addEventListener('click',e=>{
-      const dec    =e.target.closest('[data-qdec]');
-      const inc    =e.target.closest('[data-qinc]');
-      const catEmail=e.target.closest('[data-cat-email]');
-      const del    =e.target.closest('[data-delete]');
-      const header =e.target.closest('.order-card-header');
-      if (dec)      { e.stopPropagation(); this.stepQty(dec.dataset.qdec,+dec.dataset.idx,-1); return; }
-      if (inc)      { e.stopPropagation(); this.stepQty(inc.dataset.qinc,+inc.dataset.idx, 1); return; }
-      if (catEmail) { e.stopPropagation(); this.openCategoryEmail(catEmail.dataset.catEmail, catEmail.dataset.orderIds?.split(',')); return; }
-      if (del)      { e.stopPropagation(); this.deleteOrder(del.dataset.delete); return; }
-      if (header)   { this.toggleCard(header.dataset.cardId); }
+      const dec      =e.target.closest('[data-qdec]');
+      const inc      =e.target.closest('[data-qinc]');
+      const catEmail =e.target.closest('[data-cat-email]');
+      const del      =e.target.closest('[data-delete]');
+      const combHdr  =e.target.closest('[data-comb-cat]');
+      const header   =e.target.closest('.order-card-header');
+      if(dec)     { e.stopPropagation(); this.stepQty(dec.dataset.qdec,+dec.dataset.idx,-1); return; }
+      if(inc)     { e.stopPropagation(); this.stepQty(inc.dataset.qinc,+inc.dataset.idx, 1); return; }
+      if(catEmail){ e.stopPropagation(); this.openCategoryEmail(catEmail.dataset.catEmail); return; }
+      if(del)     { e.stopPropagation(); this.deleteOrder(del.dataset.delete); return; }
+      if(combHdr) { e.stopPropagation(); this.toggleCombinedCat(combHdr.dataset.combCat); return; }
+      if(header)  { this.toggleCard(header.dataset.cardId); }
     });
     queue.addEventListener('change',e=>{
       const inp=e.target.closest('[data-qchange]');
       if(inp){ e.stopPropagation(); this.editQty(inp.dataset.qchange,+inp.dataset.idx,inp.value); }
+      // Combined section qty change
+      const cinp=e.target.closest('[data-cqchange]');
+      if(cinp){ e.stopPropagation(); this.editCombinedQty(cinp.dataset.cqchange,cinp.dataset.partcode,cinp.value); }
     });
+    queue.addEventListener('click',e=>{
+      const cinc=e.target.closest('[data-cqinc]');
+      const cdec=e.target.closest('[data-cqdec]');
+      if(cinc){ e.stopPropagation(); this.stepCombinedQty(cinc.dataset.cqinc,cinc.dataset.partcode, 1); return; }
+      if(cdec){ e.stopPropagation(); this.stepCombinedQty(cdec.dataset.cqdec,cdec.dataset.partcode,-1); return; }
+    },true); // capture phase to run before the first click listener
 
     // New order tab
     document.getElementById('no-tabs-wrap').addEventListener('click',e=>{
@@ -322,7 +292,6 @@ const Manager = {
     document.getElementById('no-review-contents').addEventListener('change',e=>{
       const inp=e.target.closest('[data-rqid]'); if(inp) this.noRevSet(+inp.dataset.rqid,inp.value);
     });
-    // no-email-buttons delegated listener
     document.getElementById('no-email-buttons').addEventListener('click',e=>{
       const btn=e.target.closest('[data-no-cat]');
       if(btn) this.noOpenCategoryEmail(btn.dataset.noCat);
@@ -385,38 +354,63 @@ const Manager = {
       return;
     }
 
-    // For pending view: also show a "Send all by category" combined section if >1 pending order
+    // Combined section for pending view with 1+ pending orders
     const pendingOrders=this.orders.filter(o=>o.status==='pending');
     let combinedHtml='';
-    if(this.activeView==='pending' && pendingOrders.length>1){
+    if(this.activeView==='pending' && pendingOrders.length>=1){
       const groups=groupByCategory(pendingOrders);
       const cats=Object.keys(groups);
-      const orderIds=pendingOrders.map(o=>o._id).join(',');
-      const rows=cats.map(cat=>{
-        const g=groups[cat];
-        return `<div class="cat-email-row">
-          <div class="cat-label">
-            <i class="ti ${CAT_ICONS[cat]?.icon||'ti-package'}" style="color:${CAT_ICONS[cat]?.color||'#6b7280'}"></i>
-            ${esc(cat)}
-            <span class="cat-count">${g.items.length} line${g.items.length!==1?'s':''} · ${g.refs.length} order${g.refs.length!==1?'s':''}</span>
+      if(cats.length){
+        const catSections=cats.map(cat=>{
+          const g=groups[cat];
+          const isOpen=this._openCombinedCats.has(cat);
+          const rows=g.items.map(item=>{
+            const inputId=`cqi-${cat.replace(/\s/g,'_')}-${item.partCode}`;
+            return `<div class="combined-item-row">
+              <div class="combined-item-info">
+                <div class="combined-item-name">${esc(item.description)}</div>
+                <div class="combined-item-code">${esc(item.partCode)}</div>
+                ${item.deviceNames?.length?`<div class="combined-item-device"><i class="ti ti-device-ipad" style="font-size:10px"></i> ${esc(item.deviceNames.join(', '))}</div>`:''}
+              </div>
+              <div class="qty-row" style="flex-shrink:0">
+                <button class="qty-btn" data-cqdec="${esc(cat)}" data-partcode="${esc(item.partCode)}">−</button>
+                <input class="qty-edit" type="number" min="0" step="1" value="${item.qty}"
+                  id="${inputId}" data-cqchange="${esc(cat)}" data-partcode="${esc(item.partCode)}">
+                <button class="qty-btn" data-cqinc="${esc(cat)}" data-partcode="${esc(item.partCode)}">+</button>
+              </div>
+              <span style="font-size:11px;color:var(--text3);font-family:var(--mono);margin-left:6px">${esc(item.qtyType||'')}</span>
+            </div>`;
+          }).join('');
+          const orderCount=new Set(g.items.map(i=>i.orderId)).size;
+          return `<div style="border-bottom:1px solid var(--border)">
+            <div class="combined-header" data-comb-cat="${esc(cat)}">
+              <div style="display:flex;align-items:center;gap:8px">
+                <i class="ti ${CAT_ICONS[cat]?.icon||'ti-package'}" style="color:${CAT_ICONS[cat]?.color||'#6b7280'}"></i>
+                <span style="font-size:13px;font-weight:500">${esc(cat)}</span>
+                <span style="font-size:11px;color:var(--text3);font-family:var(--mono)">${g.items.length} line${g.items.length!==1?'s':''} · ${orderCount} order${orderCount!==1?'s':''}</span>
+              </div>
+              <div style="display:flex;align-items:center;gap:8px">
+                <button class="btn-sm btn-sm-save" data-cat-email="${esc(cat)}" style="font-size:11px;padding:4px 10px">
+                  <i class="ti ti-mail"></i> Email
+                </button>
+                <i class="ti ti-chevron-right chevron ${isOpen?'open':''}" id="comb-chev-${cat.replace(/\s/g,'_')}"></i>
+              </div>
+            </div>
+            <div class="combined-cat-body ${isOpen?'open':''}" id="comb-body-${cat.replace(/\s/g,'_')}">
+              ${rows}
+            </div>
+          </div>`;
+        }).join('');
+        combinedHtml=`<div class="combined-card">
+          <div style="padding:12px 14px;border-bottom:1px solid var(--border);background:var(--bg)">
+            <div style="font-size:12px;font-weight:600;color:var(--text);display:flex;align-items:center;gap:6px">
+              <i class="ti ti-layers-union"></i> Send all pending by category
+            </div>
+            <div style="font-size:11px;color:var(--text3);margin-top:2px">Expand a category to review and edit quantities before emailing.</div>
           </div>
-          <button class="btn-sm btn-sm-save" data-cat-email="${esc(cat)}" data-order-ids="${esc(orderIds)}"
-            style="font-size:11px;padding:4px 10px">
-            <i class="ti ti-mail"></i> Email
-          </button>
+          ${catSections}
         </div>`;
-      }).join('');
-      combinedHtml=`<div class="order-card" style="margin-bottom:4px">
-        <div style="padding:12px 14px;border-bottom:1px solid var(--border)">
-          <div style="font-size:12px;font-weight:600;color:var(--text);margin-bottom:4px">
-            <i class="ti ti-layers-union" style="margin-right:4px"></i>Send all pending by category
-          </div>
-          <div style="font-size:11px;color:var(--text3);margin-bottom:10px">
-            Combines all ${pendingOrders.length} pending orders per material category into one email each.
-          </div>
-          ${rows}
-        </div>
-      </div>`;
+      }
     }
 
     wrap.innerHTML=combinedHtml+list.map(o=>this._orderCard(o)).join('');
@@ -426,27 +420,73 @@ const Manager = {
     }
   },
 
+  toggleCombinedCat(cat) {
+    const bodyId=`comb-body-${cat.replace(/\s/g,'_')}`;
+    const chevId=`comb-chev-${cat.replace(/\s/g,'_')}`;
+    const body=document.getElementById(bodyId);
+    const chev=document.getElementById(chevId);
+    if(!body) return;
+    const opening=!body.classList.contains('open');
+    body.classList.toggle('open',opening);
+    chev?.classList.toggle('open',opening);
+    if(opening) this._openCombinedCats.add(cat); else this._openCombinedCats.delete(cat);
+  },
+
+  // Edit qty in combined section — finds the item across all pending orders and updates
+  async stepCombinedQty(cat, partCode, delta) {
+    const pendingOrders=this.orders.filter(o=>o.status==='pending');
+    const inputId=`cqi-${cat.replace(/\s/g,'_')}-${partCode}`;
+    // Find current displayed value
+    const inp=document.getElementById(inputId);
+    const currentQty=inp?parseInt(inp.value)||0:0;
+    const newQty=Math.max(0,currentQty+delta);
+    if(inp) inp.value=newQty;
+    // Distribute the change proportionally across orders that have this item
+    // Simple approach: update the first order that has this partCode in this category
+    for(const order of pendingOrders){
+      const itemIdx=(order.items||[]).findIndex(i=>i.category===cat&&i.partCode===partCode&&!i.emailed);
+      if(itemIdx>=0){
+        const items=[...order.items];
+        items[itemIdx]={...items[itemIdx],qty:newQty};
+        try{ await DB.updateItems(order._id,items); } catch(e){ console.error(e); }
+        break;
+      }
+    }
+  },
+
+  async editCombinedQty(cat, partCode, val) {
+    const newQty=Math.max(0,parseInt(val)||0);
+    const pendingOrders=this.orders.filter(o=>o.status==='pending');
+    for(const order of pendingOrders){
+      const itemIdx=(order.items||[]).findIndex(i=>i.category===cat&&i.partCode===partCode&&!i.emailed);
+      if(itemIdx>=0){
+        const items=[...order.items];
+        items[itemIdx]={...items[itemIdx],qty:newQty};
+        try{ await DB.updateItems(order._id,items); } catch(e){ console.error(e); }
+        break;
+      }
+    }
+  },
+
   _orderCard(o) {
     const ts=o.submittedAt?.toDate?fmtTime(o.submittedAt.toDate()):fmtTime(o.submittedAt);
     const isPending=o.status==='pending';
     const isSent=o.status==='sent';
     const items=o.items||[];
+    const pendingItems=items.filter(i=>!i.emailed);
+    const emailedItems=items.filter(i=>i.emailed);
     const statusLabel=isPending?'Pending review':isSent?'Sent':o.status;
     const statusClass=isPending?'status-pending':'status-sent';
 
-    // Group items by category for per-category email buttons
-    const catGroups=groupByCategory([o]);
-    const cats=Object.keys(catGroups);
-
-    const rows=items.map((item,idx)=>`
-      <div class="order-line">
+    const renderItemRow=(item,idx,editable)=>`
+      <div class="order-line ${item.emailed?'emailed':''}">
         <div class="order-line-info">
           <div class="order-line-name">${esc(item.description)}</div>
           <div class="order-line-code">${esc(item.partCode)}</div>
         </div>
         <div class="order-line-right">
-          ${isPending?`
-            <div class="qty-row">
+          ${item.emailed?`<span class="emailed-badge"><i class="ti ti-mail-check"></i> Emailed</span>`
+            :editable?`<div class="qty-row">
               <button class="qty-btn" data-qdec="${o._id}" data-idx="${idx}">−</button>
               <input class="qty-edit" type="number" min="0" step="1" value="${item.qty}"
                 data-qchange="${o._id}" data-idx="${idx}" id="qinp-${o._id}-${idx}">
@@ -454,23 +494,25 @@ const Manager = {
             </div>`:`<span class="order-line-qty">× ${item.qty}</span>`}
           <span style="font-size:11px;color:var(--text3);font-family:var(--mono);margin-left:6px">${esc(item.qtyType||'')}</span>
         </div>
-      </div>`).join('');
+      </div>`;
 
-    // Per-category email buttons (for pending orders)
-    const catEmailBtns = isPending ? `
+    const allRows=items.map((item,idx)=>renderItemRow(item,idx,isPending));
+
+    // Per-category email buttons (only for non-emailed categories)
+    const pendingCats=[...new Set(pendingItems.map(i=>i.category))];
+    const catEmailBtns=isPending&&pendingCats.length?`
       <div style="margin-bottom:6px;font-size:12px;color:var(--text2)">Send email per category:</div>
-      ${cats.map(cat=>`
-        <button class="btn btn-green" data-cat-email="${esc(cat)}" data-order-ids="${esc(o._id)}"
-          style="margin-bottom:6px">
+      ${pendingCats.map(cat=>`
+        <button class="btn btn-green" data-cat-email="${esc(cat)}" style="margin-bottom:6px">
           <i class="ti ti-mail"></i> ${esc(cat)}
         </button>`).join('')}
       <button class="btn btn-danger" data-delete="${o._id}" style="margin-top:2px">
         <i class="ti ti-x"></i> Reject order
-      </button>` : isSent ? `
-      <span class="sent-stamp"><i class="ti ti-circle-check"></i> Email sent</span>
+      </button>`:isSent?`
+      <span class="sent-stamp"><i class="ti ti-circle-check"></i> All emailed</span>
       <button class="btn btn-outline" data-delete="${o._id}" style="margin-top:8px">
         <i class="ti ti-trash"></i> Delete record
-      </button>` : '';
+      </button>`:'';
 
     return `<div class="order-card" id="card-${o._id}">
       <div class="order-card-header" data-card-id="${o._id}">
@@ -487,7 +529,7 @@ const Manager = {
       </div>
       <div class="order-card-body" id="body-${o._id}">
         ${isPending?'<div class="edit-note">You can edit quantities before sending.</div>':''}
-        ${rows}
+        ${allRows}
         <div class="order-card-actions">${catEmailBtns}</div>
       </div>
     </div>`;
@@ -526,74 +568,61 @@ const Manager = {
   },
 
   // ══════════════════════════════════════════════════════
-  // EMAIL — per category, with Outlook-compatible mailto
+  // EMAIL — per category, Outlook-compatible
   // ══════════════════════════════════════════════════════
+  _pendingEmailMeta: null, // { category, orderIds }
 
-  // Open email for a specific category from one or more orders
-  openCategoryEmail(category, orderIds) {
-    // Gather the relevant orders
-    const orders = orderIds
-      ? this.orders.filter(o => orderIds.includes(o._id))
-      : this.orders.filter(o => o.status === 'pending');
-
-    const groups = groupByCategory(orders);
-    const group  = groups[category];
-    if (!group) return;
-
-    const { subject, body } = buildCategoryEmail(group.refs, group.items, category);
-    const s = Settings.get();
-
-    document.getElementById('email-panel-title').textContent = category;
-    document.getElementById('email-to').value      = s.supplierEmail;
-    document.getElementById('email-cc').value      = s.ccEmail;
-    document.getElementById('email-subject').value = subject;
-    document.getElementById('email-body').value    = body;
-
-    // Store context so sendEmail knows which orders to mark sent
-    this._pendingEmailOrderIds = orders.map(o => o._id);
-    this._pendingEmailCategory = category;
-
+  openCategoryEmail(category) {
+    const pendingOrders=this.orders.filter(o=>o.status==='pending');
+    const groups=groupByCategory(pendingOrders);
+    const group=groups[category];
+    if(!group||!group.items.length){ alert('No pending items for '+category); return; }
+    const{subject,body}=buildCategoryEmail(group.items,category);
+    const s=Settings.get();
+    document.getElementById('email-panel-title').textContent=category;
+    document.getElementById('email-to').value      =s.supplierEmail;
+    document.getElementById('email-cc').value      =s.ccEmail;
+    document.getElementById('email-subject').value =subject;
+    document.getElementById('email-body').value    =body;
+    const orderIds=[...new Set(group.items.map(i=>i.orderId))];
+    this._pendingEmailMeta={category,orderIds};
     this.openPanel('email-panel');
   },
 
   async sendEmail() {
-    const to      = document.getElementById('email-to').value;
-    const cc      = document.getElementById('email-cc').value;
-    const subject = document.getElementById('email-subject').value;
-    const body    = document.getElementById('email-body').value;
+    const to     =document.getElementById('email-to').value.trim();
+    const cc     =document.getElementById('email-cc').value.trim();
+    const subject=document.getElementById('email-subject').value.trim();
+    const body   =document.getElementById('email-body').value;
 
-    // Outlook Classic compatible mailto:
-    // - Use %0D%0A (CRLF) for line breaks — more reliable than %0A alone in Outlook
-    // - Avoid special chars in subject
-    const encodedBody    = body.replace(/\r\n/g,'\r\n');  // already has CRLF from template
-    const mailto = 'mailto:' + encodeURIComponent(to)
-      + '?cc='      + encodeURIComponent(cc)
-      + '&subject=' + encodeURIComponent(subject)
-      + '&body='    + encodeURIComponent(encodedBody);
-
-    // Mark relevant orders as sent
-    if (this._pendingEmailOrderIds?.length) {
-      for (const id of this._pendingEmailOrderIds) {
-        try { await DB.updateStatus(id, 'sent'); } catch {}
+    // Mark category as emailed on relevant orders
+    if(this._pendingEmailMeta){
+      const{category,orderIds}=this._pendingEmailMeta;
+      for(const id of orderIds){
+        try{ await DB.markCategoryEmailed(id,category); } catch(e){ console.error(e); }
       }
-      this._pendingEmailOrderIds = null;
-      this._pendingEmailCategory = null;
+      this._pendingEmailMeta=null;
     }
 
     this.closePanel('email-panel');
 
+    // Show success then open Outlook via hidden anchor (Outlook Classic compatible)
     const ow=document.getElementById('overlay-wrap');
     ow.innerHTML=`
       <div class="success-overlay">
         <div class="success-card">
           <div class="success-icon blue"><i class="ti ti-mail-forward"></i></div>
           <h3>Opening Outlook…</h3>
-          <p>Order marked as sent. Outlook will open with the order pre-filled and your signature will be inserted automatically.</p>
+          <p>Outlook will open with the order pre-filled and your signature will be inserted automatically.</p>
           <button class="btn btn-primary" id="btn-done-email">Done</button>
         </div>
       </div>`;
     document.getElementById('btn-done-email').addEventListener('click',()=>{ ow.innerHTML=''; });
-    setTimeout(()=>{ window.location.href=mailto; },400);
+
+    // Hidden anchor click — most reliable method for Outlook Classic
+    setTimeout(()=>{
+      openMailto(to, cc, subject, body);
+    },300);
   },
 
   // ══════════════════════════════════════════════════════
@@ -623,7 +652,7 @@ const Manager = {
 
   _updateNoBadge() {
     const b=document.getElementById('new-order-badge'); if(!b) return;
-    const n=this.noCount(); b.textContent=n; b.style.display=n>0?'flex':'none';
+    const n=this.noCount(); b.textContent=n; b.classList.toggle('zero',n===0);
   },
 
   renderNoTabs() {
@@ -643,8 +672,8 @@ const Manager = {
     </div></div>${subHtml}`;
   },
 
-  noSetCat(cat) { this.activeCat=cat; this.activeSub=null; this.renderNoTabs(); this.renderNoList(); const s=document.getElementById('no-scroll'); if(s)s.scrollTop=0; },
-  noSetSub(sub) { this.activeSub=sub; this.renderNoTabs(); this.renderNoList(); const s=document.getElementById('no-scroll'); if(s)s.scrollTop=0; },
+  noSetCat(cat){ this.activeCat=cat; this.activeSub=null; this.renderNoTabs(); this.renderNoList(); const s=document.getElementById('no-scroll'); if(s)s.scrollTop=0; },
+  noSetSub(sub){ this.activeSub=sub; this.renderNoTabs(); this.renderNoList(); },
 
   renderNoList() {
     const q=document.getElementById('no-search')?.value||'';
@@ -684,7 +713,6 @@ const Manager = {
     const wrap=document.getElementById('no-review-contents'); if(!wrap) return;
     const items=this.noItems();
     if(!items.length){ wrap.innerHTML=`<div class="empty-state"><i class="ti ti-clipboard"></i><p>No items.</p></div>`; return; }
-
     wrap.innerHTML=items.map(i=>`
       <div class="order-item">
         <div class="order-item-row">
@@ -708,8 +736,6 @@ const Manager = {
           <span>${items.reduce((s,i)=>s+i.qty,0)} across ${items.length} line${items.length!==1?'s':''}</span>
         </div>
       </div>`;
-
-    // Build per-category email buttons
     const cats=[...new Set(items.map(i=>i.category))];
     const btns=document.getElementById('no-email-buttons'); if(!btns) return;
     btns.innerHTML=cats.map(cat=>`
@@ -731,17 +757,22 @@ const Manager = {
   noOpenCategoryEmail(category) {
     const items=this.noItems().filter(i=>i.category===category);
     if(!items.length) return;
-    const{subject,body}=buildCategoryEmail([this.orderRef],items,category);
+    const{subject,body}=buildCategoryEmail(items,category);
     const s=Settings.get();
     document.getElementById('email-panel-title').textContent=category;
     document.getElementById('email-to').value      =s.supplierEmail;
     document.getElementById('email-cc').value      =s.ccEmail;
     document.getElementById('email-subject').value =subject;
     document.getElementById('email-body').value    =body;
-    this._pendingEmailOrderIds=null;  // new order, nothing to mark sent
+    this._pendingEmailMeta=null;
+    this._noEmailCategory=category; // track so we can clear after send
     this.closePanel('no-review-panel');
     this.openPanel('email-panel');
   },
+
+  // Override sendEmail to also clear new-order items after emailing from new order tab
+  // (tracked via _noEmailCategory)
+  _noEmailCategory: null,
 
   // ══════════════════════════════════════════════════════
   // SETTINGS
@@ -777,7 +808,6 @@ const Manager = {
           <div class="settings-row" style="flex-direction:column;align-items:flex-start;gap:8px">
             <div class="settings-row-sub">
               Placeholders:
-              <code style="font-family:var(--mono);font-size:11px;background:var(--bg2);padding:1px 4px;border-radius:3px">{orderRefs}</code>
               <code style="font-family:var(--mono);font-size:11px;background:var(--bg2);padding:1px 4px;border-radius:3px">{date}</code>
               <code style="font-family:var(--mono);font-size:11px;background:var(--bg2);padding:1px 4px;border-radius:3px">{category}</code>
               <code style="font-family:var(--mono);font-size:11px;background:var(--bg2);padding:1px 4px;border-radius:3px">{items}</code>
@@ -807,11 +837,25 @@ const Manager = {
             <button class="btn-sm btn-sm-danger" id="btn-clear-firebase">Clear</button>
           </div>
         </div>
+      </div>
+      <div class="settings-section">
+        <div class="settings-label">Testing</div>
+        <div class="settings-card">
+          <div class="settings-row">
+            <div><div class="settings-row-label">Clear all orders</div><div class="settings-row-sub">Permanently deletes all orders from Firebase</div></div>
+            <button class="btn-sm btn-sm-danger" id="btn-clear-orders">Clear all</button>
+          </div>
+        </div>
       </div>`;
+
     document.getElementById('btn-clear-firebase').addEventListener('click',()=>this.clearFirebase());
     document.getElementById('btn-reset-template').addEventListener('click',()=>{
-      const ta=document.getElementById('s-template');
-      if(ta) ta.value=DEFAULT_SETTINGS.emailTemplate;
+      const ta=document.getElementById('s-template'); if(ta) ta.value=DEFAULT_SETTINGS.emailTemplate;
+    });
+    document.getElementById('btn-clear-orders').addEventListener('click',async()=>{
+      if(!confirm('Delete ALL orders from Firebase? This cannot be undone.')) return;
+      try{ await DB.deleteAllOrders(); alert('All orders cleared.'); }
+      catch(e){ alert('Failed: '+e.message); }
     });
   },
 
@@ -833,7 +877,23 @@ const Manager = {
   },
 };
 
-document.addEventListener('DOMContentLoaded', ()=>Manager.init());
+// Patch sendEmail to handle new-order category clearing
+const _origSendEmail = Manager.sendEmail.bind(Manager);
+Manager.sendEmail = async function() {
+  const nocat = this._noEmailCategory;
+  await _origSendEmail();
+  // If this was a new-order email, clear those items
+  if (nocat) {
+    const itemsToRemove = this.noItems().filter(i=>i.category===nocat).map(i=>i.id);
+    itemsToRemove.forEach(id=>{ delete this._no._items[id]; });
+    this._noEmailCategory = null;
+    this._updateNoBadge();
+    this.renderNoList();
+    this.orderRef = genRef(); // fresh ref for next order
+  }
+};
+
+document.addEventListener('DOMContentLoaded',()=>Manager.init());
 </script>
 </body>
 </html>
