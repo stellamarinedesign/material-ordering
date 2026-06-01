@@ -1,6 +1,6 @@
 // shared.js — v18
 
-const APP_VERSION = 'v18';
+const APP_VERSION = 'v0.19';
 
 const DEFAULT_MATERIALS = [
   { id:1,  category:'Stainless Steel', subcategory:'Box Section', partCode:'SL0300', description:'100 x 50 x 3mm x 6m Box Section 316 S/S', qtyType:'Length' },
@@ -21,6 +21,7 @@ const DEFAULT_SETTINGS = {
   ccEmail:        'orders@yourcompany.com',
   deliveryNote:   'Please confirm availability and expected delivery date.',
   emailSubject:   'Material Order - {category} - {date}',
+  emailSignature: '',
   emailTemplate:  '{date}\r\n\r\n────────────────────────────────────────────────────\r\nMATERIAL ORDER - {category}\r\n────────────────────────────────────────────────────\r\n\r\n{items}\r\n────────────────────────────────────────────────────\r\n{closingNote}',
 };
 
@@ -184,7 +185,10 @@ function buildCategoryEmail(items, category) {
     s.emailTemplate || DEFAULT_SETTINGS.emailTemplate,
     category, `Date: ${dateStr}`, itemsStr, s.deliveryNote
   );
-  return { subject, body };
+  // Append signature if set
+  const sig = s.emailSignature || '';
+  const bodyWithSig = sig ? body + '\r\n\r\n' + sig : body;
+  return { subject, body: bodyWithSig };
 }
 
 // Group items by category across orders.

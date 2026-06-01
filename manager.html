@@ -7,33 +7,6 @@
   <title>Material Orders — Manager</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.19.0/dist/tabler-icons.min.css">
   <link rel="stylesheet" href="css/style.css">
-  <style>
-    .qty-row { display:flex; align-items:center; }
-    .qty-row .qty-btn { width:28px;height:28px;font-size:15px;background:var(--bg);border:1px solid var(--border);color:var(--text);display:flex;align-items:center;justify-content:center;flex-shrink:0; }
-    .qty-row .qty-btn:first-child { border-radius:var(--radius) 0 0 var(--radius); }
-    .qty-row .qty-btn:last-child  { border-radius:0 var(--radius) var(--radius) 0;border-left:none; }
-    .qty-row .qty-edit { width:44px;height:28px;border:1px solid var(--border);border-left:none;border-right:none;background:var(--surface);font-size:12px;font-family:var(--mono);text-align:center;outline:none;color:var(--text);-moz-appearance:textfield; }
-    .qty-row .qty-edit::-webkit-inner-spin-button,.qty-row .qty-edit::-webkit-outer-spin-button{-webkit-appearance:none;}
-    .mat-bin { width:30px;height:32px;display:flex;align-items:center;justify-content:center;background:none;border:none;color:var(--red-text);font-size:15px;opacity:0;pointer-events:none;transition:opacity 0.15s;flex-shrink:0; }
-    .mat-card.in-order .mat-bin { opacity:1;pointer-events:auto; }
-    .main-tab { padding:11px 18px;font-size:13px;font-weight:500;color:var(--text3);border-bottom:2px solid transparent;background:none;border-top:none;border-left:none;border-right:none;cursor:pointer;white-space:nowrap;display:inline-flex;align-items:center;gap:6px; }
-    .main-tab.active { color:var(--text);border-bottom-color:#1e3a5f; }
-    /* Emailed items in order card */
-    .order-line.emailed { opacity:0.4; }
-    .emailed-badge { font-size:10px;font-family:var(--mono);background:var(--green-bg);color:var(--green-text);padding:1px 6px;border-radius:20px;white-space:nowrap; }
-    /* Combined section */
-    .combined-card { background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);overflow:hidden;margin-bottom:4px; }
-    .combined-header { padding:12px 14px;border-bottom:1px solid var(--border);cursor:pointer;user-select:none;display:flex;align-items:center;justify-content:space-between; }
-    .combined-header:hover { background:var(--bg); }
-    .combined-cat-body { display:none;padding:0 14px 12px; }
-    .combined-cat-body.open { display:block; }
-    .combined-item-row { display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border); }
-    .combined-item-row:last-child { border-bottom:none; }
-    .combined-item-info { flex:1;min-width:0; }
-    .combined-item-name { font-size:13px;font-weight:500;color:var(--text); }
-    .combined-item-code { font-size:11px;color:var(--text3);font-family:var(--mono); }
-    .combined-item-device { font-size:10px;color:var(--text3);font-family:var(--mono);margin-top:1px; }
-  </style>
 </head>
 <body>
 <div id="root"></div>
@@ -43,24 +16,26 @@
 <script src="js/firebase-sync.js"></script>
 <script>
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.getRegistrations().then(rs=>rs.forEach(r=>r.unregister()));
+  navigator.serviceWorker.getRegistrations().then(rs => rs.forEach(r => r.unregister()));
 }
 
 const Manager = {
-  orders:      [],
-  activeView:  'pending',
-  unsubscribe: null,
-  _openCards:  new Set(),
-  _openCombinedCats: new Set(), // tracks expanded cats in combined section
+  orders:            [],
+  activeView:        'pending',
+  unsubscribe:       null,
+  _openCards:        new Set(),
+  _openCombinedCats: new Set(),
 
-  mainTab:    'queue',
-  materials:  [],
-  activeCat:  null,
-  activeSub:  null,
-  orderRef:   '',
-  _cats:      [],
-  _subs:      [],
-  _no:        { _items:{} },
+  mainTab:   'queue',
+  materials: [],
+  activeCat: null,
+  activeSub: null,
+  orderRef:  '',
+  _cats:     [],
+  _subs:     [],
+  _no:       { _items: {} },
+  _pendingEmailMeta: null,
+  _noEmailCategory:  null,
 
   async init() {
     const cfg = FirebaseConfig.get();
@@ -70,7 +45,8 @@ const Manager = {
     this.materials = await Data.load('./materials.csv');
     this.orderRef  = genRef();
     this.renderShell();
-    const verEl=document.getElementById('app-version'); if(verEl) verEl.textContent=APP_VERSION;
+    const verEl = document.getElementById('app-version');
+    if (verEl) verEl.textContent = APP_VERSION;
     this.startListening();
   },
 
@@ -88,32 +64,37 @@ const Manager = {
           <div class="setup-note" style="margin-top:14px">Same config as the iPad. See README.md.</div>
         </div>
       </div>`;
-    document.getElementById('btn-connect').addEventListener('click',()=>this.saveConfig());
+    document.getElementById('btn-connect').addEventListener('click', () => this.saveConfig());
   },
 
   async saveConfig() {
     const apiKey=document.getElementById('cfg-apiKey').value.trim();
     const projectId=document.getElementById('cfg-projectId').value.trim();
     const appId=document.getElementById('cfg-appId').value.trim();
-    if(!apiKey||!projectId||!appId){alert('Please fill in all fields.');return;}
+    if (!apiKey||!projectId||!appId) { alert('Please fill in all fields.'); return; }
     const cfg={apiKey,projectId,appId,authDomain:`${projectId}.firebaseapp.com`,storageBucket:`${projectId}.appspot.com`,messagingSenderId:'000000000000'};
     const ok=await DB.init(cfg);
-    if(!ok){this.showSetup('Connection failed.');return;}
+    if (!ok) { this.showSetup('Connection failed.'); return; }
     FirebaseConfig.save(cfg);
     this.materials=await Data.load('./materials.csv');
     this.orderRef=genRef();
     this.renderShell();
+    const verEl=document.getElementById('app-version'); if(verEl) verEl.textContent=APP_VERSION;
     this.startListening();
   },
 
+  // ══════════════════════════════════════════
+  // SHELL
+  // ══════════════════════════════════════════
   renderShell() {
     document.getElementById('root').innerHTML = `
       <div class="app-root manager-root" id="app-root">
+
         <div class="header manager-hdr">
           <div class="col"><div class="header-inner">
             <div class="header-left">
               <div class="header-title">Material Orders — Manager</div>
-              <div class="header-ref"><span class="live-dot"></span>Live &nbsp;·&nbsp; <span id="app-version"></span></div>
+              <div class="header-ref"><span class="live-dot"></span>Live &nbsp;·&nbsp; <span id="app-version" style="opacity:0.6;font-family:var(--mono)"></span></div>
             </div>
             <div class="header-actions">
               <span class="role-pill">Production Manager</span>
@@ -138,35 +119,37 @@ const Manager = {
           </div>
         </div>
 
-        <!-- QUEUE VIEW -->
-        <div id="view-queue" style="flex:1;overflow:hidden;display:flex;flex-direction:column;min-height:0">
-          <div style="flex:1;display:flex;flex-direction:column;overflow:hidden;min-height:0">
+        <!-- QUEUE VIEW: flex column → mobile-tabs (optional) + manager-columns -->
+        <div id="view-queue" style="flex:1;display:flex;flex-direction:column;overflow:hidden;min-height:0">
+          <!-- Mobile sub-tabs -->
           <div class="mobile-tabs" id="mobile-tabs">
             <button class="tab active" data-view="pending">Pending <span class="sidebar-count zero" id="mob-pending-count" style="margin-left:4px">0</span></button>
             <button class="tab" data-view="sent">Sent</button>
             <button class="tab" data-view="all">All</button>
           </div>
-          <div class="manager-sidebar">
-            <div class="sidebar-section">
-              <div class="sidebar-title">Orders</div>
-              <button class="sidebar-btn active" data-sb="pending"><i class="ti ti-clock"></i> Pending<span class="sidebar-count zero" id="pending-count">0</span></button>
-              <button class="sidebar-btn" data-sb="sent"><i class="ti ti-mail-check"></i> Sent</button>
-              <button class="sidebar-btn" data-sb="all"><i class="ti ti-list"></i> All</button>
+          <!-- Two-column area: sidebar + scrollable main -->
+          <div class="manager-columns">
+            <div class="manager-sidebar">
+              <div class="sidebar-section">
+                <div class="sidebar-title">Orders</div>
+                <button class="sidebar-btn active" data-sb="pending"><i class="ti ti-clock"></i>Pending<span class="sidebar-count zero" id="pending-count">0</span></button>
+                <button class="sidebar-btn" data-sb="sent"><i class="ti ti-mail-check"></i>Sent</button>
+                <button class="sidebar-btn" data-sb="all"><i class="ti ti-list"></i>All</button>
+              </div>
+              <div class="sidebar-section">
+                <div class="sidebar-title">Settings</div>
+                <button class="sidebar-btn" id="sb-settings"><i class="ti ti-adjustments"></i>Email &amp; preferences</button>
+                <button class="sidebar-btn" id="sb-reset"><i class="ti ti-plug-x"></i>Reset connection</button>
+              </div>
             </div>
-            <div class="sidebar-section">
-              <div class="sidebar-title">Settings</div>
-              <button class="sidebar-btn" id="sb-settings"><i class="ti ti-adjustments"></i> Email &amp; preferences</button>
-              <button class="sidebar-btn" id="sb-reset"><i class="ti ti-plug-x"></i> Reset connection</button>
+            <div class="manager-main">
+              <div class="order-queue" id="order-queue"></div>
             </div>
           </div>
-          <div class="manager-main">
-            <div class="order-queue" id="order-queue"></div>
-          </div>
-          </div><!-- end inner flex wrapper -->
         </div>
 
         <!-- NEW ORDER VIEW -->
-        <div id="view-new-order" style="display:none;flex:1;flex-direction:column;overflow:hidden">
+        <div id="view-new-order" style="display:none;flex:1;flex-direction:column;overflow:hidden;min-height:0">
           <div id="no-tabs-wrap"></div>
           <div class="search-bar"><div class="col"><div class="search-wrap">
             <i class="ti ti-search"></i>
@@ -174,16 +157,16 @@ const Manager = {
           </div></div></div>
           <div class="app-scroll" id="no-scroll"><div class="col"><div class="mat-list" id="no-mat-list"></div></div></div>
           <div class="action-bar"><div class="action-bar-inner">
-            <button class="btn btn-primary" id="btn-no-review"><i class="ti ti-clipboard-list"></i> Review &amp; compose email</button>
+            <button class="btn btn-primary" id="btn-no-review"><i class="ti ti-clipboard-list"></i>Review &amp; compose email</button>
           </div></div>
         </div>
 
         <!-- EMAIL PANEL -->
         <div class="panel" id="email-panel">
           <div class="panel-header">
-            <button class="back-btn" id="btn-close-email"><i class="ti ti-chevron-left"></i> Back</button>
+            <button class="back-btn" id="btn-close-email"><i class="ti ti-chevron-left"></i>Back</button>
             <div class="panel-title" id="email-panel-title">Order Email</div>
-            <button class="btn-green btn" id="btn-send-email" style="width:auto;padding:7px 14px;font-size:13px"><i class="ti ti-send"></i> Send</button>
+            <button class="btn-green btn" id="btn-send-email" style="width:auto;padding:7px 14px;font-size:13px"><i class="ti ti-send"></i>Send</button>
           </div>
           <div class="email-fields">
             <div class="email-field"><label>To</label><input type="email" id="email-to"></div>
@@ -196,7 +179,7 @@ const Manager = {
         <!-- NEW ORDER REVIEW PANEL -->
         <div class="panel" id="no-review-panel">
           <div class="panel-header">
-            <button class="back-btn" id="btn-close-no-review"><i class="ti ti-chevron-left"></i> Back</button>
+            <button class="back-btn" id="btn-close-no-review"><i class="ti ti-chevron-left"></i>Back</button>
             <div class="panel-title">Order Confirmation</div>
             <div class="panel-spacer"></div>
           </div>
@@ -207,7 +190,7 @@ const Manager = {
         <!-- SETTINGS PANEL -->
         <div class="panel" id="settings-panel">
           <div class="panel-header">
-            <button class="back-btn" id="btn-close-settings"><i class="ti ti-chevron-left"></i> Back</button>
+            <button class="back-btn" id="btn-close-settings"><i class="ti ti-chevron-left"></i>Back</button>
             <div class="panel-title">Settings</div>
             <button class="btn-sm btn-sm-save" id="btn-save-settings">Save</button>
           </div>
@@ -218,86 +201,87 @@ const Manager = {
       <div id="overlay-wrap"></div>`;
 
     // ── ALL LISTENERS ONCE ──
-    document.getElementById('btn-settings')       .addEventListener('click',()=>this.openPanel('settings-panel'));
-    document.getElementById('sb-settings')        .addEventListener('click',()=>this.openPanel('settings-panel'));
-    document.getElementById('sb-reset')           .addEventListener('click',()=>this.clearFirebase());
-    document.getElementById('btn-close-settings') .addEventListener('click',()=>this.closePanel('settings-panel'));
-    document.getElementById('btn-save-settings')  .addEventListener('click',()=>this.saveSettings());
-    document.getElementById('btn-close-email')    .addEventListener('click',()=>this.closePanel('email-panel'));
-    document.getElementById('btn-send-email')     .addEventListener('click',()=>this.sendEmail());
-    document.getElementById('main-tab-queue')     .addEventListener('click',()=>this.setMainTab('queue'));
-    document.getElementById('main-tab-new')       .addEventListener('click',()=>this.setMainTab('new-order'));
-    document.getElementById('btn-no-review')      .addEventListener('click',()=>this.noOpenReview());
-    document.getElementById('btn-close-no-review').addEventListener('click',()=>this.closePanel('no-review-panel'));
+    document.getElementById('btn-settings')       .addEventListener('click', () => this.openPanel('settings-panel'));
+    document.getElementById('sb-settings')        .addEventListener('click', () => this.openPanel('settings-panel'));
+    document.getElementById('sb-reset')           .addEventListener('click', () => this.clearFirebase());
+    document.getElementById('btn-close-settings') .addEventListener('click', () => this.closePanel('settings-panel'));
+    document.getElementById('btn-save-settings')  .addEventListener('click', () => this.saveSettings());
+    document.getElementById('btn-close-email')    .addEventListener('click', () => this.closePanel('email-panel'));
+    document.getElementById('btn-send-email')     .addEventListener('click', () => this.sendEmail());
+    document.getElementById('main-tab-queue')     .addEventListener('click', () => this.setMainTab('queue'));
+    document.getElementById('main-tab-new')       .addEventListener('click', () => this.setMainTab('new-order'));
+    document.getElementById('btn-no-review')      .addEventListener('click', () => this.noOpenReview());
+    document.getElementById('btn-close-no-review').addEventListener('click', () => this.closePanel('no-review-panel'));
 
-    document.querySelectorAll('[data-sb]').forEach(b=>b.addEventListener('click',()=>this.setView(b.dataset.sb)));
-    document.getElementById('mobile-tabs').addEventListener('click',e=>{ const b=e.target.closest('[data-view]'); if(b) this.setView(b.dataset.view); });
+    document.querySelectorAll('[data-sb]').forEach(b => b.addEventListener('click', () => this.setView(b.dataset.sb)));
+    document.getElementById('mobile-tabs').addEventListener('click', e => {
+      const b = e.target.closest('[data-view]'); if (b) this.setView(b.dataset.view);
+    });
 
-    // Queue delegated listener
-    const queue=document.getElementById('order-queue');
-    queue.addEventListener('click',e=>{
-      const dec      =e.target.closest('[data-qdec]');
-      const inc      =e.target.closest('[data-qinc]');
-      const catEmail =e.target.closest('[data-cat-email]');
-      const del      =e.target.closest('[data-delete]');
-      const combHdr  =e.target.closest('[data-comb-cat]');
-      const header   =e.target.closest('.order-card-header');
-      if(dec)     { e.stopPropagation(); this.stepQty(dec.dataset.qdec,+dec.dataset.idx,-1); return; }
-      if(inc)     { e.stopPropagation(); this.stepQty(inc.dataset.qinc,+inc.dataset.idx, 1); return; }
-      if(catEmail){ e.stopPropagation(); this.openCategoryEmail(catEmail.dataset.catEmail); return; }
-      if(del)     { e.stopPropagation(); this.deleteOrder(del.dataset.delete); return; }
-      if(combHdr) { e.stopPropagation(); this.toggleCombinedCat(combHdr.dataset.combCat); return; }
-      if(header)  { this.toggleCard(header.dataset.cardId); }
+    // Queue: single permanent delegated listener
+    const queue = document.getElementById('order-queue');
+    queue.addEventListener('click', e => {
+      const dec     = e.target.closest('[data-qdec]');
+      const inc     = e.target.closest('[data-qinc]');
+      const catEmail= e.target.closest('[data-cat-email]');
+      const del     = e.target.closest('[data-delete]');
+      const combHdr = e.target.closest('[data-comb-cat]');
+      const combDel = e.target.closest('[data-comb-del]');
+      const combMrg = e.target.closest('[data-comb-merge]');
+      const header  = e.target.closest('.order-card-header');
+      if (dec)      { e.stopPropagation(); this.stepQty(dec.dataset.qdec, +dec.dataset.idx, -1); return; }
+      if (inc)      { e.stopPropagation(); this.stepQty(inc.dataset.qinc, +inc.dataset.idx,  1); return; }
+      if (catEmail) { e.stopPropagation(); this.openCategoryEmail(catEmail.dataset.catEmail); return; }
+      if (del)      { e.stopPropagation(); this.deleteOrder(del.dataset.delete); return; }
+      if (combHdr)  { e.stopPropagation(); this.toggleCombinedCat(combHdr.dataset.combCat); return; }
+      if (combDel)  { e.stopPropagation(); this.deleteCombinedLine(combDel.dataset.combDel, combDel.dataset.orderId); return; }
+      if (combMrg)  { e.stopPropagation(); this.mergeCombinedLines(combMrg.dataset.combMrg); return; }
+      if (header)   { this.toggleCard(header.dataset.cardId); }
     });
-    queue.addEventListener('change',e=>{
-      const inp=e.target.closest('[data-qchange]');
-      if(inp){ e.stopPropagation(); this.editQty(inp.dataset.qchange,+inp.dataset.idx,inp.value); }
-      // Combined section qty change
-      const cinp=e.target.closest('[data-cqchange]');
-      if(cinp){ e.stopPropagation(); this.editCombinedQty(cinp.dataset.cqchange,cinp.dataset.partcode,cinp.value); }
+    queue.addEventListener('change', e => {
+      const inp  = e.target.closest('[data-qchange]');
+      const cinp = e.target.closest('[data-cqchange]');
+      if (inp)  { e.stopPropagation(); this.editQty(inp.dataset.qchange, +inp.dataset.idx, inp.value); }
+      if (cinp) { e.stopPropagation(); this.editCombinedSubQty(cinp.dataset.cqchange, cinp.dataset.orderId, cinp.value); }
     });
-    queue.addEventListener('click',e=>{
-      const cinc=e.target.closest('[data-cqinc]');
-      const cdec=e.target.closest('[data-cqdec]');
-      if(cinc){ e.stopPropagation(); this.stepCombinedQty(cinc.dataset.cqinc,cinc.dataset.partcode, 1); return; }
-      if(cdec){ e.stopPropagation(); this.stepCombinedQty(cdec.dataset.cqdec,cdec.dataset.partcode,-1); return; }
-    },true); // capture phase to run before the first click listener
+    // Capture phase for combined +/- so they fire before the header toggle check
+    queue.addEventListener('click', e => {
+      const cinc = e.target.closest('[data-cqinc]');
+      const cdec = e.target.closest('[data-cqdec]');
+      if (cinc) { e.stopPropagation(); this.stepCombinedSubQty(cinc.dataset.cqinc, cinc.dataset.orderId, +1); }
+      if (cdec) { e.stopPropagation(); this.stepCombinedSubQty(cdec.dataset.cqdec, cdec.dataset.orderId, -1); }
+    }, true);
 
     // New order tab
-    document.getElementById('no-tabs-wrap').addEventListener('click',e=>{
-      const c=e.target.closest('[data-cat-idx]');
-      const s=e.target.closest('[data-sub-idx]');
-      if(c){ const i=+c.dataset.catIdx; this.noSetCat(i===-1?null:this._cats[i]); }
-      else if(s){ const i=+s.dataset.subIdx; this.noSetSub(i===-1?null:this._subs[i]); }
+    document.getElementById('no-tabs-wrap').addEventListener('click', e => {
+      const c = e.target.closest('[data-cat-idx]');
+      const s = e.target.closest('[data-sub-idx]');
+      if (c) { const i=+c.dataset.catIdx; this.noSetCat(i===-1?null:this._cats[i]); }
+      else if (s) { const i=+s.dataset.subIdx; this.noSetSub(i===-1?null:this._subs[i]); }
     });
-    document.getElementById('no-mat-list').addEventListener('click',e=>{
-      const dec=e.target.closest('[data-dec]');
-      const inc=e.target.closest('[data-inc]');
-      const add=e.target.closest('[data-add]');
-      const bin=e.target.closest('[data-bin]');
-      if(dec){ e.stopPropagation(); this.noAdj(+dec.dataset.dec,-1); }
-      if(inc){ e.stopPropagation(); this.noAdj(+inc.dataset.inc, 1); }
-      if(add){ e.stopPropagation(); this.noQuickAdd(+add.dataset.add); }
-      if(bin){ e.stopPropagation(); this.noZero(+bin.dataset.bin); }
+    document.getElementById('no-mat-list').addEventListener('click', e => {
+      const dec=e.target.closest('[data-dec]'), inc=e.target.closest('[data-inc]');
+      const add=e.target.closest('[data-add]'), bin=e.target.closest('[data-bin]');
+      if (dec) { e.stopPropagation(); this.noAdj(+dec.dataset.dec, -1); }
+      if (inc) { e.stopPropagation(); this.noAdj(+inc.dataset.inc,  1); }
+      if (add) { e.stopPropagation(); this.noQuickAdd(+add.dataset.add); }
+      if (bin) { e.stopPropagation(); this.noZero(+bin.dataset.bin); }
     });
-    document.getElementById('no-mat-list').addEventListener('change',e=>{
-      const inp=e.target.closest('[data-qid]'); if(inp) this.noSetQty(+inp.dataset.qid,inp.value);
+    document.getElementById('no-mat-list').addEventListener('change', e => {
+      const inp = e.target.closest('[data-qid]'); if (inp) this.noSetQty(+inp.dataset.qid, inp.value);
     });
-    document.getElementById('no-search').addEventListener('input',()=>this.renderNoList());
-    document.getElementById('no-review-contents').addEventListener('click',e=>{
-      const dec=e.target.closest('[data-rdec]');
-      const inc=e.target.closest('[data-rinc]');
-      const rem=e.target.closest('[data-rrem]');
-      if(dec) this.noRevAdj(+dec.dataset.rdec,-1);
-      if(inc) this.noRevAdj(+inc.dataset.rinc, 1);
-      if(rem) this.noZero(+rem.dataset.rrem);
+    document.getElementById('no-search').addEventListener('input', () => this.renderNoList());
+    document.getElementById('no-review-contents').addEventListener('click', e => {
+      const dec=e.target.closest('[data-rdec]'), inc=e.target.closest('[data-rinc]'), rem=e.target.closest('[data-rrem]');
+      if (dec) this.noRevAdj(+dec.dataset.rdec, -1);
+      if (inc) this.noRevAdj(+inc.dataset.rinc,  1);
+      if (rem) this.noZero(+rem.dataset.rrem);
     });
-    document.getElementById('no-review-contents').addEventListener('change',e=>{
-      const inp=e.target.closest('[data-rqid]'); if(inp) this.noRevSet(+inp.dataset.rqid,inp.value);
+    document.getElementById('no-review-contents').addEventListener('change', e => {
+      const inp = e.target.closest('[data-rqid]'); if (inp) this.noRevSet(+inp.dataset.rqid, inp.value);
     });
-    document.getElementById('no-email-buttons').addEventListener('click',e=>{
-      const btn=e.target.closest('[data-no-cat]');
-      if(btn) this.noOpenCategoryEmail(btn.dataset.noCat);
+    document.getElementById('no-email-buttons').addEventListener('click', e => {
+      const btn = e.target.closest('[data-no-cat]'); if (btn) this.noOpenCategoryEmail(btn.dataset.noCat);
     });
 
     this._populateSettings();
@@ -310,219 +294,295 @@ const Manager = {
   closePanel(id) { document.getElementById(id)?.classList.remove('open'); },
 
   setMainTab(tab) {
-    this.mainTab=tab;
-    const isQ=tab==='queue';
-    document.getElementById('view-queue')    .style.display=isQ?'flex':'none';
-    document.getElementById('view-new-order').style.display=isQ?'none':'flex';
-    document.getElementById('main-tab-queue').classList.toggle('active', isQ);
-    document.getElementById('main-tab-new')  .classList.toggle('active',!isQ);
+    this.mainTab = tab;
+    const isQ = tab === 'queue';
+    document.getElementById('view-queue')    .style.display = isQ ? 'flex' : 'none';
+    document.getElementById('view-new-order').style.display = isQ ? 'none' : 'flex';
+    document.getElementById('main-tab-queue').classList.toggle('active',  isQ);
+    document.getElementById('main-tab-new')  .classList.toggle('active', !isQ);
   },
 
-  // ══════════════════════════════════════════════════════
+  // ══════════════════════════════════════════
   // QUEUE
-  // ══════════════════════════════════════════════════════
+  // ══════════════════════════════════════════
   setView(v) {
-    this.activeView=v;
-    document.querySelectorAll('[data-sb]').forEach(b=>b.classList.toggle('active',b.dataset.sb===v));
-    document.querySelectorAll('#mobile-tabs [data-view]').forEach(b=>b.classList.toggle('active',b.dataset.view===v));
+    this.activeView = v;
+    document.querySelectorAll('[data-sb]').forEach(b => b.classList.toggle('active', b.dataset.sb === v));
+    document.querySelectorAll('#mobile-tabs [data-view]').forEach(b => b.classList.toggle('active', b.dataset.view === v));
     this.renderQueue();
   },
 
   startListening() {
-    if(this.unsubscribe) this.unsubscribe();
-    this.unsubscribe=DB.listenOrders(orders=>{
-      this.orders=orders;
-      const n=orders.filter(o=>o.status==='pending').length;
-      ['pending-count','mob-pending-count','queue-pending-badge'].forEach(id=>{
-        const el=document.getElementById(id);
-        if(el){ el.textContent=n; el.classList.toggle('zero',n===0); }
+    if (this.unsubscribe) this.unsubscribe();
+    this.unsubscribe = DB.listenOrders(orders => {
+      this.orders = orders;
+      const n = orders.filter(o => o.status === 'pending').length;
+      ['pending-count','mob-pending-count','queue-pending-badge'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) { el.textContent = n; el.classList.toggle('zero', n === 0); }
       });
       this.renderQueue();
     });
   },
 
   renderQueue() {
-    const wrap=document.getElementById('order-queue'); if(!wrap) return;
-    wrap.querySelectorAll('.order-card-body.open').forEach(el=>this._openCards.add(el.id.replace('body-','')));
-    let list=this.orders;
-    if(this.activeView==='pending') list=list.filter(o=>o.status==='pending');
-    if(this.activeView==='sent')    list=list.filter(o=>o.status==='sent');
-    const listIds=new Set(list.map(o=>o._id));
-    for(const id of this._openCards){ if(!listIds.has(id)) this._openCards.delete(id); }
+    const wrap = document.getElementById('order-queue'); if (!wrap) return;
+    // Preserve open card state
+    wrap.querySelectorAll('.order-card-body.open').forEach(el => this._openCards.add(el.id.replace('body-', '')));
+    let list = this.orders;
+    if (this.activeView === 'pending') list = list.filter(o => o.status === 'pending');
+    if (this.activeView === 'sent')    list = list.filter(o => o.status === 'sent');
+    const listIds = new Set(list.map(o => o._id));
+    for (const id of this._openCards) { if (!listIds.has(id)) this._openCards.delete(id); }
 
-    if(!list.length){
-      const msgs={pending:['ti-clock','No pending orders yet.'],sent:['ti-mail-check','No sent orders yet.'],all:['ti-inbox','No orders yet.']};
-      const[ic,msg]=msgs[this.activeView]||msgs.all;
-      wrap.innerHTML=`<div class="empty-queue"><i class="ti ${ic}"></i><p>${msg}</p></div>`;
+    if (!list.length) {
+      const msgs = { pending:['ti-clock','No pending orders yet.'], sent:['ti-mail-check','No sent orders yet.'], all:['ti-inbox','No orders yet.'] };
+      const [ic, msg] = msgs[this.activeView] || msgs.all;
+      wrap.innerHTML = `<div class="empty-queue"><i class="ti ${ic}"></i><p>${msg}</p></div>`;
       return;
     }
 
-    // Combined section for pending view with 1+ pending orders
-    const pendingOrders=this.orders.filter(o=>o.status==='pending');
-    let combinedHtml='';
-    if(this.activeView==='pending' && pendingOrders.length>=1){
-      const groups=groupByCategory(pendingOrders);
-      const cats=Object.keys(groups);
-      if(cats.length){
-        const catSections=cats.map(cat=>{
-          const g=groups[cat];
-          const isOpen=this._openCombinedCats.has(cat);
-          const rows=g.items.map(item=>{
-            const inputId=`cqi-${cat.replace(/\s/g,'_')}-${item.partCode}`;
-            return `<div class="combined-item-row">
-              <div class="combined-item-info">
-                <div class="combined-item-name">${esc(item.description)}</div>
-                <div class="combined-item-code">${esc(item.partCode)}</div>
-                ${item.deviceNames?.length?`<div class="combined-item-device"><i class="ti ti-device-ipad" style="font-size:10px"></i> ${esc(item.deviceNames.join(', '))}</div>`:''}
-              </div>
-              <div class="qty-row" style="flex-shrink:0">
-                <button class="qty-btn" data-cqdec="${esc(cat)}" data-partcode="${esc(item.partCode)}">−</button>
-                <input class="qty-edit" type="number" min="0" step="1" value="${item.qty}"
-                  id="${inputId}" data-cqchange="${esc(cat)}" data-partcode="${esc(item.partCode)}">
-                <button class="qty-btn" data-cqinc="${esc(cat)}" data-partcode="${esc(item.partCode)}">+</button>
-              </div>
-              <span style="font-size:11px;color:var(--text3);font-family:var(--mono);margin-left:6px">${esc(item.qtyType||'')}</span>
-            </div>`;
+    // Combined section
+    const pendingOrders = this.orders.filter(o => o.status === 'pending');
+    let combinedHtml = '';
+    if (this.activeView === 'pending' && pendingOrders.length >= 1) {
+      const groups = this._groupByCatKeepSeparate(pendingOrders);
+      const cats = Object.keys(groups);
+      if (cats.length) {
+        const catSections = cats.map(cat => {
+          const g = groups[cat];
+          const isOpen = this._openCombinedCats.has(cat);
+          const catKey = cat.replace(/\s/g, '_');
+
+          // Build per-item rows, each showing sub-rows per order
+          const itemRows = Object.values(g.byPartCode).map(pGroup => {
+            const hasMultiple = pGroup.lines.length > 1;
+            const mainRow = `
+              <div class="combined-main-row">
+                <div class="combined-main-info">
+                  <div class="combined-main-name">${esc(pGroup.description)}</div>
+                  <div class="combined-main-code">${esc(pGroup.partCode)}</div>
+                </div>
+                <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
+                  <span style="font-size:12px;color:var(--text3);font-family:var(--mono)">Total: ${pGroup.lines.reduce((s,l)=>s+l.qty,0)}</span>
+                  ${hasMultiple ? `<button class="btn-sm btn-sm-save" data-comb-merge="${esc(cat)}" data-partcode="${esc(pGroup.partCode)}" style="font-size:10px;padding:3px 8px" title="Merge into one line">Merge</button>` : ''}
+                </div>
+              </div>`;
+            const subRows = pGroup.lines.map(line => `
+              <div class="combined-sub-row">
+                <div class="combined-sub-device">
+                  <i class="ti ti-device-ipad" style="font-size:11px;color:var(--text3)"></i>
+                  <span>${esc(line.deviceName || line.orderRef || 'Unknown')}</span>
+                </div>
+                <div class="qty-row" style="flex-shrink:0">
+                  <button class="qty-btn" data-cqdec="${esc(cat)}" data-order-id="${esc(line.orderId)}" data-partcode="${esc(pGroup.partCode)}">−</button>
+                  <input class="qty-edit" type="number" min="0" step="1" value="${line.qty}"
+                    id="cqi-${catKey}-${esc(pGroup.partCode)}-${esc(line.orderId)}"
+                    data-cqchange="${esc(cat)}" data-order-id="${esc(line.orderId)}" data-partcode="${esc(pGroup.partCode)}">
+                  <button class="qty-btn" data-cqinc="${esc(cat)}" data-order-id="${esc(line.orderId)}" data-partcode="${esc(pGroup.partCode)}">+</button>
+                </div>
+                <span style="font-size:11px;color:var(--text3);font-family:var(--mono);margin-left:4px;width:40px">${esc(line.qtyType||'')}</span>
+                <button class="btn-sm btn-sm-danger" data-comb-del="${esc(cat)}" data-order-id="${esc(line.orderId)}" data-partcode="${esc(pGroup.partCode)}" style="font-size:11px;padding:3px 6px" title="Remove this line">
+                  <i class="ti ti-trash"></i>
+                </button>
+              </div>`).join('');
+            return mainRow + subRows;
           }).join('');
-          const orderCount=new Set(g.items.map(i=>i.orderId)).size;
+
           return `<div style="border-bottom:1px solid var(--border)">
             <div class="combined-header" data-comb-cat="${esc(cat)}">
               <div style="display:flex;align-items:center;gap:8px">
                 <i class="ti ${CAT_ICONS[cat]?.icon||'ti-package'}" style="color:${CAT_ICONS[cat]?.color||'#6b7280'}"></i>
                 <span style="font-size:13px;font-weight:500">${esc(cat)}</span>
-                <span style="font-size:11px;color:var(--text3);font-family:var(--mono)">${g.items.length} line${g.items.length!==1?'s':''} · ${orderCount} order${orderCount!==1?'s':''}</span>
+                <span style="font-size:11px;color:var(--text3);font-family:var(--mono)">${Object.keys(g.byPartCode).length} item${Object.keys(g.byPartCode).length!==1?'s':''}</span>
               </div>
               <div style="display:flex;align-items:center;gap:8px">
                 <button class="btn-sm btn-sm-save" data-cat-email="${esc(cat)}" style="font-size:11px;padding:4px 10px">
                   <i class="ti ti-mail"></i> Email
                 </button>
-                <i class="ti ti-chevron-right chevron ${isOpen?'open':''}" id="comb-chev-${cat.replace(/\s/g,'_')}"></i>
+                <i class="ti ti-chevron-right chevron ${isOpen?'open':''}" id="comb-chev-${catKey}"></i>
               </div>
             </div>
-            <div class="combined-cat-body ${isOpen?'open':''}" id="comb-body-${cat.replace(/\s/g,'_')}">
-              ${rows}
-            </div>
+            <div class="combined-cat-body ${isOpen?'open':''}" id="comb-body-${catKey}">${itemRows}</div>
           </div>`;
         }).join('');
-        combinedHtml=`<div class="combined-card">
+
+        combinedHtml = `<div class="combined-card">
           <div style="padding:12px 14px;border-bottom:1px solid var(--border);background:var(--bg)">
             <div style="font-size:12px;font-weight:600;color:var(--text);display:flex;align-items:center;gap:6px">
               <i class="ti ti-layers-union"></i> Send all pending by category
             </div>
-            <div style="font-size:11px;color:var(--text3);margin-top:2px">Expand a category to review and edit quantities before emailing.</div>
+            <div style="font-size:11px;color:var(--text3);margin-top:2px">Expand a category to review quantities and device sources before emailing.</div>
           </div>
           ${catSections}
         </div>`;
       }
     }
 
-    wrap.innerHTML=combinedHtml+list.map(o=>this._orderCard(o)).join('');
-    for(const id of this._openCards){
+    wrap.innerHTML = combinedHtml + list.map(o => this._orderCard(o)).join('');
+    for (const id of this._openCards) {
       document.getElementById(`body-${id}`)?.classList.add('open');
       document.getElementById(`chev-${id}`)?.classList.add('open');
     }
   },
 
-  toggleCombinedCat(cat) {
-    const bodyId=`comb-body-${cat.replace(/\s/g,'_')}`;
-    const chevId=`comb-chev-${cat.replace(/\s/g,'_')}`;
-    const body=document.getElementById(bodyId);
-    const chev=document.getElementById(chevId);
-    if(!body) return;
-    const opening=!body.classList.contains('open');
-    body.classList.toggle('open',opening);
-    chev?.classList.toggle('open',opening);
-    if(opening) this._openCombinedCats.add(cat); else this._openCombinedCats.delete(cat);
-  },
-
-  // Edit qty in combined section — finds the item across all pending orders and updates
-  async stepCombinedQty(cat, partCode, delta) {
-    const pendingOrders=this.orders.filter(o=>o.status==='pending');
-    const inputId=`cqi-${cat.replace(/\s/g,'_')}-${partCode}`;
-    // Find current displayed value
-    const inp=document.getElementById(inputId);
-    const currentQty=inp?parseInt(inp.value)||0:0;
-    const newQty=Math.max(0,currentQty+delta);
-    if(inp) inp.value=newQty;
-    // Distribute the change proportionally across orders that have this item
-    // Simple approach: update the first order that has this partCode in this category
-    for(const order of pendingOrders){
-      const itemIdx=(order.items||[]).findIndex(i=>i.category===cat&&i.partCode===partCode&&!i.emailed);
-      if(itemIdx>=0){
-        const items=[...order.items];
-        items[itemIdx]={...items[itemIdx],qty:newQty};
-        try{ await DB.updateItems(order._id,items); } catch(e){ console.error(e); }
-        break;
+  // Group pending items by category, then by partCode, keeping separate sub-lines per order
+  _groupByCatKeepSeparate(orders) {
+    const groups = {};
+    for (const order of orders) {
+      for (const item of (order.items || [])) {
+        if (item.emailed) continue;
+        const cat = item.category || 'Uncategorised';
+        if (!groups[cat]) groups[cat] = { byPartCode: {} };
+        const pc = item.partCode;
+        if (!groups[cat].byPartCode[pc]) {
+          groups[cat].byPartCode[pc] = {
+            partCode: pc,
+            description: item.description,
+            lines: [],
+          };
+        }
+        // One sub-line per order (same order + same partCode = sum within that order)
+        const existing = groups[cat].byPartCode[pc].lines.find(l => l.orderId === order._id);
+        if (existing) {
+          existing.qty += item.qty;
+        } else {
+          groups[cat].byPartCode[pc].lines.push({
+            orderId:    order._id,
+            orderRef:   order.ref || order._id,
+            deviceName: order.deviceName || '',
+            qty:        item.qty,
+            qtyType:    item.qtyType || '',
+          });
+        }
       }
     }
+    return groups;
   },
 
-  async editCombinedQty(cat, partCode, val) {
-    const newQty=Math.max(0,parseInt(val)||0);
-    const pendingOrders=this.orders.filter(o=>o.status==='pending');
-    for(const order of pendingOrders){
-      const itemIdx=(order.items||[]).findIndex(i=>i.category===cat&&i.partCode===partCode&&!i.emailed);
-      if(itemIdx>=0){
-        const items=[...order.items];
-        items[itemIdx]={...items[itemIdx],qty:newQty};
-        try{ await DB.updateItems(order._id,items); } catch(e){ console.error(e); }
-        break;
-      }
+  toggleCombinedCat(cat) {
+    const key = cat.replace(/\s/g, '_');
+    const body = document.getElementById(`comb-body-${key}`);
+    const chev = document.getElementById(`comb-chev-${key}`);
+    if (!body) return;
+    const opening = !body.classList.contains('open');
+    body.classList.toggle('open', opening);
+    chev?.classList.toggle('open', opening);
+    if (opening) this._openCombinedCats.add(cat); else this._openCombinedCats.delete(cat);
+  },
+
+  async stepCombinedSubQty(cat, orderId, delta) {
+    const partCode = event?.target?.closest('[data-cqinc],[data-cqdec]')?.dataset?.partcode;
+    if (!partCode) return;
+    const order = this.orders.find(o => o._id === orderId); if (!order) return;
+    const items = [...order.items];
+    const idx = items.findIndex(i => i.category === cat && i.partCode === partCode && !i.emailed);
+    if (idx < 0) return;
+    const newQty = Math.max(0, (items[idx].qty || 0) + delta);
+    items[idx] = { ...items[idx], qty: newQty };
+    const catKey = cat.replace(/\s/g, '_');
+    const inp = document.getElementById(`cqi-${catKey}-${partCode}-${orderId}`);
+    if (inp) inp.value = newQty;
+    try { await DB.updateItems(orderId, items); } catch (e) { console.error(e); }
+  },
+
+  async editCombinedSubQty(cat, orderId, val) {
+    const partCode = event?.target?.closest('[data-cqchange]')?.dataset?.partcode;
+    if (!partCode) return;
+    const order = this.orders.find(o => o._id === orderId); if (!order) return;
+    const items = [...order.items];
+    const idx = items.findIndex(i => i.category === cat && i.partCode === partCode && !i.emailed);
+    if (idx < 0) return;
+    items[idx] = { ...items[idx], qty: Math.max(0, parseInt(val) || 0) };
+    try { await DB.updateItems(orderId, items); } catch (e) { console.error(e); }
+  },
+
+  async deleteCombinedLine(cat, orderId) {
+    const partCode = event?.target?.closest('[data-comb-del]')?.dataset?.partcode;
+    if (!partCode) return;
+    if (!confirm(`Remove ${partCode} from this order?`)) return;
+    const order = this.orders.find(o => o._id === orderId); if (!order) return;
+    const items = order.items.filter(i => !(i.category === cat && i.partCode === partCode && !i.emailed));
+    try { await DB.updateItems(orderId, items); } catch (e) { alert('Failed: ' + e.message); }
+  },
+
+  async mergeCombinedLines(cat) {
+    const partCode = event?.target?.closest('[data-comb-merge]')?.dataset?.partcode;
+    if (!partCode) return;
+    if (!confirm(`Merge all orders for ${partCode} into the first order?`)) return;
+    const pendingOrders = this.orders.filter(o => o.status === 'pending');
+    const linesWithItem = pendingOrders.filter(o =>
+      o.items?.some(i => i.category === cat && i.partCode === partCode && !i.emailed)
+    );
+    if (linesWithItem.length < 2) return;
+    // Sum all quantities into the first order
+    const totalQty = linesWithItem.reduce((sum, o) => {
+      const item = o.items.find(i => i.category === cat && i.partCode === partCode && !i.emailed);
+      return sum + (item?.qty || 0);
+    }, 0);
+    // Update first order with merged qty
+    const first = linesWithItem[0];
+    const firstItems = [...first.items];
+    const firstIdx = firstItems.findIndex(i => i.category === cat && i.partCode === partCode && !i.emailed);
+    if (firstIdx >= 0) firstItems[firstIdx] = { ...firstItems[firstIdx], qty: totalQty };
+    try { await DB.updateItems(first._id, firstItems); } catch (e) { alert('Failed: ' + e.message); return; }
+    // Remove item from all other orders
+    for (const order of linesWithItem.slice(1)) {
+      const items = order.items.filter(i => !(i.category === cat && i.partCode === partCode && !i.emailed));
+      try { await DB.updateItems(order._id, items); } catch (e) { console.error(e); }
     }
   },
 
   _orderCard(o) {
-    const ts=o.submittedAt?.toDate?fmtTime(o.submittedAt.toDate()):fmtTime(o.submittedAt);
-    const isPending=o.status==='pending';
-    const isSent=o.status==='sent';
-    const items=o.items||[];
-    const pendingItems=items.filter(i=>!i.emailed);
-    const emailedItems=items.filter(i=>i.emailed);
-    const statusLabel=isPending?'Pending review':isSent?'Sent':o.status;
-    const statusClass=isPending?'status-pending':'status-sent';
+    const ts = o.submittedAt?.toDate ? fmtTime(o.submittedAt.toDate()) : fmtTime(o.submittedAt);
+    const isPending = o.status === 'pending';
+    const isSent    = o.status === 'sent';
+    const items     = o.items || [];
+    const statusLabel = isPending ? 'Pending review' : isSent ? 'Sent' : o.status;
+    const statusClass = isPending ? 'status-pending' : 'status-sent';
 
-    const renderItemRow=(item,idx,editable)=>`
-      <div class="order-line ${item.emailed?'emailed':''}">
+    const allRows = items.map((item, idx) => `
+      <div class="order-line ${item.emailed ? 'emailed' : ''}">
         <div class="order-line-info">
           <div class="order-line-name">${esc(item.description)}</div>
           <div class="order-line-code">${esc(item.partCode)}</div>
         </div>
         <div class="order-line-right">
-          ${item.emailed?`<span class="emailed-badge"><i class="ti ti-mail-check"></i> Emailed</span>`
-            :editable?`<div class="qty-row">
-              <button class="qty-btn" data-qdec="${o._id}" data-idx="${idx}">−</button>
-              <input class="qty-edit" type="number" min="0" step="1" value="${item.qty}"
-                data-qchange="${o._id}" data-idx="${idx}" id="qinp-${o._id}-${idx}">
-              <button class="qty-btn" data-qinc="${o._id}" data-idx="${idx}">+</button>
-            </div>`:`<span class="order-line-qty">× ${item.qty}</span>`}
+          ${item.emailed
+            ? `<span class="emailed-badge"><i class="ti ti-mail-check"></i> Emailed</span>`
+            : isPending
+              ? `<div class="qty-row">
+                  <button class="qty-btn" data-qdec="${o._id}" data-idx="${idx}">−</button>
+                  <input class="qty-edit" type="number" min="0" step="1" value="${item.qty}"
+                    data-qchange="${o._id}" data-idx="${idx}" id="qinp-${o._id}-${idx}">
+                  <button class="qty-btn" data-qinc="${o._id}" data-idx="${idx}">+</button>
+                </div>`
+              : `<span class="order-line-qty">× ${item.qty}</span>`}
           <span style="font-size:11px;color:var(--text3);font-family:var(--mono);margin-left:6px">${esc(item.qtyType||'')}</span>
         </div>
-      </div>`;
+      </div>`).join('');
 
-    const allRows=items.map((item,idx)=>renderItemRow(item,idx,isPending));
-
-    // Per-category email buttons (only for non-emailed categories)
-    const pendingCats=[...new Set(pendingItems.map(i=>i.category))];
-    const catEmailBtns=isPending&&pendingCats.length?`
+    const pendingCats = [...new Set(items.filter(i => !i.emailed).map(i => i.category))];
+    const catEmailBtns = isPending && pendingCats.length ? `
       <div style="margin-bottom:6px;font-size:12px;color:var(--text2)">Send email per category:</div>
-      ${pendingCats.map(cat=>`
+      ${pendingCats.map(cat => `
         <button class="btn btn-green" data-cat-email="${esc(cat)}" style="margin-bottom:6px">
           <i class="ti ti-mail"></i> ${esc(cat)}
         </button>`).join('')}
       <button class="btn btn-danger" data-delete="${o._id}" style="margin-top:2px">
         <i class="ti ti-x"></i> Reject order
-      </button>`:isSent?`
+      </button>` : isSent ? `
       <span class="sent-stamp"><i class="ti ti-circle-check"></i> All emailed</span>
       <button class="btn btn-outline" data-delete="${o._id}" style="margin-top:8px">
         <i class="ti ti-trash"></i> Delete record
-      </button>`:'';
+      </button>` : '';
 
     return `<div class="order-card" id="card-${o._id}">
       <div class="order-card-header" data-card-id="${o._id}">
         <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%">
           <div>
             <div class="order-ref-text">${esc(o.ref||o._id)}</div>
-            <div class="order-meta">${ts}${o.deviceName?' · '+esc(o.deviceName):''} · ${items.length} line${items.length!==1?'s':''}</div>
+            <div class="order-meta">${ts}${o.deviceName ? ' · ' + esc(o.deviceName) : ''} · ${items.length} line${items.length!==1?'s':''}</div>
           </div>
           <div style="display:flex;align-items:center;gap:8px">
             <span class="status-pill ${statusClass}">${statusLabel}</span>
@@ -531,7 +591,7 @@ const Manager = {
         </div>
       </div>
       <div class="order-card-body" id="body-${o._id}">
-        ${isPending?'<div class="edit-note">You can edit quantities before sending.</div>':''}
+        ${isPending ? '<div class="edit-note">Edit quantities before sending.</div>' : ''}
         ${allRows}
         <div class="order-card-actions">${catEmailBtns}</div>
       </div>
@@ -539,154 +599,162 @@ const Manager = {
   },
 
   toggleCard(id) {
-    const body=document.getElementById(`body-${id}`);
-    const chev=document.getElementById(`chev-${id}`);
-    if(!body) return;
-    const opening=!body.classList.contains('open');
-    body.classList.toggle('open',opening);
-    chev?.classList.toggle('open',opening);
-    if(opening) this._openCards.add(id); else this._openCards.delete(id);
+    const body = document.getElementById(`body-${id}`);
+    const chev = document.getElementById(`chev-${id}`);
+    if (!body) return;
+    const opening = !body.classList.contains('open');
+    body.classList.toggle('open', opening);
+    chev?.classList.toggle('open', opening);
+    if (opening) this._openCards.add(id); else this._openCards.delete(id);
   },
 
-  async stepQty(orderId,idx,delta) {
-    const order=this.orders.find(o=>o._id===orderId); if(!order) return;
-    const items=[...order.items];
-    const newQty=Math.max(0,(items[idx].qty||0)+delta);
-    items[idx]={...items[idx],qty:newQty};
-    const inp=document.getElementById(`qinp-${orderId}-${idx}`);
-    if(inp) inp.value=newQty;
-    try{ await DB.updateItems(orderId,items); } catch(e){ alert('Update failed: '+e.message); }
+  async stepQty(orderId, idx, delta) {
+    const order = this.orders.find(o => o._id === orderId); if (!order) return;
+    const items = [...order.items];
+    const newQty = Math.max(0, (items[idx].qty||0) + delta);
+    items[idx] = { ...items[idx], qty: newQty };
+    const inp = document.getElementById(`qinp-${orderId}-${idx}`);
+    if (inp) inp.value = newQty;
+    try { await DB.updateItems(orderId, items); } catch(e) { alert('Update failed: '+e.message); }
   },
 
-  async editQty(orderId,idx,val) {
-    const order=this.orders.find(o=>o._id===orderId); if(!order) return;
-    const items=[...order.items];
-    items[idx]={...items[idx],qty:Math.max(0,parseInt(val)||0)};
-    try{ await DB.updateItems(orderId,items); } catch(e){ alert('Update failed: '+e.message); }
+  async editQty(orderId, idx, val) {
+    const order = this.orders.find(o => o._id === orderId); if (!order) return;
+    const items = [...order.items];
+    items[idx] = { ...items[idx], qty: Math.max(0, parseInt(val)||0) };
+    try { await DB.updateItems(orderId, items); } catch(e) { alert('Update failed: '+e.message); }
   },
 
   async deleteOrder(id) {
-    if(!confirm('Delete this order?')) return;
-    try{ await DB.deleteOrder(id); } catch(e){ alert('Delete failed: '+e.message); }
+    if (!confirm('Delete this order?')) return;
+    try { await DB.deleteOrder(id); } catch(e) { alert('Delete failed: '+e.message); }
   },
 
-  // ══════════════════════════════════════════════════════
-  // EMAIL — per category, Outlook-compatible
-  // ══════════════════════════════════════════════════════
-  _pendingEmailMeta: null, // { category, orderIds }
-
+  // ══════════════════════════════════════════
+  // EMAIL
+  // ══════════════════════════════════════════
   openCategoryEmail(category) {
-    const pendingOrders=this.orders.filter(o=>o.status==='pending');
-    const groups=groupByCategory(pendingOrders);
-    const group=groups[category];
-    if(!group||!group.items.length){ alert('No pending items for '+category); return; }
-    const{subject,body}=buildCategoryEmail(group.items,category);
-    const s=Settings.get();
-    document.getElementById('email-panel-title').textContent=category;
-    document.getElementById('email-to').value      =s.supplierEmail;
-    document.getElementById('email-cc').value      =s.ccEmail;
-    document.getElementById('email-subject').value =subject;
-    document.getElementById('email-body').value    =body;
-    const orderIds=[...new Set(group.items.map(i=>i.orderId))];
-    this._pendingEmailMeta={category,orderIds};
+    const pendingOrders = this.orders.filter(o => o.status === 'pending');
+    // Collect all non-emailed items for this category across all orders
+    // Merge items with same partCode into one line for the email
+    const mergedItems = {};
+    const orderIds = new Set();
+    for (const order of pendingOrders) {
+      for (const item of (order.items || [])) {
+        if (item.emailed || item.category !== category) continue;
+        orderIds.add(order._id);
+        if (!mergedItems[item.partCode]) {
+          mergedItems[item.partCode] = { ...item, qty: 0 };
+        }
+        mergedItems[item.partCode].qty += item.qty;
+      }
+    }
+    const items = Object.values(mergedItems);
+    if (!items.length) { alert('No pending items for ' + category); return; }
+    const { subject, body } = buildCategoryEmail(items, category);
+    const s = Settings.get();
+    document.getElementById('email-panel-title').textContent = category;
+    document.getElementById('email-to').value      = s.supplierEmail;
+    document.getElementById('email-cc').value      = s.ccEmail;
+    document.getElementById('email-subject').value = subject;
+    document.getElementById('email-body').value    = body;
+    this._pendingEmailMeta = { category, orderIds: [...orderIds] };
+    this._noEmailCategory  = null;
     this.openPanel('email-panel');
   },
 
   async sendEmail() {
-    const to     =document.getElementById('email-to').value.trim();
-    const cc     =document.getElementById('email-cc').value.trim();
-    const subject=document.getElementById('email-subject').value.trim();
-    const body   =document.getElementById('email-body').value;
+    const to      = document.getElementById('email-to').value.trim();
+    const cc      = document.getElementById('email-cc').value.trim();
+    const subject = document.getElementById('email-subject').value.trim();
+    const body    = document.getElementById('email-body').value;
 
-    // Mark category as emailed on relevant orders
-    if(this._pendingEmailMeta){
-      const{category,orderIds}=this._pendingEmailMeta;
-      for(const id of orderIds){
-        try{ await DB.markCategoryEmailed(id,category); } catch(e){ console.error(e); }
+    if (this._pendingEmailMeta) {
+      const { category, orderIds } = this._pendingEmailMeta;
+      for (const id of orderIds) {
+        try { await DB.markCategoryEmailed(id, category); } catch(e) { console.error(e); }
       }
-      this._pendingEmailMeta=null;
+      this._pendingEmailMeta = null;
+    }
+
+    // Clear new-order items for this category if applicable
+    const nocat = this._noEmailCategory;
+    if (nocat) {
+      this.noItems().filter(i => i.category === nocat).forEach(i => { delete this._no._items[i.id]; });
+      this._noEmailCategory = null;
+      this._updateNoBadge();
+      this.renderNoList();
+      this.orderRef = genRef();
     }
 
     this.closePanel('email-panel');
 
-    // Show success then open Outlook via hidden anchor (Outlook Classic compatible)
-    const ow=document.getElementById('overlay-wrap');
-    ow.innerHTML=`
+    const ow = document.getElementById('overlay-wrap');
+    ow.innerHTML = `
       <div class="success-overlay">
         <div class="success-card">
           <div class="success-icon blue"><i class="ti ti-mail-forward"></i></div>
           <h3>Opening Outlook…</h3>
-          <p>Outlook will open with the order pre-filled and your signature will be inserted automatically.</p>
+          <p>Outlook will open with the order pre-filled. Your email signature should appear automatically in your default account.</p>
           <button class="btn btn-primary" id="btn-done-email">Done</button>
         </div>
       </div>`;
-    document.getElementById('btn-done-email').addEventListener('click',()=>{ ow.innerHTML=''; });
-
-    // window.location.href via openMailto — most reliable for Outlook Classic
-    // Small delay to let the success overlay render first
-    setTimeout(()=>{
-      openMailto(to, cc, subject, body);
-    },300);
+    document.getElementById('btn-done-email').addEventListener('click', () => { ow.innerHTML = ''; });
+    setTimeout(() => { openMailto(to, cc, subject, body); }, 300);
   },
 
-  // ══════════════════════════════════════════════════════
+  // ══════════════════════════════════════════
   // NEW ORDER TAB
-  // ══════════════════════════════════════════════════════
+  // ══════════════════════════════════════════
   noGet(id)       { return this._no._items[id]||0; },
   noSet(id,qty)   { if(qty<=0) delete this._no._items[id]; else this._no._items[id]=qty; },
-  noAdj(id,d)     { this.noSet(id,this.noGet(id)+d); this._noChanged(); },
-  noSetQty(id,v)  { this.noSet(id,parseInt(v)||0);   this._noChanged(); },
+  noAdj(id,d)     { this.noSet(id, this.noGet(id)+d); this._noChanged(); },
+  noSetQty(id,v)  { this.noSet(id, parseInt(v)||0);   this._noChanged(); },
   noQuickAdd(id)  { if(!this.noGet(id)) this.noSet(id,1); this._noChanged(); },
   noZero(id)      { delete this._no._items[id]; this._noChanged(); },
   noRevAdj(id,d)  { this.noAdj(id,d); },
   noRevSet(id,v)  { this.noSetQty(id,v); },
   noCount()       { return Object.keys(this._no._items).length; },
   noItems()       {
-    return Object.keys(this._no._items).map(id=>{
-      const m=this.materials.find(x=>x.id==id);
-      return m?{...m,qty:this._no._items[id]}:null;
+    return Object.keys(this._no._items).map(id => {
+      const m = this.materials.find(x => x.id == id);
+      return m ? { ...m, qty: this._no._items[id] } : null;
     }).filter(Boolean);
   },
 
   _noChanged() {
-    this._updateNoBadge();
-    this.renderNoList();
-    if(document.getElementById('no-review-panel')?.classList.contains('open')) this._renderNoReview();
+    this._updateNoBadge(); this.renderNoList();
+    if (document.getElementById('no-review-panel')?.classList.contains('open')) this._renderNoReview();
   },
-
   _updateNoBadge() {
-    const b=document.getElementById('new-order-badge'); if(!b) return;
-    const n=this.noCount(); b.textContent=n; b.classList.toggle('zero',n===0);
+    const b = document.getElementById('new-order-badge'); if (!b) return;
+    const n = this.noCount(); b.textContent = n; b.classList.toggle('zero', n === 0);
   },
 
   renderNoTabs() {
-    const wrap=document.getElementById('no-tabs-wrap'); if(!wrap) return;
-    this._cats=Data.categories(this.materials);
-    this._subs=this.activeCat?Data.subcategories(this.materials,this.activeCat):[];
-    const catBtns=this._cats.map((c,i)=>`<button class="tab ${this.activeCat===c?'active':''}" data-cat-idx="${i}">${esc(c)}</button>`).join('');
-    let subHtml='';
-    if(this.activeCat&&this._subs.length){
-      const subBtns=this._subs.map((s,i)=>`<button class="tab ${this.activeSub===s?'active':''}" data-sub-idx="${i}">${esc(s)}</button>`).join('');
-      subHtml=`<div class="tabs-bar sub-bar"><div class="tabs-inner">
-        <button class="tab ${!this.activeSub?'active':''}" data-sub-idx="-1">All</button>${subBtns}
-      </div></div>`;
+    const wrap = document.getElementById('no-tabs-wrap'); if (!wrap) return;
+    this._cats = Data.categories(this.materials);
+    this._subs = this.activeCat ? Data.subcategories(this.materials, this.activeCat) : [];
+    const catBtns = this._cats.map((c,i) => `<button class="tab ${this.activeCat===c?'active':''}" data-cat-idx="${i}">${esc(c)}</button>`).join('');
+    let subHtml = '';
+    if (this.activeCat && this._subs.length) {
+      const subBtns = this._subs.map((s,i) => `<button class="tab ${this.activeSub===s?'active':''}" data-sub-idx="${i}">${esc(s)}</button>`).join('');
+      subHtml = `<div class="tabs-bar sub-bar"><div class="tabs-inner"><button class="tab ${!this.activeSub?'active':''}" data-sub-idx="-1">All</button>${subBtns}</div></div>`;
     }
-    wrap.innerHTML=`<div class="tabs-bar"><div class="tabs-inner">
-      <button class="tab ${!this.activeCat?'active':''}" data-cat-idx="-1">All</button>${catBtns}
-    </div></div>${subHtml}`;
+    wrap.innerHTML = `<div class="tabs-bar"><div class="tabs-inner"><button class="tab ${!this.activeCat?'active':''}" data-cat-idx="-1">All</button>${catBtns}</div></div>${subHtml}`;
   },
 
-  noSetCat(cat){ this.activeCat=cat; this.activeSub=null; this.renderNoTabs(); this.renderNoList(); const s=document.getElementById('no-scroll'); if(s)s.scrollTop=0; },
-  noSetSub(sub){ this.activeSub=sub; this.renderNoTabs(); this.renderNoList(); },
+  noSetCat(cat) { this.activeCat=cat; this.activeSub=null; this.renderNoTabs(); this.renderNoList(); const s=document.getElementById('no-scroll'); if(s)s.scrollTop=0; },
+  noSetSub(sub) { this.activeSub=sub; this.renderNoTabs(); this.renderNoList(); },
 
   renderNoList() {
-    const q=document.getElementById('no-search')?.value||'';
-    const filtered=Data.filter(this.materials,this.activeCat,this.activeSub,q);
-    const list=document.getElementById('no-mat-list'); if(!list) return;
-    if(!filtered.length){ list.innerHTML=`<div class="empty-state"><i class="ti ti-package-off"></i><p>No materials found.</p></div>`; return; }
-    list.innerHTML=filtered.map(m=>{
-      const qty=this.noGet(m.id),inOrder=qty>0;
-      const ci=CAT_ICONS[m.category]||CAT_ICONS.default;
+    const q = document.getElementById('no-search')?.value || '';
+    const filtered = Data.filter(this.materials, this.activeCat, this.activeSub, q);
+    const list = document.getElementById('no-mat-list'); if (!list) return;
+    if (!filtered.length) { list.innerHTML = `<div class="empty-state"><i class="ti ti-package-off"></i><p>No materials found.</p></div>`; return; }
+    list.innerHTML = filtered.map(m => {
+      const qty = this.noGet(m.id), inOrder = qty > 0;
+      const ci = CAT_ICONS[m.category] || CAT_ICONS.default;
       return `<div class="mat-card ${inOrder?'in-order':''}">
         <button class="mat-bin" data-bin="${m.id}"><i class="ti ti-trash"></i></button>
         <div class="mat-icon" style="background:${ci.bg}"><i class="ti ${ci.icon}" style="color:${ci.color}"></i></div>
@@ -699,25 +767,22 @@ const Manager = {
           <button class="qty-btn" data-dec="${m.id}">−</button>
           <input class="qty-input" type="number" min="0" step="1" value="${qty}" data-qid="${m.id}">
           <button class="qty-btn" data-inc="${m.id}">+</button>
-          <button class="add-btn ${inOrder?'in-order':''}" data-add="${m.id}">
-            <i class="ti ${inOrder?'ti-check':'ti-plus'}"></i>
-          </button>
+          <button class="add-btn ${inOrder?'in-order':''}" data-add="${m.id}"><i class="ti ${inOrder?'ti-check':'ti-plus'}"></i></button>
         </div>
       </div>`;
     }).join('');
   },
 
   noOpenReview() {
-    if(this.noCount()===0){ alert('No items on this order.'); return; }
-    this._renderNoReview();
-    this.openPanel('no-review-panel');
+    if (this.noCount() === 0) { alert('No items on this order.'); return; }
+    this._renderNoReview(); this.openPanel('no-review-panel');
   },
 
   _renderNoReview() {
-    const wrap=document.getElementById('no-review-contents'); if(!wrap) return;
-    const items=this.noItems();
-    if(!items.length){ wrap.innerHTML=`<div class="empty-state"><i class="ti ti-clipboard"></i><p>No items.</p></div>`; return; }
-    wrap.innerHTML=items.map(i=>`
+    const wrap = document.getElementById('no-review-contents'); if (!wrap) return;
+    const items = this.noItems();
+    if (!items.length) { wrap.innerHTML = `<div class="empty-state"><i class="ti ti-clipboard"></i><p>No items.</p></div>`; return; }
+    wrap.innerHTML = items.map(i => `
       <div class="order-item">
         <div class="order-item-row">
           <div>
@@ -733,58 +798,49 @@ const Manager = {
           <button class="qty-btn" data-rinc="${i.id}">+</button>
           <button class="remove-btn" data-rrem="${i.id}"><i class="ti ti-x"></i> Remove</button>
         </div>
-      </div>`).join('')+`
+      </div>`).join('') + `
       <div class="order-summary-card">
         <div class="order-summary-row total">
           <span>Total items</span>
           <span>${items.reduce((s,i)=>s+i.qty,0)} across ${items.length} line${items.length!==1?'s':''}</span>
         </div>
       </div>`;
-    const cats=[...new Set(items.map(i=>i.category))];
-    const btns=document.getElementById('no-email-buttons'); if(!btns) return;
-    btns.innerHTML=cats.map(cat=>`
+    const cats = [...new Set(items.map(i => i.category))];
+    const btns = document.getElementById('no-email-buttons'); if (!btns) return;
+    btns.innerHTML = cats.map(cat => `
       <button class="btn btn-green" data-no-cat="${esc(cat)}" style="margin-bottom:6px">
         <i class="ti ti-mail"></i> Email — ${esc(cat)}
-      </button>`).join('')+`
-      <button class="btn btn-danger" id="btn-no-clear-inner">
-        <i class="ti ti-x"></i> Clear order
-      </button>`;
-    document.getElementById('btn-no-clear-inner').addEventListener('click',()=>{
-      if(!confirm('Clear all items?')) return;
-      this._no._items={};
-      this._updateNoBadge();
-      this.renderNoList();
-      this.closePanel('no-review-panel');
+      </button>`).join('') + `
+      <button class="btn btn-danger" id="btn-no-clear-inner"><i class="ti ti-x"></i> Clear order</button>`;
+    document.getElementById('btn-no-clear-inner').addEventListener('click', () => {
+      if (!confirm('Clear all items?')) return;
+      this._no._items = {}; this._updateNoBadge(); this.renderNoList(); this.closePanel('no-review-panel');
     });
   },
 
   noOpenCategoryEmail(category) {
-    const items=this.noItems().filter(i=>i.category===category);
-    if(!items.length) return;
-    const{subject,body}=buildCategoryEmail(items,category);
-    const s=Settings.get();
-    document.getElementById('email-panel-title').textContent=category;
-    document.getElementById('email-to').value      =s.supplierEmail;
-    document.getElementById('email-cc').value      =s.ccEmail;
-    document.getElementById('email-subject').value =subject;
-    document.getElementById('email-body').value    =body;
-    this._pendingEmailMeta=null;
-    this._noEmailCategory=category; // track so we can clear after send
+    const items = this.noItems().filter(i => i.category === category);
+    if (!items.length) return;
+    const { subject, body } = buildCategoryEmail(items, category);
+    const s = Settings.get();
+    document.getElementById('email-panel-title').textContent = category;
+    document.getElementById('email-to').value      = s.supplierEmail;
+    document.getElementById('email-cc').value      = s.ccEmail;
+    document.getElementById('email-subject').value = subject;
+    document.getElementById('email-body').value    = body;
+    this._pendingEmailMeta  = null;
+    this._noEmailCategory   = category;
     this.closePanel('no-review-panel');
     this.openPanel('email-panel');
   },
 
-  // Override sendEmail to also clear new-order items after emailing from new order tab
-  // (tracked via _noEmailCategory)
-  _noEmailCategory: null,
-
-  // ══════════════════════════════════════════════════════
+  // ══════════════════════════════════════════
   // SETTINGS
-  // ══════════════════════════════════════════════════════
+  // ══════════════════════════════════════════
   _populateSettings() {
-    const s=Settings.get();
-    const el=document.getElementById('settings-body'); if(!el) return;
-    el.innerHTML=`
+    const s = Settings.get();
+    const el = document.getElementById('settings-body'); if (!el) return;
+    el.innerHTML = `
       <div class="settings-section">
         <div class="settings-label">Email</div>
         <div class="settings-card">
@@ -797,12 +853,26 @@ const Manager = {
             <input type="email" id="s-cc" value="${esc(s.ccEmail)}">
           </div>
           <div class="settings-row">
-            <div><div class="settings-row-label">Subject template</div><div class="settings-row-sub">Use {category} for material name</div></div>
+            <div><div class="settings-row-label">Subject template</div><div class="settings-row-sub">{category} {date} available</div></div>
             <input type="text" id="s-subject" value="${esc(s.emailSubject||DEFAULT_SETTINGS.emailSubject)}">
           </div>
           <div class="settings-row">
-            <div><div class="settings-row-label">Closing note</div><div class="settings-row-sub">Added at end of email</div></div>
+            <div><div class="settings-row-label">Closing note</div><div class="settings-row-sub">Added after items</div></div>
             <input type="text" id="s-delivery" value="${esc(s.deliveryNote)}">
+          </div>
+        </div>
+      </div>
+      <div class="settings-section">
+        <div class="settings-label">Email signature</div>
+        <div class="settings-card">
+          <div class="settings-row" style="flex-direction:column;align-items:flex-start;gap:8px">
+            <div class="settings-row-sub">
+              Appended to every email body. Use this to include your sign-off since Outlook Classic does not auto-insert signatures into mailto-generated emails.
+            </div>
+            <textarea id="s-signature" rows="5"
+              style="width:100%;border:1px solid var(--border);background:var(--bg);border-radius:var(--radius);
+              padding:8px 10px;font-size:13px;color:var(--text);font-family:var(--font);line-height:1.6;
+              resize:vertical;outline:none" placeholder="Kind regards,&#10;Your Name&#10;Your Company">${esc(s.emailSignature||'')}</textarea>
           </div>
         </div>
       </div>
@@ -816,6 +886,7 @@ const Manager = {
               <code style="font-family:var(--mono);font-size:11px;background:var(--bg2);padding:1px 4px;border-radius:3px">{category}</code>
               <code style="font-family:var(--mono);font-size:11px;background:var(--bg2);padding:1px 4px;border-radius:3px">{items}</code>
               <code style="font-family:var(--mono);font-size:11px;background:var(--bg2);padding:1px 4px;border-radius:3px">{closingNote}</code>
+              — all work in subject and body.
             </div>
             <textarea id="s-template" rows="10"
               style="width:100%;border:1px solid var(--border);background:var(--bg);border-radius:var(--radius);
@@ -852,52 +923,36 @@ const Manager = {
         </div>
       </div>`;
 
-    document.getElementById('btn-clear-firebase').addEventListener('click',()=>this.clearFirebase());
-    document.getElementById('btn-reset-template').addEventListener('click',()=>{
-      const ta=document.getElementById('s-template'); if(ta) ta.value=DEFAULT_SETTINGS.emailTemplate;
+    document.getElementById('btn-clear-firebase').addEventListener('click', () => this.clearFirebase());
+    document.getElementById('btn-reset-template').addEventListener('click', () => {
+      const ta = document.getElementById('s-template'); if (ta) ta.value = DEFAULT_SETTINGS.emailTemplate;
     });
-    document.getElementById('btn-clear-orders').addEventListener('click',async()=>{
-      if(!confirm('Delete ALL orders from Firebase? This cannot be undone.')) return;
-      try{ await DB.deleteAllOrders(); alert('All orders cleared.'); }
-      catch(e){ alert('Failed: '+e.message); }
+    document.getElementById('btn-clear-orders').addEventListener('click', async () => {
+      if (!confirm('Delete ALL orders from Firebase? This cannot be undone.')) return;
+      try { await DB.deleteAllOrders(); alert('All orders cleared.'); } catch(e) { alert('Failed: '+e.message); }
     });
   },
 
   saveSettings() {
     Settings.save({
-      supplierEmail: document.getElementById('s-supplier')?.value.trim(),
-      ccEmail:       document.getElementById('s-cc')?.value.trim(),
-      emailSubject:  document.getElementById('s-subject')?.value.trim(),
-      deliveryNote:  document.getElementById('s-delivery')?.value.trim(),
-      emailTemplate: document.getElementById('s-template')?.value,
+      supplierEmail:  document.getElementById('s-supplier')?.value.trim(),
+      ccEmail:        document.getElementById('s-cc')?.value.trim(),
+      emailSubject:   document.getElementById('s-subject')?.value.trim(),
+      deliveryNote:   document.getElementById('s-delivery')?.value.trim(),
+      emailSignature: document.getElementById('s-signature')?.value,
+      emailTemplate:  document.getElementById('s-template')?.value,
     });
-    const btn=document.getElementById('btn-save-settings');
-    if(btn){ btn.textContent='✓ Saved'; setTimeout(()=>btn.textContent='Save',1500); }
+    const btn = document.getElementById('btn-save-settings');
+    if (btn) { btn.textContent = '✓ Saved'; setTimeout(() => btn.textContent = 'Save', 1500); }
   },
 
   clearFirebase() {
-    if(!confirm('Clear Firebase config?')) return;
+    if (!confirm('Clear Firebase config?')) return;
     FirebaseConfig.clear(); location.reload();
   },
 };
 
-// Patch sendEmail to handle new-order category clearing
-const _origSendEmail = Manager.sendEmail.bind(Manager);
-Manager.sendEmail = async function() {
-  const nocat = this._noEmailCategory;
-  await _origSendEmail();
-  // If this was a new-order email, clear those items
-  if (nocat) {
-    const itemsToRemove = this.noItems().filter(i=>i.category===nocat).map(i=>i.id);
-    itemsToRemove.forEach(id=>{ delete this._no._items[id]; });
-    this._noEmailCategory = null;
-    this._updateNoBadge();
-    this.renderNoList();
-    this.orderRef = genRef(); // fresh ref for next order
-  }
-};
-
-document.addEventListener('DOMContentLoaded',()=>Manager.init());
+document.addEventListener('DOMContentLoaded', () => Manager.init());
 </script>
 </body>
 </html>
