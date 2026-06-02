@@ -240,22 +240,22 @@ const Manager = {
       if (catEmail) { e.stopPropagation(); this.openCategoryEmail(catEmail.dataset.catEmail); return; }
       if (del)      { e.stopPropagation(); this.deleteOrder(del.dataset.delete); return; }
       if (combHdr)  { e.stopPropagation(); this.toggleCombinedCat(combHdr.dataset.combCat); return; }
-      if (combDel)  { e.stopPropagation(); this.deleteCombinedLine(combDel.dataset.combDel, combDel.dataset.orderId); return; }
-      if (combMrg)  { e.stopPropagation(); this.mergeCombinedLines(combMrg.dataset.combMrg); return; }
+      if (combDel)  { e.stopPropagation(); this.deleteCombinedLine(combDel.dataset.combDel, combDel.dataset.orderId, combDel.dataset.partcode); return; }
+      if (combMrg)  { e.stopPropagation(); this.mergeCombinedLines(combMrg.dataset.combMrg, combMrg.dataset.partcode); return; }
       if (header)   { this.toggleCard(header.dataset.cardId); }
     });
     queue.addEventListener('change', e => {
       const inp  = e.target.closest('[data-qchange]');
       const cinp = e.target.closest('[data-cqchange]');
       if (inp)  { e.stopPropagation(); this.editQty(inp.dataset.qchange, +inp.dataset.idx, inp.value); }
-      if (cinp) { e.stopPropagation(); this.editCombinedSubQty(cinp.dataset.cqchange, cinp.dataset.orderId, cinp.value); }
+      if (cinp) { e.stopPropagation(); this.editCombinedSubQty(cinp.dataset.cqchange, cinp.dataset.orderId, cinp.dataset.partcode, cinp.value); }
     });
     // Capture phase for combined +/- so they fire before the header toggle check
     queue.addEventListener('click', e => {
       const cinc = e.target.closest('[data-cqinc]');
       const cdec = e.target.closest('[data-cqdec]');
-      if (cinc) { e.stopPropagation(); this.stepCombinedSubQty(cinc.dataset.cqinc, cinc.dataset.orderId, +1); }
-      if (cdec) { e.stopPropagation(); this.stepCombinedSubQty(cdec.dataset.cqdec, cdec.dataset.orderId, -1); }
+      if (cinc) { e.stopPropagation(); this.stepCombinedSubQty(cinc.dataset.cqinc, cinc.dataset.orderId, cinc.dataset.partcode, +1); }
+      if (cdec) { e.stopPropagation(); this.stepCombinedSubQty(cdec.dataset.cqdec, cdec.dataset.orderId, cdec.dataset.partcode, -1); }
     }, true);
 
     // New order tab
@@ -406,7 +406,8 @@ const Manager = {
                 <div class="combined-sub-row">
                   <div class="combined-sub-device">
                     <i class="ti ti-device-ipad" style="font-size:11px;color:var(--text3)"></i>
-                    <span>${esc(line.deviceName || line.orderRef || 'Unknown')}</span>
+                    <span>${esc(line.deviceName || 'Unknown')}</span>
+                    ${line.submittedAt ? `<span style="opacity:0.6;margin-left:4px">${fmtTime(line.submittedAt)}</span>` : ''}
                   </div>
                   <div class="qty-row" style="flex-shrink:0">
                     <button class="qty-btn" data-cqdec="${esc(cat)}" data-order-id="${esc(line.orderId)}" data-partcode="${esc(pGroup.partCode)}">−</button>
@@ -483,11 +484,12 @@ const Manager = {
           existing.qty += item.qty;
         } else {
           groups[cat].byPartCode[pc].lines.push({
-            orderId:    order._id,
-            orderRef:   order.ref || order._id,
-            deviceName: order.deviceName || '',
-            qty:        item.qty,
-            qtyType:    item.qtyType || '',
+            orderId:     order._id,
+            orderRef:    order.ref || order._id,
+            deviceName:  order.deviceName || '',
+            submittedAt: order.submittedAt?.toDate ? order.submittedAt.toDate() : (order.submittedAt || null),
+            qty:         item.qty,
+            qtyType:     item.qtyType || '',
           });
         }
       }
@@ -506,10 +508,8 @@ const Manager = {
     if (opening) this._openCombinedCats.add(cat); else this._openCombinedCats.delete(cat);
   },
 
-  async stepCombinedSubQty(cat, orderId, delta) {
-    // partCode comes from the click listener via dataset on the button
-    const btn = event?.target?.closest('[data-cqinc],[data-cqdec]');
-    const partCode = btn?.dataset?.partcode; if (!partCode) return;
+  async stepCombinedSubQty(cat, orderId, partCode, delta) {
+    if (!partCode) return;
     const order = this.orders.find(o => o._id === orderId); if (!order) return;
     const items = [...order.items];
     const idx = items.findIndex(i => i.category === cat && i.partCode === partCode && !i.emailed);
@@ -523,9 +523,8 @@ const Manager = {
     try { await DB.updateItems(orderId, items); } catch (e) { console.error(e); }
   },
 
-  async editCombinedSubQty(cat, orderId, val) {
-    const inp = event?.target?.closest('[data-cqchange]');
-    const partCode = inp?.dataset?.partcode; if (!partCode) return;
+  async editCombinedSubQty(cat, orderId, partCode, val) {
+    if (!partCode) return;
     const order = this.orders.find(o => o._id === orderId); if (!order) return;
     const items = [...order.items];
     const idx = items.findIndex(i => i.category === cat && i.partCode === partCode && !i.emailed);
@@ -534,20 +533,17 @@ const Manager = {
     try { await DB.updateItems(orderId, items); } catch (e) { console.error(e); }
   },
 
-  async deleteCombinedLine(cat, orderId) {
-    const btn = event?.target?.closest('[data-comb-del]');
-    const partCode = btn?.dataset?.partcode; if (!partCode) return;
+  async deleteCombinedLine(cat, orderId, partCode) {
+    if (!partCode) return;
     if (!confirm(`Remove ${partCode} from this order?`)) return;
     const order = this.orders.find(o => o._id === orderId); if (!order) return;
     const items = order.items.filter(i => !(i.category === cat && i.partCode === partCode && !i.emailed));
     try { await DB.updateItems(orderId, items); } catch (e) { alert('Failed: ' + e.message); }
   },
 
-  async mergeCombinedLines(cat) {
-    const btn = event?.target?.closest('[data-comb-merge]');
-    const partCode = btn?.dataset?.partcode;
+  async mergeCombinedLines(cat, partCode) {
     if (!partCode) return;
-    if (!confirm(`Merge all orders for ${partCode} into the first order?`)) return;
+    if (!partCode || !confirm(`Merge all lines for ${partCode} into one?`)) return;
     const pendingOrders = this.orders.filter(o => o.status === 'pending');
     const linesWithItem = pendingOrders.filter(o =>
       o.items?.some(i => i.category === cat && i.partCode === partCode && !i.emailed)

@@ -369,9 +369,14 @@ button { cursor: pointer; }
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
   padding: 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+  /* Block layout — cards are natural height, container scrolls.
+     Do NOT use flex here; flex children fight for space instead of overflowing. */
+}
+.order-queue > * {
+  margin-bottom: 8px;
+}
+.order-queue > *:last-child {
+  margin-bottom: 0;
 }
 
 /* Mobile: hide sidebar */
