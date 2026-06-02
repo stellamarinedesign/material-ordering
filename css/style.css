@@ -320,12 +320,26 @@ button { cursor: pointer; }
    Two-column: sidebar (fixed) + main (scrollable)
    ═══════════════════════════════════════ */
 
-/* The manager "body" is a flex row that fills remaining height */
+/*
+  Layout chain (each must have min-height:0 and overflow:hidden
+  until the final scrollable node):
+
+  .app-root  (position:fixed inset:0, flex column)
+    header   (flex-shrink:0)
+    main-tabs(flex-shrink:0)
+    #view-queue (flex:1, height:0, overflow:hidden) ← height:0 forces flex to share remaining space
+      .mobile-tabs (flex-shrink:0, optional)
+      .manager-columns (flex:1, overflow:hidden, flex ROW)
+        .manager-sidebar (fixed width, overflow-y:auto)
+        .manager-main    (flex:1, flex column, overflow:hidden)
+          .order-queue   (flex:1, overflow-y:auto) ← SCROLLS HERE
+*/
+
 .manager-columns {
   flex: 1;
   display: flex;
   flex-direction: row;
-  overflow: hidden;   /* critical — prevents the row itself from growing */
+  overflow: hidden;
   min-height: 0;
 }
 
@@ -339,26 +353,25 @@ button { cursor: pointer; }
   flex-direction: column;
 }
 
-/* Main content — flex column, scrollable inside */
 .manager-main {
   flex: 1;
   min-width: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
   background: var(--bg);
 }
 
-/* The actual scrollable queue list */
 .order-queue {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
   padding: 12px;
   display: flex;
   flex-direction: column;
   gap: 8px;
-  min-height: 0;
 }
 
 /* Mobile: hide sidebar */

@@ -120,7 +120,7 @@ const Manager = {
         </div>
 
         <!-- QUEUE VIEW: flex column → mobile-tabs (optional) + manager-columns -->
-        <div id="view-queue" style="flex:1;display:flex;flex-direction:column;overflow:hidden;min-height:0">
+        <div id="view-queue" style="flex:1;display:flex;flex-direction:column;overflow:hidden;min-height:0;height:0">
           <!-- Mobile sub-tabs -->
           <div class="mobile-tabs" id="mobile-tabs">
             <button class="tab active" data-view="pending">Pending <span class="sidebar-count zero" id="mob-pending-count" style="margin-left:4px">0</span></button>
@@ -128,7 +128,7 @@ const Manager = {
             <button class="tab" data-view="all">All</button>
           </div>
           <!-- Two-column area: sidebar + scrollable main -->
-          <div class="manager-columns">
+          <div class="manager-columns" style="flex:1;display:flex;overflow:hidden;min-height:0">
             <div class="manager-sidebar">
               <div class="sidebar-section">
                 <div class="sidebar-title">Orders</div>
@@ -184,7 +184,12 @@ const Manager = {
             <div class="panel-spacer"></div>
           </div>
           <div class="panel-scroll"><div class="panel-col" id="no-review-contents"></div></div>
-          <div class="action-bar"><div class="action-bar-inner" id="no-email-buttons"></div></div>
+          <div class="action-bar"><div class="action-bar-inner">
+            <div id="no-email-buttons"></div>
+            <button class="btn btn-orange" id="btn-no-add-to-orders" style="margin-top:2px">
+              <i class="ti ti-send"></i> Add to order queue
+            </button>
+          </div></div>
         </div>
 
         <!-- SETTINGS PANEL -->
@@ -212,6 +217,7 @@ const Manager = {
     document.getElementById('main-tab-new')       .addEventListener('click', () => this.setMainTab('new-order'));
     document.getElementById('btn-no-review')      .addEventListener('click', () => this.noOpenReview());
     document.getElementById('btn-close-no-review').addEventListener('click', () => this.closePanel('no-review-panel'));
+    document.getElementById('btn-no-add-to-orders').addEventListener('click', () => this.noAddToOrders());
 
     document.querySelectorAll('[data-sb]').forEach(b => b.addEventListener('click', () => this.setView(b.dataset.sb)));
     document.getElementById('mobile-tabs').addEventListener('click', e => {
@@ -354,39 +360,68 @@ const Manager = {
           const isOpen = this._openCombinedCats.has(cat);
           const catKey = cat.replace(/\s/g, '_');
 
-          // Build per-item rows, each showing sub-rows per order
+          // Build per-item rows.
+          // Single-line items (only one order for this partCode): show as a simple row with qty controls.
+          // Multi-line items (multiple orders): show a parent row + sub-rows per order.
           const itemRows = Object.values(g.byPartCode).map(pGroup => {
-            const hasMultiple = pGroup.lines.length > 1;
-            const mainRow = `
-              <div class="combined-main-row">
+            const isSingle = pGroup.lines.length === 1;
+            const singleLine = pGroup.lines[0];
+            const totalQty = pGroup.lines.reduce((s,l)=>s+l.qty,0);
+            const pcSafe = pGroup.partCode.replace(/[^a-zA-Z0-9]/g,'_');
+
+            if (isSingle) {
+              // Simple single row — no sub-lines needed
+              return `<div class="combined-main-row">
+                <div class="combined-main-info">
+                  <div class="combined-main-name">${esc(pGroup.description)}</div>
+                  <div class="combined-main-code">${esc(pGroup.partCode)}</div>
+                </div>
+                <div class="qty-row" style="flex-shrink:0">
+                  <button class="qty-btn" data-cqdec="${esc(cat)}" data-order-id="${esc(singleLine.orderId)}" data-partcode="${esc(pGroup.partCode)}">−</button>
+                  <input class="qty-edit" type="number" min="0" step="1" value="${singleLine.qty}"
+                    id="cqi-${catKey}-${pcSafe}-${esc(singleLine.orderId)}"
+                    data-cqchange="${esc(cat)}" data-order-id="${esc(singleLine.orderId)}" data-partcode="${esc(pGroup.partCode)}">
+                  <button class="qty-btn" data-cqinc="${esc(cat)}" data-order-id="${esc(singleLine.orderId)}" data-partcode="${esc(pGroup.partCode)}">+</button>
+                </div>
+                <span style="font-size:11px;color:var(--text3);font-family:var(--mono);margin-left:4px;min-width:40px">${esc(pGroup.qtyType||'')}</span>
+                <button class="btn-sm btn-sm-danger" data-comb-del="${esc(cat)}" data-order-id="${esc(singleLine.orderId)}" data-partcode="${esc(pGroup.partCode)}" style="font-size:11px;padding:3px 6px">
+                  <i class="ti ti-trash"></i>
+                </button>
+              </div>`;
+            } else {
+              // Multiple orders for this partCode — show parent + sub-rows
+              const mainRow = `<div class="combined-main-row">
                 <div class="combined-main-info">
                   <div class="combined-main-name">${esc(pGroup.description)}</div>
                   <div class="combined-main-code">${esc(pGroup.partCode)}</div>
                 </div>
                 <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
-                  <span style="font-size:12px;color:var(--text3);font-family:var(--mono)">Total: ${pGroup.lines.reduce((s,l)=>s+l.qty,0)}</span>
-                  ${hasMultiple ? `<button class="btn-sm btn-sm-save" data-comb-merge="${esc(cat)}" data-partcode="${esc(pGroup.partCode)}" style="font-size:10px;padding:3px 8px" title="Merge into one line">Merge</button>` : ''}
+                  <span style="font-size:12px;color:var(--text3);font-family:var(--mono)">Total: ${totalQty} ${esc(pGroup.qtyType||'')}</span>
+                  <button class="btn-sm btn-sm-save" data-comb-merge="${esc(cat)}" data-partcode="${esc(pGroup.partCode)}" style="font-size:10px;padding:3px 8px">
+                    <i class="ti ti-git-merge"></i> Merge
+                  </button>
                 </div>
               </div>`;
-            const subRows = pGroup.lines.map(line => `
-              <div class="combined-sub-row">
-                <div class="combined-sub-device">
-                  <i class="ti ti-device-ipad" style="font-size:11px;color:var(--text3)"></i>
-                  <span>${esc(line.deviceName || line.orderRef || 'Unknown')}</span>
-                </div>
-                <div class="qty-row" style="flex-shrink:0">
-                  <button class="qty-btn" data-cqdec="${esc(cat)}" data-order-id="${esc(line.orderId)}" data-partcode="${esc(pGroup.partCode)}">−</button>
-                  <input class="qty-edit" type="number" min="0" step="1" value="${line.qty}"
-                    id="cqi-${catKey}-${esc(pGroup.partCode)}-${esc(line.orderId)}"
-                    data-cqchange="${esc(cat)}" data-order-id="${esc(line.orderId)}" data-partcode="${esc(pGroup.partCode)}">
-                  <button class="qty-btn" data-cqinc="${esc(cat)}" data-order-id="${esc(line.orderId)}" data-partcode="${esc(pGroup.partCode)}">+</button>
-                </div>
-                <span style="font-size:11px;color:var(--text3);font-family:var(--mono);margin-left:4px;width:40px">${esc(line.qtyType||'')}</span>
-                <button class="btn-sm btn-sm-danger" data-comb-del="${esc(cat)}" data-order-id="${esc(line.orderId)}" data-partcode="${esc(pGroup.partCode)}" style="font-size:11px;padding:3px 6px" title="Remove this line">
-                  <i class="ti ti-trash"></i>
-                </button>
-              </div>`).join('');
-            return mainRow + subRows;
+              const subRows = pGroup.lines.map(line => `
+                <div class="combined-sub-row">
+                  <div class="combined-sub-device">
+                    <i class="ti ti-device-ipad" style="font-size:11px;color:var(--text3)"></i>
+                    <span>${esc(line.deviceName || line.orderRef || 'Unknown')}</span>
+                  </div>
+                  <div class="qty-row" style="flex-shrink:0">
+                    <button class="qty-btn" data-cqdec="${esc(cat)}" data-order-id="${esc(line.orderId)}" data-partcode="${esc(pGroup.partCode)}">−</button>
+                    <input class="qty-edit" type="number" min="0" step="1" value="${line.qty}"
+                      id="cqi-${catKey}-${pcSafe}-${esc(line.orderId)}"
+                      data-cqchange="${esc(cat)}" data-order-id="${esc(line.orderId)}" data-partcode="${esc(pGroup.partCode)}">
+                    <button class="qty-btn" data-cqinc="${esc(cat)}" data-order-id="${esc(line.orderId)}" data-partcode="${esc(pGroup.partCode)}">+</button>
+                  </div>
+                  <span style="font-size:11px;color:var(--text3);font-family:var(--mono);margin-left:4px;min-width:40px">${esc(line.qtyType||'')}</span>
+                  <button class="btn-sm btn-sm-danger" data-comb-del="${esc(cat)}" data-order-id="${esc(line.orderId)}" data-partcode="${esc(pGroup.partCode)}" style="font-size:11px;padding:3px 6px">
+                    <i class="ti ti-trash"></i>
+                  </button>
+                </div>`).join('');
+              return mainRow + subRows;
+            }
           }).join('');
 
           return `<div style="border-bottom:1px solid var(--border)">
@@ -439,10 +474,10 @@ const Manager = {
           groups[cat].byPartCode[pc] = {
             partCode: pc,
             description: item.description,
+            qtyType: item.qtyType || '',
             lines: [],
           };
         }
-        // One sub-line per order (same order + same partCode = sum within that order)
         const existing = groups[cat].byPartCode[pc].lines.find(l => l.orderId === order._id);
         if (existing) {
           existing.qty += item.qty;
@@ -472,8 +507,9 @@ const Manager = {
   },
 
   async stepCombinedSubQty(cat, orderId, delta) {
-    const partCode = event?.target?.closest('[data-cqinc],[data-cqdec]')?.dataset?.partcode;
-    if (!partCode) return;
+    // partCode comes from the click listener via dataset on the button
+    const btn = event?.target?.closest('[data-cqinc],[data-cqdec]');
+    const partCode = btn?.dataset?.partcode; if (!partCode) return;
     const order = this.orders.find(o => o._id === orderId); if (!order) return;
     const items = [...order.items];
     const idx = items.findIndex(i => i.category === cat && i.partCode === partCode && !i.emailed);
@@ -481,14 +517,15 @@ const Manager = {
     const newQty = Math.max(0, (items[idx].qty || 0) + delta);
     items[idx] = { ...items[idx], qty: newQty };
     const catKey = cat.replace(/\s/g, '_');
-    const inp = document.getElementById(`cqi-${catKey}-${partCode}-${orderId}`);
+    const pcSafe = partCode.replace(/[^a-zA-Z0-9]/g,'_');
+    const inp = document.getElementById(`cqi-${catKey}-${pcSafe}-${orderId}`);
     if (inp) inp.value = newQty;
     try { await DB.updateItems(orderId, items); } catch (e) { console.error(e); }
   },
 
   async editCombinedSubQty(cat, orderId, val) {
-    const partCode = event?.target?.closest('[data-cqchange]')?.dataset?.partcode;
-    if (!partCode) return;
+    const inp = event?.target?.closest('[data-cqchange]');
+    const partCode = inp?.dataset?.partcode; if (!partCode) return;
     const order = this.orders.find(o => o._id === orderId); if (!order) return;
     const items = [...order.items];
     const idx = items.findIndex(i => i.category === cat && i.partCode === partCode && !i.emailed);
@@ -498,8 +535,8 @@ const Manager = {
   },
 
   async deleteCombinedLine(cat, orderId) {
-    const partCode = event?.target?.closest('[data-comb-del]')?.dataset?.partcode;
-    if (!partCode) return;
+    const btn = event?.target?.closest('[data-comb-del]');
+    const partCode = btn?.dataset?.partcode; if (!partCode) return;
     if (!confirm(`Remove ${partCode} from this order?`)) return;
     const order = this.orders.find(o => o._id === orderId); if (!order) return;
     const items = order.items.filter(i => !(i.category === cat && i.partCode === partCode && !i.emailed));
@@ -507,7 +544,8 @@ const Manager = {
   },
 
   async mergeCombinedLines(cat) {
-    const partCode = event?.target?.closest('[data-comb-merge]')?.dataset?.partcode;
+    const btn = event?.target?.closest('[data-comb-merge]');
+    const partCode = btn?.dataset?.partcode;
     if (!partCode) return;
     if (!confirm(`Merge all orders for ${partCode} into the first order?`)) return;
     const pendingOrders = this.orders.filter(o => o.status === 'pending');
@@ -832,6 +870,43 @@ const Manager = {
     this._noEmailCategory   = category;
     this.closePanel('no-review-panel');
     this.openPanel('email-panel');
+  },
+
+  // ══════════════════════════════════════════
+  // ADD NEW ORDER TO QUEUE FROM MANAGER
+  // ══════════════════════════════════════════
+  async noAddToOrders() {
+    if (this.noCount() === 0) { alert('No items on this order.'); return; }
+    const items = this.noItems().map(i => ({
+      id: i.id, partCode: i.partCode, description: i.description,
+      category: i.category, subcategory: i.subcategory,
+      qtyType: i.qtyType || '', qty: i.qty,
+    }));
+    try {
+      await DB.submitOrder({ ref: this.orderRef, deviceName: 'Manager', items });
+      // Clear the new order
+      this._no._items = {};
+      this.orderRef = genRef();
+      this._updateNoBadge();
+      this.renderNoList();
+      this.closePanel('no-review-panel');
+      // Switch to queue tab so manager can see it
+      this.setMainTab('queue');
+      // Show brief confirmation
+      const ow = document.getElementById('overlay-wrap');
+      ow.innerHTML = `
+        <div class="success-overlay">
+          <div class="success-card">
+            <div class="success-icon green"><i class="ti ti-circle-check"></i></div>
+            <h3>Added to order queue!</h3>
+            <p>The order has been submitted to the pending queue and can be combined with other orders.</p>
+            <button class="btn btn-primary" id="btn-done-add">Done</button>
+          </div>
+        </div>`;
+      document.getElementById('btn-done-add').addEventListener('click', () => { ow.innerHTML = ''; });
+    } catch(e) {
+      alert('Failed to submit: ' + e.message);
+    }
   },
 
   // ══════════════════════════════════════════
