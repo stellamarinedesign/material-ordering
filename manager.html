@@ -370,11 +370,20 @@ const Manager = {
             const pcSafe = pGroup.partCode.replace(/[^a-zA-Z0-9]/g,'_');
 
             if (isSingle) {
-              // Simple single row — no sub-lines needed
+              // Check if this single line was previously merged
+              const mergedDev = singleLine.mergedDeviceName;
+              const displayDevice = mergedDev === '__merged__'
+                ? '<span style="font-size:10px;color:var(--green-text);font-family:var(--mono);background:var(--green-bg);padding:1px 6px;border-radius:20px">Merged</span>'
+                : singleLine.deviceName
+                  ? `<span style="font-size:11px;color:var(--text3);font-family:var(--mono)">${esc(singleLine.deviceName)}</span>`
+                  : '';
               return `<div class="combined-main-row">
                 <div class="combined-main-info">
                   <div class="combined-main-name">${esc(pGroup.description)}</div>
-                  <div class="combined-main-code">${esc(pGroup.partCode)}</div>
+                  <div class="combined-main-code" style="display:flex;align-items:center;gap:6px">
+                    <span>${esc(pGroup.partCode)}</span>
+                    ${displayDevice}
+                  </div>
                 </div>
                 <div class="qty-row" style="flex-shrink:0">
                   <button class="qty-btn" data-cqdec="${esc(cat)}" data-order-id="${esc(singleLine.orderId)}" data-partcode="${esc(pGroup.partCode)}">−</button>
@@ -397,7 +406,7 @@ const Manager = {
                 </div>
                 <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
                   <span style="font-size:12px;color:var(--text3);font-family:var(--mono)">Total: ${totalQty} ${esc(pGroup.qtyType||'')}</span>
-                  <button class="btn-sm btn-sm-save" data-comb-merge="${esc(cat)}" data-partcode="${esc(pGroup.partCode)}" style="font-size:10px;padding:3px 8px">
+                  <button class="btn-sm btn-sm-save" data-comb-merge="${esc(cat)}" data-partcode="${esc(pGroup.partCode)}" style="font-size:10px;padding:3px 8px;white-space:nowrap">
                     <i class="ti ti-git-merge"></i> Merge
                   </button>
                 </div>
@@ -484,12 +493,13 @@ const Manager = {
           existing.qty += item.qty;
         } else {
           groups[cat].byPartCode[pc].lines.push({
-            orderId:     order._id,
-            orderRef:    order.ref || order._id,
-            deviceName:  order.deviceName || '',
-            submittedAt: order.submittedAt?.toDate ? order.submittedAt.toDate() : (order.submittedAt || null),
-            qty:         item.qty,
-            qtyType:     item.qtyType || '',
+            orderId:           order._id,
+            orderRef:          order.ref || order._id,
+            deviceName:        order.deviceName || '',
+            mergedDeviceName:  item.mergedDeviceName || null,  // set on item after a merge
+            submittedAt:       order.submittedAt?.toDate ? order.submittedAt.toDate() : (order.submittedAt || null),
+            qty:               item.qty,
+            qtyType:           item.qtyType || '',
           });
         }
       }
@@ -542,25 +552,25 @@ const Manager = {
   },
 
   async mergeCombinedLines(cat, partCode) {
-    if (!partCode) return;
-    if (!partCode || !confirm(`Merge all lines for ${partCode} into one?`)) return;
+    if (!cat || !partCode) { console.error('merge: missing params', cat, partCode); return; }
     const pendingOrders = this.orders.filter(o => o.status === 'pending');
     const linesWithItem = pendingOrders.filter(o =>
       o.items?.some(i => i.category === cat && i.partCode === partCode && !i.emailed)
     );
     if (linesWithItem.length < 2) return;
-    // Sum all quantities into the first order
+    const deviceNames = [...new Set(linesWithItem.map(o => o.deviceName).filter(Boolean))];
+    const mergedDeviceName = deviceNames.length > 1 ? '__merged__' : (deviceNames[0] || '');
     const totalQty = linesWithItem.reduce((sum, o) => {
       const item = o.items.find(i => i.category === cat && i.partCode === partCode && !i.emailed);
       return sum + (item?.qty || 0);
     }, 0);
-    // Update first order with merged qty
     const first = linesWithItem[0];
     const firstItems = [...first.items];
     const firstIdx = firstItems.findIndex(i => i.category === cat && i.partCode === partCode && !i.emailed);
-    if (firstIdx >= 0) firstItems[firstIdx] = { ...firstItems[firstIdx], qty: totalQty };
-    try { await DB.updateItems(first._id, firstItems); } catch (e) { alert('Failed: ' + e.message); return; }
-    // Remove item from all other orders
+    if (firstIdx >= 0) {
+      firstItems[firstIdx] = { ...firstItems[firstIdx], qty: totalQty, mergedDeviceName };
+    }
+    try { await DB.updateItems(first._id, firstItems); } catch (e) { alert('Merge failed: ' + e.message); return; }
     for (const order of linesWithItem.slice(1)) {
       const items = order.items.filter(i => !(i.category === cat && i.partCode === partCode && !i.emailed));
       try { await DB.updateItems(order._id, items); } catch (e) { console.error(e); }
