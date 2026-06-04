@@ -241,7 +241,7 @@ const Manager = {
       if (del)      { e.stopPropagation(); this.deleteOrder(del.dataset.delete); return; }
       if (combHdr)  { e.stopPropagation(); this.toggleCombinedCat(combHdr.dataset.combCat); return; }
       if (combDel)  { e.stopPropagation(); this.deleteCombinedLine(combDel.dataset.combDel, combDel.dataset.orderId, combDel.dataset.partcode); return; }
-      if (combMrg)  { e.stopPropagation(); this.mergeCombinedLines(combMrg.dataset.combMrg, combMrg.dataset.partcode); return; }
+      if (combMrg)  { e.stopPropagation(); this.mergeCombinedLines(combMrg.dataset.combMerge, combMrg.dataset.partcode); return; }
       if (header)   { this.toggleCard(header.dataset.cardId); }
     });
     queue.addEventListener('change', e => {
@@ -380,9 +380,9 @@ const Manager = {
               return `<div class="combined-main-row">
                 <div class="combined-main-info">
                   <div class="combined-main-name">${esc(pGroup.description)}</div>
-                  <div class="combined-main-code" style="display:flex;align-items:center;gap:6px">
+                  <div class="combined-main-code" style="display:flex;align-items:center;gap:4px">
                     <span>${esc(pGroup.partCode)}</span>
-                    ${displayDevice}
+                    ${displayDevice ? `<span style="opacity:0.4">·</span>${displayDevice}` : ''}
                   </div>
                 </div>
                 <div class="qty-row" style="flex-shrink:0">
