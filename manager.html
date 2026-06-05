@@ -235,14 +235,18 @@ const Manager = {
       const combDel = e.target.closest('[data-comb-del]');
       const combMrg = e.target.closest('[data-comb-merge]');
       const header  = e.target.closest('.order-card-header');
-      if (dec)      { e.stopPropagation(); this.stepQty(dec.dataset.qdec, +dec.dataset.idx, -1); return; }
-      if (inc)      { e.stopPropagation(); this.stepQty(inc.dataset.qinc, +inc.dataset.idx,  1); return; }
-      if (catEmail) { e.stopPropagation(); this.openCategoryEmail(catEmail.dataset.catEmail); return; }
-      if (del)      { e.stopPropagation(); this.deleteOrder(del.dataset.delete); return; }
-      if (combHdr)  { e.stopPropagation(); this.toggleCombinedCat(combHdr.dataset.combCat); return; }
-      if (combDel)  { e.stopPropagation(); this.deleteCombinedLine(combDel.dataset.combDel, combDel.dataset.orderId, combDel.dataset.partcode); return; }
-      if (combMrg)  { e.stopPropagation(); this.mergeCombinedLines(combMrg.dataset.combMerge, combMrg.dataset.partcode); return; }
-      if (header)   { this.toggleCard(header.dataset.cardId); }
+      const resetItem  = e.target.closest('[data-reset-item]');
+      const resetOrder = e.target.closest('[data-reset-order]');
+      if (dec)        { e.stopPropagation(); this.stepQty(dec.dataset.qdec, +dec.dataset.idx, -1); return; }
+      if (inc)        { e.stopPropagation(); this.stepQty(inc.dataset.qinc, +inc.dataset.idx,  1); return; }
+      if (catEmail)   { e.stopPropagation(); this.openCategoryEmail(catEmail.dataset.catEmail); return; }
+      if (del)        { e.stopPropagation(); this.deleteOrder(del.dataset.delete); return; }
+      if (combHdr)    { e.stopPropagation(); this.toggleCombinedCat(combHdr.dataset.combCat); return; }
+      if (combDel)    { e.stopPropagation(); this.deleteCombinedLine(combDel.dataset.combDel, combDel.dataset.orderId, combDel.dataset.partcode); return; }
+      if (combMrg)    { e.stopPropagation(); this.mergeCombinedLines(combMrg.dataset.combMerge, combMrg.dataset.partcode); return; }
+      if (resetItem)  { e.stopPropagation(); this.resetItemEmailed(resetItem.dataset.resetItem, resetItem.dataset.category, resetItem.dataset.partcode); return; }
+      if (resetOrder) { e.stopPropagation(); this.resetOrderToPending(resetOrder.dataset.resetOrder); return; }
+      if (header)     { this.toggleCard(header.dataset.cardId); }
     });
     queue.addEventListener('change', e => {
       const inp  = e.target.closest('[data-qchange]');
@@ -593,7 +597,11 @@ const Manager = {
         </div>
         <div class="order-line-right">
           ${item.emailed
-            ? `<span class="emailed-badge"><i class="ti ti-mail-check"></i> Emailed</span>`
+            ? `<span class="emailed-badge"><i class="ti ti-mail-check"></i> Emailed</span>
+               <button class="btn-sm" data-reset-item="${o._id}" data-category="${esc(item.category)}" data-partcode="${esc(item.partCode)}"
+                 style="font-size:10px;padding:2px 6px;color:var(--amber-text);border-color:var(--amber-text);background:var(--amber-bg)" title="Reset to pending so it can be re-emailed">
+                 <i class="ti ti-refresh"></i>
+               </button>`
             : isPending
               ? `<div class="qty-row">
                   <button class="qty-btn" data-qdec="${o._id}" data-idx="${idx}">−</button>
@@ -613,11 +621,18 @@ const Manager = {
         <button class="btn btn-green" data-cat-email="${esc(cat)}" style="margin-bottom:6px">
           <i class="ti ti-mail"></i> ${esc(cat)}
         </button>`).join('')}
+      ${emailedItems.length > 0 ? `
+        <button class="btn btn-outline" data-reset-order="${o._id}" style="margin-bottom:4px">
+          <i class="ti ti-refresh"></i> Reset emailed items to pending
+        </button>` : ''}
       <button class="btn btn-danger" data-delete="${o._id}" style="margin-top:2px">
         <i class="ti ti-x"></i> Reject order
       </button>` : isSent ? `
       <span class="sent-stamp"><i class="ti ti-circle-check"></i> All emailed</span>
-      <button class="btn btn-outline" data-delete="${o._id}" style="margin-top:8px">
+      <button class="btn btn-outline" data-reset-order="${o._id}" style="margin-top:8px">
+        <i class="ti ti-refresh"></i> Reset all to pending
+      </button>
+      <button class="btn btn-outline" data-delete="${o._id}" style="margin-top:4px">
         <i class="ti ti-trash"></i> Delete record
       </button>` : '';
 
@@ -672,6 +687,16 @@ const Manager = {
   async deleteOrder(id) {
     if (!confirm('Delete this order?')) return;
     try { await DB.deleteOrder(id); } catch(e) { alert('Delete failed: '+e.message); }
+  },
+
+  async resetItemEmailed(orderId, category, partCode) {
+    try { await DB.resetItemEmailed(orderId, category, partCode); }
+    catch(e) { alert('Reset failed: ' + e.message); }
+  },
+
+  async resetOrderToPending(orderId) {
+    try { await DB.resetOrderToPending(orderId); }
+    catch(e) { alert('Reset failed: ' + e.message); }
   },
 
   // ══════════════════════════════════════════

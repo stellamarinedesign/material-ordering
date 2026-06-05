@@ -70,4 +70,35 @@ const DB = {
     snap.docs.forEach(d => batch.delete(d.ref));
     await batch.commit();
   },
+
+  // Reset a single item's emailed flag so it can be re-emailed
+  async resetItemEmailed(orderId, category, partCode) {
+    if (!this.isReady()) throw new Error('Firebase not initialised');
+    const doc = await _db.collection('orders').doc(orderId).get();
+    if (!doc.exists) return;
+    const items = (doc.data().items || []).map(item =>
+      (item.category === category && item.partCode === partCode)
+        ? { ...item, emailed: false }
+        : item
+    );
+    const allEmailed = items.every(i => i.emailed);
+    await _db.collection('orders').doc(orderId).update({
+      items,
+      status: allEmailed ? 'sent' : 'pending',
+      updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+    });
+  },
+
+  // Reset all items in an order back to pending (un-email the entire order)
+  async resetOrderToPending(orderId) {
+    if (!this.isReady()) throw new Error('Firebase not initialised');
+    const doc = await _db.collection('orders').doc(orderId).get();
+    if (!doc.exists) return;
+    const items = (doc.data().items || []).map(item => ({ ...item, emailed: false }));
+    await _db.collection('orders').doc(orderId).update({
+      items,
+      status: 'pending',
+      updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+    });
+  },
 };
