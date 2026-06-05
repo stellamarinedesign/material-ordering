@@ -614,7 +614,9 @@ const Manager = {
         </div>
       </div>`).join('');
 
-    const pendingCats = [...new Set(items.filter(i => !i.emailed).map(i => i.category))];
+    const pendingItems = items.filter(i => !i.emailed);
+    const emailedItems = items.filter(i =>  i.emailed);
+    const pendingCats  = [...new Set(pendingItems.map(i => i.category))];
     const catEmailBtns = isPending && pendingCats.length ? `
       <div style="margin-bottom:6px;font-size:12px;color:var(--text2)">Send email per category:</div>
       ${pendingCats.map(cat => `
