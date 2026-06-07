@@ -25,6 +25,11 @@ const Manager = {
   unsubscribe:       null,
   _openCards:        new Set(),
   _openCombinedCats: new Set(),
+  // Local-only exclusions: Set of "category|partCode|orderId" strings
+  _combExcluded: new Set(),
+  // Local-only merges: Map of "category|partCode" -> {qty, deviceNames, orderId}
+  // When a merge key exists, that partCode is shown as a single merged row
+  _combMerged: new Map(),
 
   mainTab:   'queue',
   materials: [],
@@ -125,6 +130,7 @@ const Manager = {
           <div class="mobile-tabs" id="mobile-tabs">
             <button class="tab active" data-view="pending">Pending <span class="sidebar-count zero" id="mob-pending-count" style="margin-left:4px">0</span></button>
             <button class="tab" data-view="sent">Sent</button>
+            <button class="tab" data-view="rejected">Rejected</button>
             <button class="tab" data-view="all">All</button>
           </div>
           <!-- Two-column area: sidebar + scrollable main -->
@@ -134,6 +140,7 @@ const Manager = {
                 <div class="sidebar-title">Orders</div>
                 <button class="sidebar-btn active" data-sb="pending"><i class="ti ti-clock"></i>Pending<span class="sidebar-count zero" id="pending-count">0</span></button>
                 <button class="sidebar-btn" data-sb="sent"><i class="ti ti-mail-check"></i>Sent</button>
+                <button class="sidebar-btn" data-sb="rejected"><i class="ti ti-ban"></i>Rejected</button>
                 <button class="sidebar-btn" data-sb="all"><i class="ti ti-list"></i>All</button>
               </div>
               <div class="sidebar-section">
@@ -241,11 +248,17 @@ const Manager = {
       if (inc)        { e.stopPropagation(); this.stepQty(inc.dataset.qinc, +inc.dataset.idx,  1); return; }
       if (catEmail)   { e.stopPropagation(); this.openCategoryEmail(catEmail.dataset.catEmail); return; }
       if (del)        { e.stopPropagation(); this.deleteOrder(del.dataset.delete); return; }
+      const rejectOrd = e.target.closest('[data-reject-order]');
+      if (rejectOrd)  { e.stopPropagation(); this.rejectOrder(rejectOrd.dataset.rejectOrder); return; }
       if (combHdr)    { e.stopPropagation(); this.toggleCombinedCat(combHdr.dataset.combCat); return; }
-      if (combDel)    { e.stopPropagation(); this.deleteCombinedLine(combDel.dataset.combDel, combDel.dataset.orderId, combDel.dataset.partcode); return; }
-      if (combMrg)    { e.stopPropagation(); this.mergeCombinedLines(combMrg.dataset.combMerge, combMrg.dataset.partcode); return; }
+      if (combDel)    { e.stopPropagation(); this.excludeCombinedLine(combDel.dataset.combDel, combDel.dataset.orderId, combDel.dataset.partcode); return; }
+      if (combMrg)    { e.stopPropagation(); this.localMergeLines(combMrg.dataset.combMerge, combMrg.dataset.partcode); return; }
       if (resetItem)  { e.stopPropagation(); this.resetItemEmailed(resetItem.dataset.resetItem, resetItem.dataset.category, resetItem.dataset.partcode); return; }
       if (resetOrder) { e.stopPropagation(); this.resetOrderToPending(resetOrder.dataset.resetOrder); return; }
+      const unexclude = e.target.closest('[data-unexclude]');
+      const unmerge   = e.target.closest('[data-unmerge]');
+      if (unexclude)  { e.stopPropagation(); this.unexcludeLine(unexclude.dataset.unexclude, unexclude.dataset.orderId, unexclude.dataset.partcode); return; }
+      if (unmerge)    { e.stopPropagation(); this.unmergeLines(unmerge.dataset.unmerge, unmerge.dataset.partcode); return; }
       if (header)     { this.toggleCard(header.dataset.cardId); }
     });
     queue.addEventListener('change', e => {
@@ -340,13 +353,14 @@ const Manager = {
     // Preserve open card state
     wrap.querySelectorAll('.order-card-body.open').forEach(el => this._openCards.add(el.id.replace('body-', '')));
     let list = this.orders;
-    if (this.activeView === 'pending') list = list.filter(o => o.status === 'pending');
-    if (this.activeView === 'sent')    list = list.filter(o => o.status === 'sent');
+    if (this.activeView === 'pending')  list = list.filter(o => o.status === 'pending');
+    if (this.activeView === 'sent')     list = list.filter(o => o.status === 'sent');
+    if (this.activeView === 'rejected') list = list.filter(o => o.status === 'rejected');
     const listIds = new Set(list.map(o => o._id));
     for (const id of this._openCards) { if (!listIds.has(id)) this._openCards.delete(id); }
 
     if (!list.length) {
-      const msgs = { pending:['ti-clock','No pending orders yet.'], sent:['ti-mail-check','No sent orders yet.'], all:['ti-inbox','No orders yet.'] };
+      const msgs = { pending:['ti-clock','No pending orders yet.'], sent:['ti-mail-check','No sent orders yet.'], rejected:['ti-ban','No rejected orders.'], all:['ti-inbox','No orders yet.'] };
       const [ic, msg] = msgs[this.activeView] || msgs.all;
       wrap.innerHTML = `<div class="empty-queue"><i class="ti ${ic}"></i><p>${msg}</p></div>`;
       return;
@@ -364,14 +378,48 @@ const Manager = {
           const isOpen = this._openCombinedCats.has(cat);
           const catKey = cat.replace(/\s/g, '_');
 
-          // Build per-item rows.
-          // Single-line items (only one order for this partCode): show as a simple row with qty controls.
-          // Multi-line items (multiple orders): show a parent row + sub-rows per order.
+          // Build per-item rows — respects local _combExcluded and _combMerged state
           const itemRows = Object.values(g.byPartCode).map(pGroup => {
-            const isSingle = pGroup.lines.length === 1;
-            const singleLine = pGroup.lines[0];
-            const totalQty = pGroup.lines.reduce((s,l)=>s+l.qty,0);
             const pcSafe = pGroup.partCode.replace(/[^a-zA-Z0-9]/g,'_');
+            const mergeKey = `${cat}|${pGroup.partCode}`;
+            const merged = this._combMerged.get(mergeKey);
+
+            // Filter out excluded lines for display purposes
+            const visibleLines = pGroup.lines.filter(
+              line => !this.isExcluded(cat, line.orderId, pGroup.partCode)
+            );
+            const excludedLines = pGroup.lines.filter(
+              line => this.isExcluded(cat, line.orderId, pGroup.partCode)
+            );
+
+            // If merged locally, show as a single merged row
+            if (merged) {
+              return `<div class="combined-main-row">
+                <div class="combined-main-info">
+                  <div class="combined-main-name">${esc(pGroup.description)}</div>
+                  <div class="combined-main-code" style="display:flex;align-items:center;gap:4px">
+                    <span>${esc(pGroup.partCode)}</span>
+                    <span style="opacity:0.4">·</span>
+                    <span style="font-size:10px;color:var(--green-text);font-family:var(--mono);background:var(--green-bg);padding:1px 6px;border-radius:20px">Merged${merged.deviceLabel && merged.deviceLabel !== 'Merged' ? ' · ' + esc(merged.deviceLabel) : ''}</span>
+                  </div>
+                </div>
+                <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
+                  <span style="font-size:12px;color:var(--text3);font-family:var(--mono)">${merged.qty} ${esc(pGroup.qtyType||'')}</span>
+                  <button class="btn-sm" data-unmerge="${esc(cat)}" data-partcode="${esc(pGroup.partCode)}" style="font-size:10px;padding:3px 8px">
+                    <i class="ti ti-git-branch"></i> Unmerge
+                  </button>
+                </div>
+              </div>
+              ${excludedLines.map(line => `
+                <div class="combined-sub-row" style="opacity:0.35">
+                  <div class="combined-sub-device"><i class="ti ti-device-ipad" style="font-size:11px"></i><span>${esc(line.deviceName||line.orderRef||'Unknown')}</span><span style="margin-left:4px;opacity:0.6;font-size:10px">${line.submittedAt?fmtTime(line.submittedAt):''}</span><span style="font-size:10px;color:var(--text3);margin-left:4px">(excluded)</span></div>
+                  <button class="btn-sm" data-unexclude="${esc(cat)}" data-order-id="${esc(line.orderId)}" data-partcode="${esc(pGroup.partCode)}" style="font-size:10px;padding:2px 6px">Restore</button>
+                </div>`).join('')}`;
+            }
+
+            const isSingle = visibleLines.length === 1 && excludedLines.length === 0;
+            const singleLine = visibleLines[0];
+            const totalQty = visibleLines.reduce((s,l)=>s+l.qty,0);
 
             if (isSingle) {
               // Check if this single line was previously merged
@@ -397,8 +445,8 @@ const Manager = {
                   <button class="qty-btn" data-cqinc="${esc(cat)}" data-order-id="${esc(singleLine.orderId)}" data-partcode="${esc(pGroup.partCode)}">+</button>
                 </div>
                 <span style="font-size:11px;color:var(--text3);font-family:var(--mono);margin-left:4px;min-width:40px">${esc(pGroup.qtyType||'')}</span>
-                <button class="btn-sm btn-sm-danger" data-comb-del="${esc(cat)}" data-order-id="${esc(singleLine.orderId)}" data-partcode="${esc(pGroup.partCode)}" style="font-size:11px;padding:3px 6px">
-                  <i class="ti ti-trash"></i>
+                <button class="btn-sm btn-sm-danger" data-comb-del="${esc(cat)}" data-order-id="${esc(singleLine.orderId)}" data-partcode="${esc(pGroup.partCode)}" style="font-size:11px;padding:3px 6px" title="Exclude from email">
+                  <i class="ti ti-eye-off"></i>
                 </button>
               </div>`;
             } else {
@@ -430,11 +478,21 @@ const Manager = {
                     <button class="qty-btn" data-cqinc="${esc(cat)}" data-order-id="${esc(line.orderId)}" data-partcode="${esc(pGroup.partCode)}">+</button>
                   </div>
                   <span style="font-size:11px;color:var(--text3);font-family:var(--mono);margin-left:4px;min-width:40px">${esc(line.qtyType||'')}</span>
-                  <button class="btn-sm btn-sm-danger" data-comb-del="${esc(cat)}" data-order-id="${esc(line.orderId)}" data-partcode="${esc(pGroup.partCode)}" style="font-size:11px;padding:3px 6px">
-                    <i class="ti ti-trash"></i>
+                  <button class="btn-sm btn-sm-danger" data-comb-del="${esc(cat)}" data-order-id="${esc(line.orderId)}" data-partcode="${esc(pGroup.partCode)}" style="font-size:11px;padding:3px 6px" title="Exclude from email">
+                    <i class="ti ti-eye-off"></i>
                   </button>
                 </div>`).join('');
-              return mainRow + subRows;
+              const excludedRowsHtml = excludedLines.map(line => `
+                <div class="combined-sub-row" style="opacity:0.35">
+                  <div class="combined-sub-device">
+                    <i class="ti ti-eye-off" style="font-size:11px"></i>
+                    <span>${esc(line.deviceName||line.orderRef||'Unknown')}</span>
+                    ${line.submittedAt ? `<span style="margin-left:4px;opacity:0.6;font-size:10px">${fmtTime(line.submittedAt)}</span>` : ''}
+                    <span style="font-size:10px;color:var(--text3);margin-left:4px">(excluded)</span>
+                  </div>
+                  <button class="btn-sm" data-unexclude="${esc(cat)}" data-order-id="${esc(line.orderId)}" data-partcode="${esc(pGroup.partCode)}" style="font-size:10px;padding:2px 6px">Restore</button>
+                </div>`).join('');
+              return mainRow + subRows + excludedRowsHtml;
             }
           }).join('');
 
@@ -522,6 +580,64 @@ const Manager = {
     if (opening) this._openCombinedCats.add(cat); else this._openCombinedCats.delete(cat);
   },
 
+  // ── LOCAL-ONLY combined view operations (never write to Firebase) ──
+
+  // Exclude a line from the email view (greyed out, still in Firebase)
+  excludeCombinedLine(cat, orderId, partCode) {
+    const key = `${cat}|${partCode}|${orderId}`;
+    this._combExcluded.add(key);
+    this.renderQueue();
+  },
+
+  unexcludeLine(cat, orderId, partCode) {
+    const key = `${cat}|${partCode}|${orderId}`;
+    this._combExcluded.delete(key);
+    this.renderQueue();
+  },
+
+  isExcluded(cat, orderId, partCode) {
+    return this._combExcluded.has(`${cat}|${partCode}|${orderId}`);
+  },
+
+  // Merge lines locally — store merged qty/device in _combMerged, don't touch Firebase
+  localMergeLines(cat, partCode) {
+    if (!cat || !partCode) return;
+    const pendingOrders = this.orders.filter(o => o.status === 'pending');
+    const key = `${cat}|${partCode}`;
+    // Collect all non-excluded lines for this partCode
+    const lines = [];
+    for (const order of pendingOrders) {
+      for (const item of (order.items || [])) {
+        if (item.emailed) continue;
+        if (item.category !== cat || item.partCode !== partCode) continue;
+        if (this.isExcluded(cat, order._id, partCode)) continue;
+        lines.push({ orderId: order._id, qty: item.qty, deviceName: order.deviceName || '' });
+      }
+    }
+    if (lines.length < 2) return;
+    const totalQty = lines.reduce((s, l) => s + l.qty, 0);
+    const deviceNames = [...new Set(lines.map(l => l.deviceName).filter(Boolean))];
+    this._combMerged.set(key, {
+      qty: totalQty,
+      deviceLabel: deviceNames.length > 1 ? 'Merged' : (deviceNames[0] || ''),
+      orderId: lines[0].orderId,  // representative order for qty editing
+    });
+    this.renderQueue();
+  },
+
+  unmergeLines(cat, partCode) {
+    this._combMerged.delete(`${cat}|${partCode}`);
+    this.renderQueue();
+  },
+
+  isMerged(cat, partCode) {
+    return this._combMerged.has(`${cat}|${partCode}`);
+  },
+
+  async rejectOrder(id) {
+    try { await DB.rejectOrder(id); } catch(e) { alert('Failed: ' + e.message); }
+  },
+
   async stepCombinedSubQty(cat, orderId, partCode, delta) {
     if (!partCode) return;
     const order = this.orders.find(o => o._id === orderId); if (!order) return;
@@ -586,8 +702,9 @@ const Manager = {
     const isPending = o.status === 'pending';
     const isSent    = o.status === 'sent';
     const items     = o.items || [];
-    const statusLabel = isPending ? 'Pending review' : isSent ? 'Sent' : o.status;
-    const statusClass = isPending ? 'status-pending' : 'status-sent';
+    const isRejected = o.status === 'rejected';
+    const statusLabel = isPending ? 'Pending review' : isSent ? 'Sent' : isRejected ? 'Rejected' : o.status;
+    const statusClass = isPending ? 'status-pending' : isSent ? 'status-sent' : isRejected ? 'status-rejected' : 'status-pending';
 
     const allRows = items.map((item, idx) => `
       <div class="order-line ${item.emailed ? 'emailed' : ''}">
@@ -614,10 +731,16 @@ const Manager = {
         </div>
       </div>`).join('');
 
-    const pendingItems = items.filter(i => !i.emailed);
-    const emailedItems = items.filter(i =>  i.emailed);
-    const pendingCats  = [...new Set(pendingItems.map(i => i.category))];
-    const catEmailBtns = isPending && pendingCats.length ? `
+    const pendingCats = [...new Set(items.filter(i => !i.emailed).map(i => i.category))];
+    // Always show reject/delete for empty orders or rejected orders
+    const catEmailBtns = isRejected ? `
+      <span class="status-pill status-rejected"><i class="ti ti-ban"></i> Rejected</span>
+      <button class="btn btn-outline" data-reset-order="${o._id}" style="margin-top:8px">
+        <i class="ti ti-refresh"></i> Restore to pending
+      </button>
+      <button class="btn btn-outline" data-delete="${o._id}" style="margin-top:4px">
+        <i class="ti ti-trash"></i> Delete record
+      </button>` : isPending && pendingCats.length ? `
       <div style="margin-bottom:6px;font-size:12px;color:var(--text2)">Send email per category:</div>
       ${pendingCats.map(cat => `
         <button class="btn btn-green" data-cat-email="${esc(cat)}" style="margin-bottom:6px">
@@ -627,12 +750,25 @@ const Manager = {
         <button class="btn btn-outline" data-reset-order="${o._id}" style="margin-bottom:4px">
           <i class="ti ti-refresh"></i> Reset emailed items to pending
         </button>` : ''}
-      <button class="btn btn-danger" data-delete="${o._id}" style="margin-top:2px">
-        <i class="ti ti-x"></i> Reject order
+      <button class="btn btn-danger" data-reject-order="${o._id}" style="margin-top:2px">
+        <i class="ti ti-ban"></i> Reject order
+      </button>` : isPending && items.length === 0 ? `
+      <button class="btn btn-danger" data-reject-order="${o._id}">
+        <i class="ti ti-ban"></i> Reject order
+      </button>
+      <button class="btn btn-outline" data-delete="${o._id}" style="margin-top:4px">
+        <i class="ti ti-trash"></i> Delete record
       </button>` : isSent ? `
       <span class="sent-stamp"><i class="ti ti-circle-check"></i> All emailed</span>
       <button class="btn btn-outline" data-reset-order="${o._id}" style="margin-top:8px">
         <i class="ti ti-refresh"></i> Reset all to pending
+      </button>
+      <button class="btn btn-outline" data-delete="${o._id}" style="margin-top:4px">
+        <i class="ti ti-trash"></i> Delete record
+      </button>` : o.status === 'rejected' ? `
+      <span class="status-pill" style="background:var(--red-bg);color:var(--red-text)"><i class="ti ti-ban"></i> Rejected</span>
+      <button class="btn btn-outline" data-reset-order="${o._id}" style="margin-top:8px">
+        <i class="ti ti-refresh"></i> Restore to pending
       </button>
       <button class="btn btn-outline" data-delete="${o._id}" style="margin-top:4px">
         <i class="ti ti-trash"></i> Delete record
@@ -713,7 +849,19 @@ const Manager = {
     for (const order of pendingOrders) {
       for (const item of (order.items || [])) {
         if (item.emailed || item.category !== category) continue;
+        // Respect local exclusions
+        if (this.isExcluded(category, order._id, item.partCode)) continue;
         orderIds.add(order._id);
+        // Respect local merges — use merged qty if set
+        const mergeKey = `${category}|${item.partCode}`;
+        const localMerge = this._combMerged.get(mergeKey);
+        if (localMerge) {
+          // Only add once (first occurrence), use local merged qty
+          if (!mergedItems[item.partCode]) {
+            mergedItems[item.partCode] = { ...item, qty: localMerge.qty };
+          }
+          continue;
+        }
         if (!mergedItems[item.partCode]) {
           mergedItems[item.partCode] = { ...item, qty: 0 };
         }

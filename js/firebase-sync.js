@@ -63,6 +63,14 @@ const DB = {
     await _db.collection('orders').doc(id).delete();
   },
 
+  async rejectOrder(id) {
+    if (!this.isReady()) throw new Error('Firebase not initialised');
+    await _db.collection('orders').doc(id).update({
+      status: 'rejected',
+      updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+    });
+  },
+
   async deleteAllOrders() {
     if (!this.isReady()) throw new Error('Firebase not initialised');
     const snap = await _db.collection('orders').get();

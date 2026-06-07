@@ -403,8 +403,9 @@ button { cursor: pointer; }
 .order-ref-text { font-size: 13px; font-weight: 600; color: var(--text); font-family: var(--mono); }
 .order-meta     { font-size: 11px; color: var(--text3); margin-top: 2px; }
 .status-pill { font-size: 11px; font-weight: 500; padding: 3px 10px; border-radius: 20px; font-family: var(--mono); white-space: nowrap; }
-.status-pending { background: var(--amber-bg); color: var(--amber-text); }
-.status-sent    { background: var(--blue-bg);  color: var(--blue-text); }
+.status-pending  { background: var(--amber-bg); color: var(--amber-text); }
+.status-sent     { background: var(--blue-bg);  color: var(--blue-text); }
+.status-rejected { background: var(--red-bg);   color: var(--red-text); }
 .order-card-body { padding: 12px 14px; display: none; border-top: 1px solid var(--border); }
 .order-card-body.open { display: block; }
 .order-line { display: flex; justify-content: space-between; align-items: flex-start; font-size: 13px; padding: 7px 0; border-bottom: 1px solid var(--border); gap: 10px; }
