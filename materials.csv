@@ -85,17 +85,17 @@ SL0340,80mm Solid Round bar Teflon White,Teflon,Round Bar,Length
 SL0341,8mm x 1.5 x 3m Mill Plate 316  S/S,Stainless Steel,Plate,Each
 SL0342,10mm x 1.5 x 3m Mill Plate 316 S/S,Stainless Steel,Plate,Each
 SL0343,12mm x 1.5 x 3m Mill Plate 316 S/S,Stainless Steel,Plate,Each
-SL0344,89mm x 35mm Hollow bar Bronze LG2,Bronze,Hollow Bar,Length
-SL0345,104mm x 50mm hollow bar Bronze LG2,Bronze,Hollow Bar,Length
-SL0346,75mm x 25mm hollow bar Bronze LG2,Bronze,Hollow Bar,Length
-SL0347,"2"" Solid Round Bar Bronze LG2",Bronze,Round Bar,Length
-SL0348,121mm x 58 Hollow Bar Bronze LG2,Bronze,Hollow Bar,Length
+SL0344,89mm x 35mm Hollow bar Bronze LG2,Bronze,Hollow Bar,Metre
+SL0345,104mm x 50mm hollow bar Bronze LG2,Bronze,Hollow Bar,Metre
+SL0346,75mm x 25mm hollow bar Bronze LG2,Bronze,Hollow Bar,Metre
+SL0347,"2"" Solid Round Bar Bronze LG2",Bronze,Round Bar,Metre
+SL0348,121mm x 58 Hollow Bar Bronze LG2,Bronze,Hollow Bar,Metre
 SL0349,90mm Solid Round Bar 6060 Aluminium,Aluminium,Round Bar,Length
 SL0350,90mm Solid Round Bar Teflon White,Teflon,Round Bar,Length
 SL0351,"4.5"" x 6m Solid round bar 316 S/S",Stainless Steel,Round Bar,Length
 SL0352,100mm Solid Round Bar 6060 Aluminium,Aluminium,Round Bar,Length
-SL0353,127x 63 Hollow Bar Bronze LG2,Bronze,Hollow Bar,Length
-SL0354,114 x 38.1 Hollow Bar Bronze LG2,Bronze,Hollow Bar,Length
+SL0353,127x 63 Hollow Bar Bronze LG2,Bronze,Hollow Bar,Metre
+SL0354,114 x 38.1 Hollow Bar Bronze LG2,Bronze,Hollow Bar,Metre
 SL0355,4mm 1.5 x 3m Plate 5005 Aluminium,Aluminium,Plate,Each
 SL0356,12mm x 6m Solid Round Bar 316 S/S,Stainless Steel,Round Bar,Length
 SL0357,50.80mm Solid Hex Bar 316 S/S,Stainless Steel,Hex Bar,Length
@@ -110,13 +110,13 @@ SL0366,4mm x 1.5 x 3m Mirror Sheet 316 S/S,Stainless Steel,Plate,Each
 SL0367,5mm x 1.5 x 3m Mirror Plate 316 S/S,Stainless Steel,Plate,Each
 SL0368,12mm x 1.5 x 3m Mirror Plate 316 S/S,Stainless Steel,Plate,Each
 SL0390,55mm Solid Round Bar 6060 Aluminium,Aluminium,Round Bar,Length
-SL0600,"1 1/8"" Solid Bar Bronze LG2",Bronze,Round Bar,Length
+SL0600,"1 1/8"" Solid Bar Bronze LG2",Bronze,Round Bar,Metre
 SL0603,6mm x 1.2 x 2.4m Plate 5083 Aluminium,Aluminium,Plate,Each
 SL0641,"3/8"" x 1.6 x 6m Seamless tube 316 S/S",Stainless Steel,Tube,Length
 SL0673,"1"" x 6m SCH 80 Seamless Pipe 316 S/S",Stainless Steel,Pipe,Length
 SL0697,50 x 25 x 3mm x 6m Box Section 316 S/S,Stainless Steel,Box Section,Length
 SL0698,75 x 50 x 2mm x 6m Box 316 S/S,Stainless Steel,Box Section,Length
-SL0705,8mm Solid Round Bar Duplex 2205,Duplex,Round Bar,Length
+SL0705,8mm Solid Round Bar Duplex 2205,2205 Duplex,Round Bar,Metre
 SL0707,3mm x 1.5 x 3m Plate 5005 Aluminium,Aluminium,Plate,Each
 SL0716,2mm x 1.2 x 3m Plate 5005 Aluminium,Aluminium,Plate,Each
 SL0717,10mm x 2.4 x 1.2 Mill Plate 316 S/S,Stainless Steel,Plate,Each
@@ -125,10 +125,10 @@ SRL0026,100mm Solid Round Bar Acetal Black,Acetal,Round Bar,Length
 SRL0027,30mm Solid Round Bar Acetal Black,Acetal,Round Bar,Length
 SRL0028,50mm Solid Round Bar Acetal Black (3mtr lengths),Acetal,Round Bar,Length
 SRL0029,50mm x 100mm x 900mm Black Acetal Sheet,Acetal,Sheet,Each
-SRL0032,20mm Solid Bar Duplex 2205,Duplex,Round Bar,Length
+SRL0032,20mm Solid Bar Duplex 2205,2205 Duplex,Round Bar,Metre
 SRL0034,150mm Solid Round Bar Acetal Black (3mtr lenght),Acetal,Round Bar,Length
 SRL0041,75mm Solid Round Bar Black Acetal,Acetal,Round Bar,Length
-SRL0047,50.8mm Solid Round Bar Duplex 2205,Duplex,Round Bar,Length
+SRL0047,50.8mm Solid Round Bar Duplex 2205,2205 Duplex,Round Bar,Metre
 SRL0048,80 x 63mm  Hollow Bar 316 S/S,Stainless Steel,Hollow Bar,Length
 SRL0049,50 x 25mm Hollow Bar 316 S/S,Stainless Steel,Hollow Bar,Length
 SRL0050,75 x 40mm Hollow Bar 316 S/S,Stainless Steel,Hollow Bar,Length

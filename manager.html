@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="mobile-web-app-capable" content="yes">
   <title>Material Orders — Manager</title>
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.19.0/dist/tabler-icons.min.css">
+  <link rel="stylesheet" href="fonts/tabler-icons.min.css">
   <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
@@ -731,7 +731,9 @@ const Manager = {
         </div>
       </div>`).join('');
 
-    const pendingCats = [...new Set(items.filter(i => !i.emailed).map(i => i.category))];
+    const pendingItems = items.filter(i => !i.emailed);
+    const emailedItems = items.filter(i =>  i.emailed);
+    const pendingCats  = [...new Set(pendingItems.map(i => i.category))];
     // Always show reject/delete for empty orders or rejected orders
     const catEmailBtns = isRejected ? `
       <span class="status-pill status-rejected"><i class="ti ti-ban"></i> Rejected</span>
