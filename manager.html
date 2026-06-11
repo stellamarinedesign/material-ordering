@@ -417,7 +417,7 @@ const Manager = {
                 </div>`).join('')}`;
             }
 
-            const isSingle = visibleLines.length === 1 && excludedLines.length === 0;
+            const isSingle = visibleLines.length === 1;
             const singleLine = visibleLines[0];
             const totalQty = visibleLines.reduce((s,l)=>s+l.qty,0);
 
@@ -427,7 +427,7 @@ const Manager = {
               const displayDevice = mergedDev === '__merged__'
                 ? '<span style="font-size:10px;color:var(--green-text);font-family:var(--mono);background:var(--green-bg);padding:1px 6px;border-radius:20px">Merged</span>'
                 : singleLine.deviceName
-                  ? `<span style="font-size:11px;color:var(--text3);font-family:var(--mono)">${esc(singleLine.deviceName)}</span>`
+                  ? `<span style="font-size:11px;color:var(--text3);font-family:var(--mono)">${esc(singleLine.deviceName)}</span>${singleLine.submittedAt ? `<span style="opacity:0.6;margin-left:4px;font-size:11px;font-family:var(--mono)">${fmtTime(singleLine.submittedAt)}</span>` : ''}`
                   : '';
               return `<div class="combined-main-row">
                 <div class="combined-main-info">
