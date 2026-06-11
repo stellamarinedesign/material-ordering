@@ -417,40 +417,49 @@ const Manager = {
                 </div>`).join('')}`;
             }
 
-            const isSingle = visibleLines.length === 1;
-            const singleLine = visibleLines[0];
+            // originallyHadSingleLine: this partCode came from exactly one order
+            // We use pGroup.lines.length (all lines, not just visible) so the layout
+            // stays as a top-level row even after that one line is excluded.
+            const originallyHadSingleLine = pGroup.lines.length === 1;
+            const singleLine = pGroup.lines[0];  // only used in the single-line branch
             const totalQty = visibleLines.reduce((s,l)=>s+l.qty,0);
 
-            if (isSingle) {
-              // Check if this single line was previously merged
-              const mergedDev = singleLine.mergedDeviceName;
+            if (originallyHadSingleLine) {
+              // Single-order item — render as one top-level row.
+              // If excluded, grey the whole row and swap controls for a Restore button.
+              const isExc = excludedLines.length === 1;
+              const line = singleLine;
+              const mergedDev = line.mergedDeviceName;
               const displayDevice = mergedDev === '__merged__'
                 ? '<span style="font-size:10px;color:var(--green-text);font-family:var(--mono);background:var(--green-bg);padding:1px 6px;border-radius:20px">Merged</span>'
-                : singleLine.deviceName
-                  ? `<span style="font-size:11px;color:var(--text3);font-family:var(--mono)">${esc(singleLine.deviceName)}</span>${singleLine.submittedAt ? `<span style="opacity:0.6;margin-left:4px;font-size:11px;font-family:var(--mono)">${fmtTime(singleLine.submittedAt)}</span>` : ''}`
+                : line.deviceName
+                  ? `<span style="font-size:11px;color:var(--text3);font-family:var(--mono)">${esc(line.deviceName)}</span>${line.submittedAt ? `<span style="opacity:0.6;margin-left:4px;font-size:11px;font-family:var(--mono)">${fmtTime(line.submittedAt)}</span>` : ''}`
                   : '';
-              return `<div class="combined-main-row">
+              return `<div class="combined-main-row"${isExc ? ' style="opacity:0.35"' : ''}>
                 <div class="combined-main-info">
                   <div class="combined-main-name">${esc(pGroup.description)}</div>
                   <div class="combined-main-code" style="display:flex;align-items:center;gap:4px">
                     <span>${esc(pGroup.partCode)}</span>
-                    ${displayDevice ? `<span style="opacity:0.4">·</span>${displayDevice}` : ''}
+                    ${isExc ? `<span style="opacity:0.4">·</span><span style="font-size:10px;color:var(--text3);font-family:var(--mono)">(excluded)</span>` : displayDevice ? `<span style="opacity:0.4">·</span>${displayDevice}` : ''}
                   </div>
                 </div>
-                <div class="qty-row" style="flex-shrink:0">
-                  <button class="qty-btn" data-cqdec="${esc(cat)}" data-order-id="${esc(singleLine.orderId)}" data-partcode="${esc(pGroup.partCode)}">−</button>
-                  <input class="qty-edit" type="number" min="0" step="1" value="${singleLine.qty}"
-                    id="cqi-${catKey}-${pcSafe}-${esc(singleLine.orderId)}"
-                    data-cqchange="${esc(cat)}" data-order-id="${esc(singleLine.orderId)}" data-partcode="${esc(pGroup.partCode)}">
-                  <button class="qty-btn" data-cqinc="${esc(cat)}" data-order-id="${esc(singleLine.orderId)}" data-partcode="${esc(pGroup.partCode)}">+</button>
-                </div>
-                <span style="font-size:11px;color:var(--text3);font-family:var(--mono);margin-left:4px;min-width:40px">${esc(pGroup.qtyType||'')}</span>
-                <button class="btn-sm btn-sm-danger" data-comb-del="${esc(cat)}" data-order-id="${esc(singleLine.orderId)}" data-partcode="${esc(pGroup.partCode)}" style="font-size:11px;padding:3px 6px" title="Exclude from email">
-                  <i class="ti ti-eye-off"></i>
-                </button>
+                ${isExc
+                  ? `<button class="btn-sm" data-unexclude="${esc(cat)}" data-order-id="${esc(line.orderId)}" data-partcode="${esc(pGroup.partCode)}" style="font-size:10px;padding:2px 6px;flex-shrink:0">Restore</button>`
+                  : `<div class="qty-row" style="flex-shrink:0">
+                      <button class="qty-btn" data-cqdec="${esc(cat)}" data-order-id="${esc(line.orderId)}" data-partcode="${esc(pGroup.partCode)}">−</button>
+                      <input class="qty-edit" type="number" min="0" step="1" value="${line.qty}"
+                        id="cqi-${catKey}-${pcSafe}-${esc(line.orderId)}"
+                        data-cqchange="${esc(cat)}" data-order-id="${esc(line.orderId)}" data-partcode="${esc(pGroup.partCode)}">
+                      <button class="qty-btn" data-cqinc="${esc(cat)}" data-order-id="${esc(line.orderId)}" data-partcode="${esc(pGroup.partCode)}">+</button>
+                    </div>
+                    <span style="font-size:11px;color:var(--text3);font-family:var(--mono);margin-left:4px;min-width:40px">${esc(pGroup.qtyType||'')}</span>
+                    <button class="btn-sm btn-sm-danger" data-comb-del="${esc(cat)}" data-order-id="${esc(line.orderId)}" data-partcode="${esc(pGroup.partCode)}" style="font-size:11px;padding:3px 6px" title="Exclude from email">
+                      <i class="ti ti-eye-off"></i>
+                    </button>`
+                }
               </div>`;
             } else {
-              // Multiple orders for this partCode — show parent + sub-rows
+              // Multiple orders for this partCode — show parent row + visible sub-rows + excluded sub-rows
               const mainRow = `<div class="combined-main-row">
                 <div class="combined-main-info">
                   <div class="combined-main-name">${esc(pGroup.description)}</div>
@@ -463,7 +472,7 @@ const Manager = {
                   </button>
                 </div>
               </div>`;
-              const subRows = pGroup.lines.map(line => `
+              const subRows = visibleLines.map(line => `
                 <div class="combined-sub-row">
                   <div class="combined-sub-device">
                     <i class="ti ti-device-ipad" style="font-size:11px;color:var(--text3)"></i>
@@ -496,7 +505,7 @@ const Manager = {
             }
           }).join('');
 
-          return `<div style="border-bottom:1px solid var(--border)">
+          return `<div style="border-bottom:2px solid var(--border)">
             <div class="combined-header" data-comb-cat="${esc(cat)}">
               <div style="display:flex;align-items:center;gap:8px">
                 <i class="ti ${CAT_ICONS[cat]?.icon||'ti-package'}" style="color:${CAT_ICONS[cat]?.color||'#6b7280'}"></i>
