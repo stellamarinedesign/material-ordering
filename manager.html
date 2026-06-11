@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="mobile-web-app-capable" content="yes">
   <title>Material Orders — Manager</title>
+  <link rel="icon" type="image/png" href="favicon.png">
   <link rel="stylesheet" href="fonts/tabler-icons.min.css">
   <link rel="stylesheet" href="css/style.css">
 </head>
@@ -32,22 +33,27 @@ const Manager = {
   _combMerged: new Map(),
 
   mainTab:   'queue',
-  materials: [],
+  materials:    [],
+  consumables:  [],
+  activeType: 'materials',   // 'materials' | 'consumables'
   activeCat: null,
   activeSub: null,
   orderRef:  '',
   _cats:     [],
   _subs:     [],
-  _no:       { _items: {} },
+  _no:       { _items: {} },  // materials cart
+  _noC:      { _items: {} },  // consumables cart
   _pendingEmailMeta: null,
   _noEmailCategory:  null,
+  _noEmailOrderType: null,
 
   async init() {
     const cfg = FirebaseConfig.get();
     if (!cfg) { this.showSetup(); return; }
     const ok = await DB.init(cfg);
     if (!ok) { this.showSetup('Could not connect. Check your Firebase config.'); return; }
-    this.materials = await Data.load('./materials.csv');
+    this.materials    = await Data.load('./materials.csv');
+    this.consumables  = await Data.loadConsumables('./consumables.csv');
     this.orderRef  = genRef();
     this.renderShell();
     const verEl = document.getElementById('app-version');
@@ -81,7 +87,8 @@ const Manager = {
     const ok=await DB.init(cfg);
     if (!ok) { this.showSetup('Connection failed.'); return; }
     FirebaseConfig.save(cfg);
-    this.materials=await Data.load('./materials.csv');
+    this.materials    = await Data.load('./materials.csv');
+    this.consumables  = await Data.loadConsumables('./consumables.csv');
     this.orderRef=genRef();
     this.renderShell();
     const verEl=document.getElementById('app-version'); if(verEl) verEl.textContent=APP_VERSION;
@@ -157,6 +164,7 @@ const Manager = {
 
         <!-- NEW ORDER VIEW -->
         <div id="view-new-order" style="display:none;flex:1;flex-direction:column;overflow:hidden;min-height:0">
+          <div id="no-type-wrap"></div>
           <div id="no-tabs-wrap"></div>
           <div class="search-bar"><div class="col"><div class="search-wrap">
             <i class="ti ti-search"></i>
@@ -164,7 +172,7 @@ const Manager = {
           </div></div></div>
           <div class="app-scroll" id="no-scroll"><div class="col"><div class="mat-list" id="no-mat-list"></div></div></div>
           <div class="action-bar"><div class="action-bar-inner">
-            <button class="btn btn-primary" id="btn-no-review"><i class="ti ti-clipboard-list"></i>Review &amp; compose email</button>
+            <button class="btn btn-primary" id="btn-no-review"><i class="ti ti-clipboard-list"></i><span id="btn-no-review-label">Review &amp; compose email</span></button>
           </div></div>
         </div>
 
@@ -275,6 +283,21 @@ const Manager = {
       if (cdec) { e.stopPropagation(); this.stepCombinedSubQty(cdec.dataset.cqdec, cdec.dataset.orderId, cdec.dataset.partcode, -1); }
     }, true);
 
+    // New order type switcher (Materials / Consumables)
+    document.getElementById('no-type-wrap').addEventListener('click', e => {
+      const t = e.target.closest('[data-type]');
+      if (t && t.dataset.type !== this.activeType) {
+        this.activeType = t.dataset.type;
+        this.activeCat  = null;
+        this.activeSub  = null;
+        this.renderNoType();
+        this.renderNoTabs();
+        this.renderNoList();
+        this._updateNoBadge();
+        this._updateNoReviewBtn();
+        const s = document.getElementById('no-scroll'); if (s) s.scrollTop = 0;
+      }
+    });
     // New order tab
     document.getElementById('no-tabs-wrap').addEventListener('click', e => {
       const c = e.target.closest('[data-cat-idx]');
@@ -309,8 +332,10 @@ const Manager = {
 
     this._populateSettings();
     this.renderQueue();
+    this.renderNoType();
     this.renderNoTabs();
     this.renderNoList();
+    this._updateNoReviewBtn();
   },
 
   openPanel(id)  { document.getElementById(id)?.classList.add('open'); },
@@ -674,6 +699,8 @@ const Manager = {
 
   async deleteCombinedLine(cat, orderId, partCode) {
     if (!partCode) return;
+    // Defer confirm out of the click handler to avoid long-task violation
+    await new Promise(r => setTimeout(r, 0));
     if (!confirm(`Remove ${partCode} from this order?`)) return;
     const order = this.orders.find(o => o._id === orderId); if (!order) return;
     const items = order.items.filter(i => !(i.category === cat && i.partCode === partCode && !i.emailed));
@@ -881,7 +908,7 @@ const Manager = {
     }
     const items = Object.values(mergedItems);
     if (!items.length) { alert('No pending items for ' + category); return; }
-    const { subject, body } = buildCategoryEmail(items, category);
+    const { subject, body } = buildCategoryEmail(items, category, 'Material Order');
     const s = Settings.get();
     document.getElementById('email-panel-title').textContent = category;
     document.getElementById('email-to').value      = s.supplierEmail;
@@ -910,10 +937,17 @@ const Manager = {
     // Clear new-order items for this category if applicable
     const nocat = this._noEmailCategory;
     if (nocat) {
-      this.noItems().filter(i => i.category === nocat).forEach(i => { delete this._no._items[i.id]; });
-      this._noEmailCategory = null;
+      const cart = this._noEmailOrderType === 'consumables' ? this._noC : this._no;
+      const mats  = this._noEmailOrderType === 'consumables' ? this.consumables : this.materials;
+      Object.keys(cart._items).forEach(id => {
+        const m = mats.find(x => x.id == id);
+        if (m && m.category === nocat) delete cart._items[id];
+      });
+      this._noEmailCategory  = null;
+      this._noEmailOrderType = null;
       this._updateNoBadge();
       this.renderNoList();
+      this.renderNoType();
       this.orderRef = genRef();
     }
 
@@ -936,19 +970,27 @@ const Manager = {
   // ══════════════════════════════════════════
   // NEW ORDER TAB
   // ══════════════════════════════════════════
-  noGet(id)       { return this._no._items[id]||0; },
-  noSet(id,qty)   { if(qty<=0) delete this._no._items[id]; else this._no._items[id]=qty; },
+
+  // Helpers — operate on whichever cart is active
+  _cart()         { return this.activeType === 'consumables' ? this._noC : this._no; },
+  _activeMats()   { return this.activeType === 'consumables' ? this.consumables : this.materials; },
+  _orderType()    { return this.activeType === 'consumables' ? 'Consumables Order' : 'Material Order'; },
+
+  noGet(id)       { return this._cart()._items[id]||0; },
+  noSet(id,qty)   { if(qty<=0) delete this._cart()._items[id]; else this._cart()._items[id]=qty; },
   noAdj(id,d)     { this.noSet(id, this.noGet(id)+d); this._noChanged(); },
   noSetQty(id,v)  { this.noSet(id, parseInt(v)||0);   this._noChanged(); },
   noQuickAdd(id)  { if(!this.noGet(id)) this.noSet(id,1); this._noChanged(); },
-  noZero(id)      { delete this._no._items[id]; this._noChanged(); },
+  noZero(id)      { delete this._cart()._items[id]; this._noChanged(); },
   noRevAdj(id,d)  { this.noAdj(id,d); },
   noRevSet(id,v)  { this.noSetQty(id,v); },
-  noCount()       { return Object.keys(this._no._items).length; },
+  noCount()       { return Object.keys(this._cart()._items).length; },
   noItems()       {
-    return Object.keys(this._no._items).map(id => {
-      const m = this.materials.find(x => x.id == id);
-      return m ? { ...m, qty: this._no._items[id] } : null;
+    const cart = this._cart();
+    const mats  = this._activeMats();
+    return Object.keys(cart._items).map(id => {
+      const m = mats.find(x => x.id == id);
+      return m ? { ...m, qty: cart._items[id] } : null;
     }).filter(Boolean);
   },
 
@@ -958,13 +1000,37 @@ const Manager = {
   },
   _updateNoBadge() {
     const b = document.getElementById('new-order-badge'); if (!b) return;
-    const n = this.noCount(); b.textContent = n; b.classList.toggle('zero', n === 0);
+    // Badge shows total across both carts
+    const n = Object.keys(this._no._items).length + Object.keys(this._noC._items).length;
+    b.textContent = n; b.classList.toggle('zero', n === 0);
+  },
+  _updateNoReviewBtn() {
+    const lbl = document.getElementById('btn-no-review-label'); if (!lbl) return;
+    lbl.textContent = 'Review & compose email';
+    // Show/hide Add to queue button based on type
+    const addBtn = document.getElementById('btn-no-add-to-orders');
+    if (addBtn) addBtn.style.display = this.activeType === 'consumables' ? 'none' : '';
+  },
+
+  renderNoType() {
+    const wrap = document.getElementById('no-type-wrap'); if (!wrap) return;
+    wrap.innerHTML = `<div class="tabs-bar type-bar"><div class="tabs-inner">
+      <button class="tab type-tab ${this.activeType==='materials'?'active':''}" data-type="materials">
+        <i class="ti ti-ruler-2" style="font-size:13px"></i> Materials
+        ${Object.keys(this._no._items).length > 0 ? `<span class="sidebar-count" style="margin-left:4px">${Object.keys(this._no._items).length}</span>` : ''}
+      </button>
+      <button class="tab type-tab ${this.activeType==='consumables'?'active':''}" data-type="consumables">
+        <i class="ti ti-package" style="font-size:13px"></i> Consumables
+        ${Object.keys(this._noC._items).length > 0 ? `<span class="sidebar-count" style="margin-left:4px">${Object.keys(this._noC._items).length}</span>` : ''}
+      </button>
+    </div></div>`;
   },
 
   renderNoTabs() {
     const wrap = document.getElementById('no-tabs-wrap'); if (!wrap) return;
-    this._cats = Data.categories(this.materials);
-    this._subs = this.activeCat ? Data.subcategories(this.materials, this.activeCat) : [];
+    const mats = this._activeMats();
+    this._cats = Data.categories(mats);
+    this._subs = this.activeCat ? Data.subcategories(mats, this.activeCat) : [];
     const catBtns = this._cats.map((c,i) => `<button class="tab ${this.activeCat===c?'active':''}" data-cat-idx="${i}">${esc(c)}</button>`).join('');
     let subHtml = '';
     if (this.activeCat && this._subs.length) {
@@ -979,18 +1045,24 @@ const Manager = {
 
   renderNoList() {
     const q = document.getElementById('no-search')?.value || '';
-    const filtered = Data.filter(this.materials, this.activeCat, this.activeSub, q);
+    const mats = this._activeMats();
+    const filtered = Data.filter(mats, this.activeCat, this.activeSub, q);
     const list = document.getElementById('no-mat-list'); if (!list) return;
-    if (!filtered.length) { list.innerHTML = `<div class="empty-state"><i class="ti ti-package-off"></i><p>No materials found.</p></div>`; return; }
+    const isConsumables = this.activeType === 'consumables';
+    if (!filtered.length) {
+      list.innerHTML = `<div class="empty-state"><i class="ti ti-package-off"></i><p>No ${isConsumables ? 'consumables' : 'materials'} found.</p></div>`;
+      return;
+    }
     list.innerHTML = filtered.map(m => {
       const qty = this.noGet(m.id), inOrder = qty > 0;
       const ci = CAT_ICONS[m.category] || CAT_ICONS.default;
+      const showCode = m.partCode && !Data.isDummyCode(m.partCode);
       return `<div class="mat-card ${inOrder?'in-order':''}">
         <button class="mat-bin" data-bin="${m.id}"><i class="ti ti-trash"></i></button>
         <div class="mat-icon" style="background:${ci.bg}"><i class="ti ${ci.icon}" style="color:${ci.color}"></i></div>
         <div class="mat-info">
           <div class="mat-name">${esc(m.description)}</div>
-          <div class="mat-partcode">${esc(m.partCode)}</div>
+          ${showCode ? `<div class="mat-partcode">${esc(m.partCode)}</div>` : '<div class="mat-partcode"></div>'}
           <div class="mat-unit">${esc(m.qtyType||'')}</div>
         </div>
         <div class="mat-controls">
@@ -1011,13 +1083,16 @@ const Manager = {
   _renderNoReview() {
     const wrap = document.getElementById('no-review-contents'); if (!wrap) return;
     const items = this.noItems();
+    const isConsumables = this.activeType === 'consumables';
     if (!items.length) { wrap.innerHTML = `<div class="empty-state"><i class="ti ti-clipboard"></i><p>No items.</p></div>`; return; }
-    wrap.innerHTML = items.map(i => `
+    wrap.innerHTML = items.map(i => {
+      const showCode = i.partCode && !Data.isDummyCode(i.partCode);
+      return `
       <div class="order-item">
         <div class="order-item-row">
           <div>
             <div class="order-item-name">${esc(i.description)}</div>
-            <div class="order-item-code">${esc(i.partCode)}</div>
+            ${showCode ? `<div class="order-item-code">${esc(i.partCode)}</div>` : ''}
             <div class="order-item-unit">${esc(i.qtyType||'')}</div>
           </div>
           <div class="order-item-qty">× ${i.qty}</div>
@@ -1028,7 +1103,8 @@ const Manager = {
           <button class="qty-btn" data-rinc="${i.id}">+</button>
           <button class="remove-btn" data-rrem="${i.id}"><i class="ti ti-x"></i> Remove</button>
         </div>
-      </div>`).join('') + `
+      </div>`;
+    }).join('') + `
       <div class="order-summary-card">
         <div class="order-summary-row total">
           <span>Total items</span>
@@ -1042,24 +1118,30 @@ const Manager = {
         <i class="ti ti-mail"></i> Email — ${esc(cat)}
       </button>`).join('') + `
       <button class="btn btn-danger" id="btn-no-clear-inner"><i class="ti ti-x"></i> Clear order</button>`;
+    // Show/hide Add to queue
+    const addBtn = document.getElementById('btn-no-add-to-orders');
+    if (addBtn) addBtn.style.display = isConsumables ? 'none' : '';
     document.getElementById('btn-no-clear-inner').addEventListener('click', () => {
       if (!confirm('Clear all items?')) return;
-      this._no._items = {}; this._updateNoBadge(); this.renderNoList(); this.closePanel('no-review-panel');
+      const cart = this._cart(); cart._items = {};
+      this._updateNoBadge(); this.renderNoList(); this.renderNoType(); this.closePanel('no-review-panel');
     });
   },
 
   noOpenCategoryEmail(category) {
     const items = this.noItems().filter(i => i.category === category);
     if (!items.length) return;
-    const { subject, body } = buildCategoryEmail(items, category);
+    const orderType = this._orderType();
+    const { subject, body } = buildCategoryEmail(items, category, orderType);
     const s = Settings.get();
-    document.getElementById('email-panel-title').textContent = category;
+    document.getElementById('email-panel-title').textContent = `${orderType} — ${category}`;
     document.getElementById('email-to').value      = s.supplierEmail;
     document.getElementById('email-cc').value      = s.ccEmail;
     document.getElementById('email-subject').value = subject;
     document.getElementById('email-body').value    = body;
     this._pendingEmailMeta  = null;
     this._noEmailCategory   = category;
+    this._noEmailOrderType  = this.activeType;
     this.closePanel('no-review-panel');
     this.openPanel('email-panel');
   },
@@ -1069,22 +1151,22 @@ const Manager = {
   // ══════════════════════════════════════════
   async noAddToOrders() {
     if (this.noCount() === 0) { alert('No items on this order.'); return; }
+    const s = Settings.get();
+    const deviceName = (s.managerName || 'Manager').trim() || 'Manager';
     const items = this.noItems().map(i => ({
       id: i.id, partCode: i.partCode, description: i.description,
       category: i.category, subcategory: i.subcategory,
       qtyType: i.qtyType || '', qty: i.qty,
     }));
     try {
-      await DB.submitOrder({ ref: this.orderRef, deviceName: 'Manager', items });
-      // Clear the new order
+      await DB.submitOrder({ ref: this.orderRef, deviceName, items });
       this._no._items = {};
       this.orderRef = genRef();
       this._updateNoBadge();
       this.renderNoList();
+      this.renderNoType();
       this.closePanel('no-review-panel');
-      // Switch to queue tab so manager can see it
       this.setMainTab('queue');
-      // Show brief confirmation
       const ow = document.getElementById('overlay-wrap');
       ow.innerHTML = `
         <div class="success-overlay">
@@ -1108,6 +1190,15 @@ const Manager = {
     const s = Settings.get();
     const el = document.getElementById('settings-body'); if (!el) return;
     el.innerHTML = `
+      <div class="settings-section">
+        <div class="settings-label">Manager</div>
+        <div class="settings-card">
+          <div class="settings-row">
+            <div><div class="settings-row-label">Manager name</div><div class="settings-row-sub">Used as device name on orders added to queue</div></div>
+            <input type="text" id="s-manager-name" value="${esc(s.managerName||'Manager')}" placeholder="Manager">
+          </div>
+        </div>
+      </div>
       <div class="settings-section">
         <div class="settings-label">Email</div>
         <div class="settings-card">
@@ -1149,11 +1240,12 @@ const Manager = {
           <div class="settings-row" style="flex-direction:column;align-items:flex-start;gap:8px">
             <div class="settings-row-sub">
               Placeholders:
+              <code style="font-family:var(--mono);font-size:11px;background:var(--bg2);padding:1px 4px;border-radius:3px">{orderType}</code>
               <code style="font-family:var(--mono);font-size:11px;background:var(--bg2);padding:1px 4px;border-radius:3px">{date}</code>
               <code style="font-family:var(--mono);font-size:11px;background:var(--bg2);padding:1px 4px;border-radius:3px">{category}</code>
               <code style="font-family:var(--mono);font-size:11px;background:var(--bg2);padding:1px 4px;border-radius:3px">{items}</code>
               <code style="font-family:var(--mono);font-size:11px;background:var(--bg2);padding:1px 4px;border-radius:3px">{closingNote}</code>
-              — all work in subject and body.
+              — all work in subject and body. <code style="font-family:var(--mono);font-size:11px;background:var(--bg2);padding:1px 4px;border-radius:3px">{orderType}</code> resolves to "Material Order" or "Consumables Order" automatically.
             </div>
             <textarea id="s-template" rows="10"
               style="width:100%;border:1px solid var(--border);background:var(--bg);border-radius:var(--radius);
@@ -1202,6 +1294,7 @@ const Manager = {
 
   saveSettings() {
     Settings.save({
+      managerName:    document.getElementById('s-manager-name')?.value.trim(),
       supplierEmail:  document.getElementById('s-supplier')?.value.trim(),
       ccEmail:        document.getElementById('s-cc')?.value.trim(),
       emailSubject:   document.getElementById('s-subject')?.value.trim(),

@@ -1,6 +1,6 @@
-// shared.js — v20
+// shared.js — v21
 
-const APP_VERSION = 'v0.27';
+const APP_VERSION = 'v0.28';
 
 const DEFAULT_MATERIALS = [
   { id:1,  category:'Stainless Steel', subcategory:'Box Section', partCode:'SL0300', description:'100 x 50 x 3mm x 6m Box Section 316 S/S', qtyType:'Length' },
@@ -20,14 +20,20 @@ const DEFAULT_SETTINGS = {
   supplierEmail:  'procurement@supplier.com',
   ccEmail:        'orders@yourcompany.com',
   deliveryNote:   'Please confirm availability and expected delivery date.',
-  emailSubject:   'Material Order - {category} - {date}',
+  emailSubject:   '{orderType} - {category} - {date}',
   emailSignature: '',
-  emailTemplate:  '{date}\r\n\r\n────────────────────────────────────────────────────\r\nMATERIAL ORDER - {category}\r\n────────────────────────────────────────────────────\r\n\r\n{items}\r\n────────────────────────────────────────────────────\r\n{closingNote}',
+  emailTemplate:  '{date}\r\n\r\n────────────────────────────────────────────────────\r\n{orderType} - {category}\r\n────────────────────────────────────────────────────\r\n\r\n{items}\r\n────────────────────────────────────────────────────\r\n{closingNote}',
 };
 
 const CAT_ICONS = {
   'Stainless Steel': { icon:'ti-atom-2',  bg:'#dbeafe', color:'#1d4ed8' },
   'Aluminium':       { icon:'ti-diamond', bg:'#f0fdf4', color:'#15803d' },
+  // Consumable categories
+  'Fasteners':       { icon:'ti-bolt',    bg:'#fef9c3', color:'#a16207' },
+  'Abrasives':       { icon:'ti-ripple',  bg:'#fce7f3', color:'#9d174d' },
+  'Welding':         { icon:'ti-flame',   bg:'#fff7ed', color:'#c2410c' },
+  'Safety':          { icon:'ti-shield-check', bg:'#f0fdf4', color:'#166534' },
+  'Chemicals':       { icon:'ti-flask',   bg:'#faf5ff', color:'#7e22ce' },
   'default':         { icon:'ti-package', bg:'#f3f4f6', color:'#6b7280' },
 };
 
@@ -54,6 +60,9 @@ const Settings = {
 
 const Data = {
   _list: null,
+  _consumablesList: null,
+  // Returns true if the partCode is a dummy/placeholder (SC prefix)
+  isDummyCode(code) { return !code || /^SC\d*/i.test(code.trim()); },
   async load(csvUrl) {
     try {
       const res = await fetch(csvUrl + '?nocache=' + Date.now());
@@ -71,6 +80,24 @@ const Data = {
     try { const c = localStorage.getItem('mo_mat_cache'); if (c) { this._list = JSON.parse(c); return this._list; } } catch {}
     this._list = [...DEFAULT_MATERIALS];
     return this._list;
+  },
+  async loadConsumables(csvUrl) {
+    try {
+      const res = await fetch(csvUrl + '?nocache=' + Date.now());
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const text = await res.text();
+      if (text.trim().startsWith('<')) throw new Error('Got HTML — check file exists in repo');
+      const parsed = this._parseCsv(text);
+      if (parsed.length) {
+        this._consumablesList = parsed;
+        try { localStorage.setItem('mo_cons_cache', JSON.stringify(parsed)); } catch {}
+        return parsed;
+      }
+      throw new Error('CSV parsed to 0 rows');
+    } catch (e) { console.warn('[Consumables] CSV load failed:', e.message); }
+    try { const c = localStorage.getItem('mo_cons_cache'); if (c) { this._consumablesList = JSON.parse(c); return JSON.parse(c); } } catch {}
+    this._consumablesList = [];
+    return [];
   },
   get() { return this._list || [...DEFAULT_MATERIALS]; },
   _parseCsv(text) {
@@ -158,8 +185,9 @@ function fmtTime(ts) {
 }
 
 // Apply all template placeholders to a string (works for both subject and body)
-function applyPlaceholders(str, category, date, items, closingNote) {
+function applyPlaceholders(str, category, date, items, closingNote, orderType) {
   return str
+    .replace(/\{orderType\}/g, orderType || 'Material Order')
     .replace(/\{category\}/g, category || '')
     .replace(/\{date\}/g,     date     || '')
     .replace(/\{items\}/g,    items    || '')
@@ -169,21 +197,27 @@ function applyPlaceholders(str, category, date, items, closingNote) {
 
 // Build email for a single category.
 // items: array of {partCode, description, qtyType, qty} — NOT pre-summed, kept per-order
-function buildCategoryEmail(items, category) {
+// orderType: 'Material Order' | 'Consumables Order'
+function buildCategoryEmail(items, category, orderType) {
   const s        = Settings.get();
+  const type     = orderType || 'Material Order';
   const dateStr  = new Date().toLocaleDateString('en-AU',{day:'2-digit',month:'long',year:'numeric'});
   const dateShort= new Date().toLocaleDateString('en-AU',{day:'2-digit',month:'short',year:'numeric'});
 
-  // Items block — kept per line as passed in (caller controls grouping)
-  const itemsStr = items.map(i=>`${i.partCode} - ${i.description}\r\n  Qty: ${i.qty} ${i.qtyType||''}`).join('\r\n\r\n');
+  // Items block — suppress dummy part codes (SC prefix) from display
+  const itemsStr = items.map(i => {
+    const showCode = i.partCode && !Data.isDummyCode(i.partCode);
+    const codePart = showCode ? `${i.partCode} - ` : '';
+    return `${codePart}${i.description}\r\n  Qty: ${i.qty} ${i.qtyType||''}`;
+  }).join('\r\n\r\n');
 
   const subject = applyPlaceholders(
     s.emailSubject || DEFAULT_SETTINGS.emailSubject,
-    category, dateShort, '', ''
+    category, dateShort, '', '', type
   );
   const body = applyPlaceholders(
     s.emailTemplate || DEFAULT_SETTINGS.emailTemplate,
-    category, `Date: ${dateStr}`, itemsStr, s.deliveryNote
+    category, `Date: ${dateStr}`, itemsStr, s.deliveryNote, type
   );
   // Append signature if set
   const sig = s.emailSignature || '';

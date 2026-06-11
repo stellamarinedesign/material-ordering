@@ -114,10 +114,14 @@ button { cursor: pointer; }
 /* ═══════════════════════════════════════
    TABS
    ═══════════════════════════════════════ */
-.tabs-bar {
-  background: var(--surface); border-bottom: 1px solid var(--border); flex-shrink: 0;
+.tabs-bar { background: var(--surface); border-bottom: 1px solid var(--border); flex-shrink: 0; }
+.tabs-bar.sub-bar  { background: var(--bg); }
+.tabs-bar.type-bar { background: var(--bg2); border-bottom: 2px solid var(--border2); }
+.tab.type-tab {
+  padding: 9px 18px; font-size: 13px; font-weight: 600;
+  display: inline-flex; align-items: center; gap: 6px;
 }
-.tabs-bar.sub-bar { background: var(--bg); }
+.tab.type-tab.active { color: var(--text); border-bottom-color: var(--text); }
 .tabs-inner {
   display: flex; overflow-x: auto; scrollbar-width: none;
   max-width: 900px; margin: 0 auto; padding: 0 4px;
