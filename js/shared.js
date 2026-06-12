@@ -180,6 +180,8 @@ const ConsumablesDeviceName = {
   save(name) { localStorage.setItem(this._key, name.trim()); },
   isSet()    { return !!this.get(); },
 };
+
+const FirebaseConfig = {
   _key: 'mo_firebase_config',
   get()     { try { const s=localStorage.getItem(this._key); return s?JSON.parse(s):null; } catch { return null; } },
   save(cfg) { localStorage.setItem(this._key, JSON.stringify(cfg)); },

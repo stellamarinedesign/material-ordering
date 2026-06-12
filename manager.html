@@ -1244,6 +1244,8 @@ const Manager = {
     this.closePanel('no-review-panel');
     this.openPanel('email-panel');
   },
+
+  noOpenCategoryEmail(category) {
     const items = this.noItems().filter(i => i.category === category);
     if (!items.length) return;
     const orderType = this._orderType();
