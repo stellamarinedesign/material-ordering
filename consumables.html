@@ -1,0 +1,445 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Consumables">
+  <title>Consumables Checkout</title>
+  <link rel="icon" type="image/png" href="favicon.png">
+  <link rel="stylesheet" href="fonts/tabler-icons.min.css">
+  <link rel="stylesheet" href="css/style.css">
+  <style>
+    .cons-stock-badge {
+      font-size: 11px; font-family: var(--mono); padding: 2px 8px;
+      border-radius: 20px; white-space: nowrap; flex-shrink: 0;
+    }
+    .cons-stock-badge.ok       { background: var(--green-bg); color: var(--green-text); }
+    .cons-stock-badge.low      { background: var(--amber-bg); color: var(--amber-text); }
+    .cons-stock-badge.critical { background: var(--red-bg);   color: var(--red-text); }
+    .cons-stock-badge.zero     { background: var(--bg2);      color: var(--text3); }
+    .mat-card.out-of-stock     { opacity: 0.5; pointer-events: none; }
+    .mat-card.out-of-stock .mat-controls { opacity: 0.4; }
+    .checkout-name-bar {
+      background: var(--surface); border-top: 1px solid var(--border);
+      padding: 10px 16px; flex-shrink: 0;
+    }
+    .checkout-name-input {
+      width: 100%; border: 1px solid var(--border); background: var(--bg);
+      border-radius: var(--radius); padding: 8px 12px; font-size: 14px; color: var(--text); outline: none;
+    }
+    .checkout-name-input:focus { border-color: var(--border2); }
+    .checkout-name-label {
+      font-size: 11px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.06em;
+      color: var(--text3); font-family: var(--mono); margin-bottom: 5px;
+    }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+<script src="js/shared.js"></script>
+<script src="js/firebase-sync.js"></script>
+<script>
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.getRegistrations().then(rs => rs.forEach(r => r.unregister()));
+}
+
+const ConsApp = {
+  consumables: [],
+  _stock:      [],       // live from Firestore
+  _unsubStock: null,
+  _items:      {},       // id -> qty in current checkout
+  _stockReady: false,
+
+  async init() {
+    const cfg = FirebaseConfig.get();
+    if (!cfg) { this.showSetup(); return; }
+    const ok = await DB.init(cfg);
+    if (!ok) { this.showSetup('Could not connect. Check your Firebase config.'); return; }
+    this.consumables = await Data.loadConsumables('./consumables.csv');
+    this.renderShell();
+    this.startStockListening();
+  },
+
+  showSetup(err) {
+    document.getElementById('root').innerHTML = `
+      <div class="setup-screen">
+        <div class="setup-card">
+          <h2><i class="ti ti-package" style="color:#6b7280;vertical-align:-2px"></i> Consumables — Setup</h2>
+          <p>Give this device a name, then connect to Firebase.</p>
+          ${err ? `<div style="background:var(--red-bg);color:var(--red-text);border-radius:var(--radius);padding:10px 12px;font-size:13px;margin-bottom:12px">${esc(err)}</div>` : ''}
+          <div class="setup-field"><label>Device Name</label><input id="cfg-device" autocomplete="off" placeholder="e.g. Consumables Store iPad" value="${esc(ConsumablesDeviceName.get())}"></div>
+          <div class="setup-field"><label>API Key</label><input id="cfg-apiKey" autocomplete="off" placeholder="AIzaSy..."></div>
+          <div class="setup-field"><label>Project ID</label><input id="cfg-projectId" autocomplete="off" placeholder="my-project-id"></div>
+          <div class="setup-field"><label>App ID</label><input id="cfg-appId" autocomplete="off" placeholder="1:123456:web:abc..."></div>
+          <button id="btn-connect" class="btn btn-primary" style="margin-top:8px"><i class="ti ti-plug"></i> Connect</button>
+          <div class="setup-note" style="margin-top:14px">Same Firebase config as the manager page. See README.md.</div>
+        </div>
+      </div>`;
+    document.getElementById('btn-connect').addEventListener('click', () => this.saveConfig());
+  },
+
+  async saveConfig() {
+    const device = document.getElementById('cfg-device').value.trim();
+    const apiKey = document.getElementById('cfg-apiKey').value.trim();
+    const projectId = document.getElementById('cfg-projectId').value.trim();
+    const appId = document.getElementById('cfg-appId').value.trim();
+    if (!device) { alert('Please enter a device name.'); return; }
+    if (!apiKey || !projectId || !appId) { alert('Please fill in all Firebase fields.'); return; }
+    ConsumablesDeviceName.save(device);
+    const cfg = { apiKey, projectId, appId, authDomain:`${projectId}.firebaseapp.com`, storageBucket:`${projectId}.appspot.com`, messagingSenderId:'000000000000' };
+    const ok = await DB.init(cfg);
+    if (!ok) { this.showSetup('Connection failed. Check your config.'); return; }
+    FirebaseConfig.save(cfg);
+    this.consumables = await Data.loadConsumables('./consumables.csv');
+    this.renderShell();
+    this.startStockListening();
+  },
+
+  renderShell() {
+    const deviceName = ConsumablesDeviceName.get();
+    document.getElementById('root').innerHTML = `
+      <div class="app-root" id="app-root">
+        <div class="header">
+          <div class="col"><div class="header-inner">
+            <div class="header-left">
+              <div class="header-title">Consumables Checkout</div>
+              <div class="header-ref"><span class="live-dot"></span>Live</div>
+            </div>
+            <div class="header-actions">
+              ${deviceName ? `<span class="device-chip"><i class="ti ti-device-ipad" style="font-size:12px"></i> ${esc(deviceName)}</span>` : ''}
+            </div>
+          </div></div>
+        </div>
+
+        <!-- CATEGORY TABS -->
+        <div id="cons-tabs-wrap"></div>
+
+        <!-- SEARCH -->
+        <div class="search-bar"><div class="col"><div class="search-wrap">
+          <i class="ti ti-search"></i>
+          <input type="search" id="cons-search" placeholder="Search consumables…" autocomplete="off">
+        </div></div></div>
+
+        <!-- LIST -->
+        <div class="app-scroll" id="cons-scroll">
+          <div class="col"><div class="mat-list" id="cons-mat-list"></div></div>
+        </div>
+
+        <!-- TRADESMAN NAME BAR -->
+        <div class="checkout-name-bar"><div class="col">
+          <div class="checkout-name-label">Your name</div>
+          <input class="checkout-name-input" type="text" id="cons-tradesman-name" placeholder="Enter your name before checking out…" autocomplete="off">
+        </div></div>
+
+        <!-- ACTION BAR -->
+        <div class="action-bar"><div class="action-bar-inner">
+          <button class="btn btn-primary" id="btn-cons-review">
+            <i class="ti ti-clipboard-check"></i>Review &amp; Check Out
+            <span class="sidebar-count zero" id="cons-badge" style="margin-left:4px">0</span>
+          </button>
+        </div></div>
+
+        <!-- REVIEW PANEL -->
+        <div class="panel" id="cons-review-panel">
+          <div class="panel-header">
+            <button class="back-btn" id="btn-close-cons-review"><i class="ti ti-chevron-left"></i>Back</button>
+            <div class="panel-title">Checkout Review</div>
+            <div class="panel-spacer"></div>
+          </div>
+          <div class="panel-scroll"><div class="panel-col" id="cons-review-contents"></div></div>
+          <div class="action-bar"><div class="action-bar-inner">
+            <button class="btn btn-primary" id="btn-cons-submit">
+              <i class="ti ti-check"></i> Confirm Checkout
+            </button>
+          </div></div>
+        </div>
+      </div>
+      <div id="overlay-wrap"></div>`;
+
+    // Listeners
+    const tabs = document.getElementById('cons-tabs-wrap');
+    tabs.addEventListener('click', e => {
+      const c = e.target.closest('[data-cat-idx]');
+      const s = e.target.closest('[data-sub-idx]');
+      if (c) { const i=+c.dataset.catIdx; this.setCat(i===-1?null:this._cats[i]); }
+      else if (s) { const i=+s.dataset.subIdx; this.setSub(i===-1?null:this._subs[i]); }
+    });
+    document.getElementById('cons-mat-list').addEventListener('click', e => {
+      const dec=e.target.closest('[data-dec]'), inc=e.target.closest('[data-inc]');
+      const add=e.target.closest('[data-add]'), bin=e.target.closest('[data-bin]');
+      if (dec) { e.stopPropagation(); this.adj(+dec.dataset.dec, -1); }
+      if (inc) { e.stopPropagation(); this.adj(+inc.dataset.inc,  1); }
+      if (add) { e.stopPropagation(); this.quickAdd(+add.dataset.add); }
+      if (bin) { e.stopPropagation(); this.zero(+bin.dataset.bin); }
+    });
+    document.getElementById('cons-mat-list').addEventListener('change', e => {
+      const inp = e.target.closest('[data-qid]'); if (inp) this.setQty(+inp.dataset.qid, inp.value);
+    });
+    document.getElementById('cons-search').addEventListener('input', () => this.renderList());
+    document.getElementById('btn-cons-review').addEventListener('click', () => this.openReview());
+    document.getElementById('btn-close-cons-review').addEventListener('click', () => this.closePanel('cons-review-panel'));
+    document.getElementById('btn-cons-submit').addEventListener('click', () => this.submitCheckout());
+    document.getElementById('cons-review-contents').addEventListener('click', e => {
+      const dec=e.target.closest('[data-rdec]'), inc=e.target.closest('[data-rinc]'), rem=e.target.closest('[data-rrem]');
+      if (dec) this.adj(+dec.dataset.rdec, -1);
+      if (inc) this.adj(+inc.dataset.rinc,  1);
+      if (rem) this.zero(+rem.dataset.rrem);
+    });
+    document.getElementById('cons-review-contents').addEventListener('change', e => {
+      const inp = e.target.closest('[data-rqid]'); if (inp) this.setQty(+inp.dataset.rqid, inp.value);
+    });
+
+    this._activeCat = null; this._activeSub = null;
+    this._cats = []; this._subs = [];
+    this.renderTabs();
+    this.renderList();
+  },
+
+  startStockListening() {
+    if (this._unsubStock) this._unsubStock();
+    this._unsubStock = DB.listenStock(records => {
+      this._stock = records;
+      this._stockReady = true;
+      this.renderList();
+      // Re-render review if open
+      if (document.getElementById('cons-review-panel')?.classList.contains('open')) this._renderReview();
+    });
+  },
+
+  _stockFor(sid)   { return this._stock.find(r => r._id === sid) || null; },
+  _availableQty(m) {
+    const rec = this._stockFor(stockId(m));
+    if (!rec?.tracked) return null;   // null = not tracked
+    return rec.qty || 0;
+  },
+  _stockStatus(m) {
+    const rec = this._stockFor(stockId(m));
+    if (!rec?.tracked) return 'untracked';
+    const qty = rec.qty || 0;
+    if (qty <= 0) return 'zero';
+    if (rec.warningQty > 0 && qty <= rec.warningQty) return 'low';
+    return 'ok';
+  },
+
+  // Cart helpers
+  get(id)        { return this._items[id]||0; },
+  set(id,qty)    {
+    const m = this.consumables.find(x=>x.id==id);
+    const avail = m ? this._availableQty(m) : null;
+    if (avail !== null) qty = Math.min(qty, avail);
+    if (qty <= 0) delete this._items[id]; else this._items[id]=qty;
+  },
+  adj(id,d)      { this.set(id, this.get(id)+d); this._changed(); },
+  setQty(id,v)   { this.set(id, parseInt(v)||0); this._changed(); },
+  quickAdd(id)   { if(!this.get(id)) this.set(id,1); this._changed(); },
+  zero(id)       { delete this._items[id]; this._changed(); },
+  count()        { return Object.keys(this._items).length; },
+  items()        {
+    return Object.keys(this._items).map(id => {
+      const m = this.consumables.find(x=>x.id==id);
+      return m ? {...m, qty:this._items[id]} : null;
+    }).filter(Boolean);
+  },
+
+  _changed() {
+    this._updateBadge(); this.renderList();
+    if (document.getElementById('cons-review-panel')?.classList.contains('open')) this._renderReview();
+  },
+  _updateBadge() {
+    const b = document.getElementById('cons-badge'); if (!b) return;
+    const n = this.count(); b.textContent = n; b.classList.toggle('zero', n===0);
+  },
+
+  renderTabs() {
+    const wrap = document.getElementById('cons-tabs-wrap'); if (!wrap) return;
+    // Only show tracked items in tabs
+    const tracked = this.consumables.filter(m => this._stockFor(stockId(m))?.tracked);
+    this._cats = Data.categories(tracked);
+    this._subs = this._activeCat ? Data.subcategories(tracked, this._activeCat) : [];
+    const catBtns = this._cats.map((c,i)=>`<button class="tab ${this._activeCat===c?'active':''}" data-cat-idx="${i}">${esc(c)}</button>`).join('');
+    let subHtml = '';
+    if (this._activeCat && this._subs.length) {
+      const subBtns = this._subs.map((s,i)=>`<button class="tab ${this._activeSub===s?'active':''}" data-sub-idx="${i}">${esc(s)}</button>`).join('');
+      subHtml = `<div class="tabs-bar sub-bar"><div class="tabs-inner"><button class="tab ${!this._activeSub?'active':''}" data-sub-idx="-1">All</button>${subBtns}</div></div>`;
+    }
+    wrap.innerHTML = `<div class="tabs-bar"><div class="tabs-inner"><button class="tab ${!this._activeCat?'active':''}" data-cat-idx="-1">All</button>${catBtns}</div></div>${subHtml}`;
+  },
+
+  setCat(cat) { this._activeCat=cat; this._activeSub=null; this.renderTabs(); this.renderList(); const s=document.getElementById('cons-scroll'); if(s)s.scrollTop=0; },
+  setSub(sub) { this._activeSub=sub; this.renderTabs(); this.renderList(); },
+
+  renderList() {
+    const list = document.getElementById('cons-mat-list'); if (!list) return;
+    const q = (document.getElementById('cons-search')?.value||'').toLowerCase();
+
+    // Only show tracked consumables on the worker page
+    const tracked = this.consumables.filter(m => this._stockFor(stockId(m))?.tracked);
+    let filtered = Data.filter(tracked, this._activeCat, this._activeSub, q);
+
+    // Sort: in-stock first (by status), then zero/out
+    const order = {ok:0, low:1, zero:2};
+    filtered.sort((a,b)=>(order[this._stockStatus(a)]??0)-(order[this._stockStatus(b)]??0)||a.description.localeCompare(b.description));
+
+    if (!filtered.length) {
+      list.innerHTML = `<div class="empty-state"><i class="ti ti-package-off"></i><p>${this._stockReady ? 'No consumables in stock.' : 'Loading stock levels…'}</p></div>`;
+      return;
+    }
+
+    list.innerHTML = filtered.map(m => {
+      const qty    = this.get(m.id);
+      const inOrder= qty > 0;
+      const avail  = this._availableQty(m);
+      const status = this._stockStatus(m);
+      const ci     = CAT_ICONS[m.category] || CAT_ICONS.default;
+      const showCode = m.partCode && !Data.isDummyCode(m.partCode);
+      const isZero = status === 'zero';
+
+      const stockBadgeClass = status==='ok' ? 'ok' : status==='low' ? 'low' : status==='zero' ? 'zero' : 'zero';
+      const stockLabel = avail === null ? '' : isZero ? 'Out of stock' : `${avail} in stock`;
+      const stockBadge = avail !== null
+        ? `<span class="cons-stock-badge ${stockBadgeClass}">${stockLabel}</span>`
+        : '';
+
+      return `<div class="mat-card ${inOrder?'in-order':''} ${isZero?'out-of-stock':''}">
+        <button class="mat-bin" data-bin="${m.id}"><i class="ti ti-trash"></i></button>
+        <div class="mat-icon" style="background:${ci.bg}"><i class="ti ${ci.icon}" style="color:${ci.color}"></i></div>
+        <div class="mat-info">
+          <div class="mat-name">${esc(m.description)}</div>
+          ${showCode ? `<div class="mat-partcode">${esc(m.partCode)}</div>` : '<div class="mat-partcode"></div>'}
+          <div class="mat-unit">${esc(m.qtyType||'')} ${stockBadge}</div>
+        </div>
+        <div class="mat-controls">
+          <button class="qty-btn" data-dec="${m.id}">−</button>
+          <input class="qty-input" type="number" min="0" ${avail!==null?`max="${avail}"`:''}  step="1" value="${qty}" data-qid="${m.id}">
+          <button class="qty-btn" data-inc="${m.id}">+</button>
+          <button class="add-btn ${inOrder?'in-order':''}" data-add="${m.id}"><i class="ti ${inOrder?'ti-check':'ti-plus'}"></i></button>
+        </div>
+      </div>`;
+    }).join('');
+  },
+
+  openReview() {
+    if (this.count()===0) { alert('No items selected.'); return; }
+    this._renderReview();
+    document.getElementById('cons-review-panel')?.classList.add('open');
+  },
+  closePanel(id) { document.getElementById(id)?.classList.remove('open'); },
+
+  _renderReview() {
+    const wrap = document.getElementById('cons-review-contents'); if (!wrap) return;
+    const items = this.items();
+    if (!items.length) { wrap.innerHTML=`<div class="empty-state"><i class="ti ti-clipboard"></i><p>No items.</p></div>`; return; }
+
+    // Warn if any quantity exceeds current stock (race condition safety)
+    const warnings = items.filter(i => {
+      const avail = this._availableQty(i);
+      return avail !== null && i.qty > avail;
+    });
+
+    wrap.innerHTML = (warnings.length ? `
+      <div style="background:var(--amber-bg);border:1px solid var(--amber-text);border-radius:var(--radius);padding:10px 12px;font-size:12px;color:var(--amber-text);margin-bottom:8px">
+        <i class="ti ti-alert-triangle"></i>
+        Some quantities exceed current stock. Please review before confirming.
+      </div>` : '') +
+    items.map(i => {
+      const avail    = this._availableQty(i);
+      const showCode = i.partCode && !Data.isDummyCode(i.partCode);
+      const overLimit= avail !== null && i.qty > avail;
+      return `<div class="order-item" ${overLimit?'style="border-color:var(--amber-text)"':''}>
+        <div class="order-item-row">
+          <div>
+            <div class="order-item-name">${esc(i.description)}</div>
+            ${showCode ? `<div class="order-item-code">${esc(i.partCode)}</div>` : ''}
+            <div class="order-item-unit">${esc(i.qtyType||'')}${avail!==null?` · ${avail} in stock`:''}</div>
+          </div>
+          <div class="order-item-qty">× ${i.qty}</div>
+        </div>
+        <div class="order-item-foot">
+          <button class="qty-btn" data-rdec="${i.id}">−</button>
+          <input class="qty-input" type="number" min="1" ${avail!==null?`max="${avail}"`:''}  step="1" value="${i.qty}" data-rqid="${i.id}">
+          <button class="qty-btn" data-rinc="${i.id}">+</button>
+          <button class="remove-btn" data-rrem="${i.id}"><i class="ti ti-x"></i> Remove</button>
+        </div>
+      </div>`;
+    }).join('') + `
+    <div class="order-summary-card">
+      <div class="order-summary-row total">
+        <span>Total items</span>
+        <span>${items.reduce((s,i)=>s+i.qty,0)} across ${items.length} line${items.length!==1?'s':''}</span>
+      </div>
+    </div>`;
+  },
+
+  async submitCheckout() {
+    const tradesmanName = document.getElementById('cons-tradesman-name')?.value.trim();
+    if (!tradesmanName) { alert('Please enter your name before checking out.'); return; }
+    const items = this.items();
+    if (!items.length) { alert('No items to check out.'); return; }
+
+    // Validate quantities against current stock
+    for (const item of items) {
+      const avail = this._availableQty(item);
+      if (avail !== null && item.qty > avail) {
+        alert(`Not enough stock for "${item.description}". Only ${avail} available.`);
+        return;
+      }
+    }
+
+    const deviceName = ConsumablesDeviceName.get();
+    const by = deviceName ? `${deviceName} — ${tradesmanName}` : tradesmanName;
+
+    const btn = document.getElementById('btn-cons-submit');
+    if (btn) { btn.disabled = true; btn.innerHTML = '<i class="ti ti-loader" style="animation:spin 1s linear infinite"></i> Processing…'; }
+
+    const errors = [];
+    for (const item of items) {
+      try {
+        await DB.adjustStock(stockId(item), item.description, -item.qty, 'checkout', by);
+      } catch(e) {
+        if (e.message === 'INSUFFICIENT_STOCK') {
+          errors.push(`${item.description}: insufficient stock`);
+        } else {
+          errors.push(`${item.description}: ${e.message}`);
+        }
+      }
+    }
+
+    if (btn) { btn.disabled = false; btn.innerHTML = '<i class="ti ti-check"></i> Confirm Checkout'; }
+
+    if (errors.length) {
+      alert(`Some items could not be checked out:\n\n${errors.join('\n')}\n\nOther items were processed.`);
+    }
+
+    // Clear only successfully processed items (approximation — clear all then re-add errors)
+    this._items = {};
+    this._changed();
+    this.closePanel('cons-review-panel');
+    if (document.getElementById('cons-tradesman-name')) {
+      document.getElementById('cons-tradesman-name').value = '';
+    }
+
+    if (!errors.length) {
+      const ow = document.getElementById('overlay-wrap');
+      ow.innerHTML = `
+        <div class="success-overlay">
+          <div class="success-card">
+            <div class="success-icon green"><i class="ti ti-circle-check"></i></div>
+            <h3>Checkout complete!</h3>
+            <p>Stock levels have been updated. Thank you, ${esc(tradesmanName)}.</p>
+            <button class="btn btn-primary" id="btn-done-checkout">Done</button>
+          </div>
+        </div>`;
+      document.getElementById('btn-done-checkout').addEventListener('click', () => { ow.innerHTML=''; });
+    }
+  },
+};
+
+document.addEventListener('DOMContentLoaded', () => ConsApp.init());
+</script>
+</body>
+</html>

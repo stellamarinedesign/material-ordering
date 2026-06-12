@@ -47,6 +47,18 @@ const Manager = {
   _noEmailCategory:  null,
   _noEmailOrderType: null,
 
+  // Stock tab state
+  _stock:           [],       // live array from Firestore onSnapshot
+  _unsubStock:      null,
+  _openStockCards:  new Set(),
+
+  // History tab state
+  _historyRecords:  [],
+  _historyLastDoc:  null,
+  _historyHasMore:  false,
+  _historyFilter:   null,     // null = all, or { stockId, itemName }
+  _historyLoading:  false,
+
   async init() {
     const cfg = FirebaseConfig.get();
     if (!cfg) { this.showSetup(); return; }
@@ -59,6 +71,7 @@ const Manager = {
     const verEl = document.getElementById('app-version');
     if (verEl) verEl.textContent = APP_VERSION;
     this.startListening();
+    this.startStockListening();
   },
 
   showSetup(err) {
@@ -93,6 +106,7 @@ const Manager = {
     this.renderShell();
     const verEl=document.getElementById('app-version'); if(verEl) verEl.textContent=APP_VERSION;
     this.startListening();
+    this.startStockListening();
   },
 
   // ══════════════════════════════════════════
@@ -126,6 +140,13 @@ const Manager = {
               <button class="main-tab" id="main-tab-new">
                 <i class="ti ti-plus"></i>New Order
                 <span class="sidebar-count zero" id="new-order-badge">0</span>
+              </button>
+              <button class="main-tab" id="main-tab-stock">
+                <i class="ti ti-package"></i>Stock
+                <span class="sidebar-count zero" id="stock-low-badge">0</span>
+              </button>
+              <button class="main-tab" id="main-tab-history">
+                <i class="ti ti-history"></i>History
               </button>
             </div>
           </div>
@@ -176,8 +197,36 @@ const Manager = {
           </div></div>
         </div>
 
-        <!-- EMAIL PANEL -->
-        <div class="panel" id="email-panel">
+        <!-- STOCK VIEW -->
+        <div id="view-stock" style="display:none;flex:1;flex-direction:column;overflow:hidden;min-height:0">
+          <div id="stock-low-banner" style="display:none" class="low-stock-banner">
+            <i class="ti ti-alert-triangle"></i>
+            <span id="stock-low-text"></span>
+          </div>
+          <div class="search-bar"><div class="col"><div class="search-wrap">
+            <i class="ti ti-search"></i>
+            <input type="search" id="stock-search" placeholder="Search consumables…" autocomplete="off">
+          </div></div></div>
+          <div class="app-scroll" id="stock-scroll">
+            <div id="stock-list" class="stock-list"></div>
+          </div>
+        </div>
+
+        <!-- HISTORY VIEW -->
+        <div id="view-history" style="display:none;flex:1;flex-direction:column;overflow:hidden;min-height:0">
+          <div class="history-filter-bar" id="history-filter-bar">
+            <span style="font-size:12px;color:var(--text2);font-weight:500">Filter:</span>
+            <div class="history-filter-chip" id="history-clear-filter" style="display:none">
+              <i class="ti ti-x"></i><span id="history-filter-label">All items</span>
+            </div>
+            <span id="history-filter-all" style="font-size:12px;color:var(--text3)">All items</span>
+          </div>
+          <div class="app-scroll" id="history-scroll">
+            <div id="history-list" class="history-list"></div>
+          </div>
+        </div>
+
+        <!-- EMAIL PANEL -->        <div class="panel" id="email-panel">
           <div class="panel-header">
             <button class="back-btn" id="btn-close-email"><i class="ti ti-chevron-left"></i>Back</button>
             <div class="panel-title" id="email-panel-title">Order Email</div>
@@ -228,8 +277,10 @@ const Manager = {
     document.getElementById('btn-save-settings')  .addEventListener('click', () => this.saveSettings());
     document.getElementById('btn-close-email')    .addEventListener('click', () => this.closePanel('email-panel'));
     document.getElementById('btn-send-email')     .addEventListener('click', () => this.sendEmail());
-    document.getElementById('main-tab-queue')     .addEventListener('click', () => this.setMainTab('queue'));
-    document.getElementById('main-tab-new')       .addEventListener('click', () => this.setMainTab('new-order'));
+    document.getElementById('main-tab-queue')  .addEventListener('click', () => this.setMainTab('queue'));
+    document.getElementById('main-tab-new')    .addEventListener('click', () => this.setMainTab('new-order'));
+    document.getElementById('main-tab-stock')  .addEventListener('click', () => this.setMainTab('stock'));
+    document.getElementById('main-tab-history').addEventListener('click', () => this.setMainTab('history'));
     document.getElementById('btn-no-review')      .addEventListener('click', () => this.noOpenReview());
     document.getElementById('btn-close-no-review').addEventListener('click', () => this.closePanel('no-review-panel'));
     document.getElementById('btn-no-add-to-orders').addEventListener('click', () => this.noAddToOrders());
@@ -330,6 +381,38 @@ const Manager = {
       const btn = e.target.closest('[data-no-cat]'); if (btn) this.noOpenCategoryEmail(btn.dataset.noCat);
     });
 
+    // Stock list delegated listener
+    document.getElementById('stock-list').addEventListener('click', e => {
+      const hdr      = e.target.closest('[data-stock-hdr]');
+      const enableBtn= e.target.closest('[data-stock-enable]');
+      const disBtn   = e.target.closest('[data-stock-disable]');
+      const intakeBtn= e.target.closest('[data-stock-intake]');
+      const setBtn   = e.target.closest('[data-stock-set]');
+      const histBtn  = e.target.closest('[data-stock-hist]');
+      const saveThresh = e.target.closest('[data-stock-thresh]');
+      if (enableBtn) { e.stopPropagation(); this.stockEnable(enableBtn.dataset.stockEnable); return; }
+      if (disBtn)    { e.stopPropagation(); this.stockDisable(disBtn.dataset.stockDisable); return; }
+      if (intakeBtn) { e.stopPropagation(); this.stockIntake(intakeBtn.dataset.stockIntake); return; }
+      if (setBtn)    { e.stopPropagation(); this.stockSetAbsolute(setBtn.dataset.stockSet); return; }
+      if (histBtn)   { e.stopPropagation(); this.stockOpenHistory(histBtn.dataset.stockHist, histBtn.dataset.stockName); return; }
+      if (saveThresh){ e.stopPropagation(); this.stockSaveThresholds(saveThresh.dataset.stockThresh); return; }
+      if (hdr)       { this.toggleStockCard(hdr.dataset.stockHdr); }
+    });
+    document.getElementById('stock-search').addEventListener('input', () => this.renderStockList());
+
+    // History delegated listener
+    document.getElementById('history-list').addEventListener('click', e => {
+      const more = e.target.closest('[data-hist-more]');
+      if (more) { this._loadHistory(true); }
+    });
+    document.getElementById('history-clear-filter').addEventListener('click', () => {
+      this._historyFilter = null;
+      this._historyRecords = [];
+      this._historyLastDoc = null;
+      this.renderHistoryFilter();
+      this._loadHistory();
+    });
+
     this._populateSettings();
     this.renderQueue();
     this.renderNoType();
@@ -343,11 +426,16 @@ const Manager = {
 
   setMainTab(tab) {
     this.mainTab = tab;
-    const isQ = tab === 'queue';
-    document.getElementById('view-queue')    .style.display = isQ ? 'flex' : 'none';
-    document.getElementById('view-new-order').style.display = isQ ? 'none' : 'flex';
-    document.getElementById('main-tab-queue').classList.toggle('active',  isQ);
-    document.getElementById('main-tab-new')  .classList.toggle('active', !isQ);
+    const views = { queue: 'view-queue', 'new-order': 'view-new-order', stock: 'view-stock', history: 'view-history' };
+    const tabs  = { queue: 'main-tab-queue', 'new-order': 'main-tab-new', stock: 'main-tab-stock', history: 'main-tab-history' };
+    Object.entries(views).forEach(([key, id]) => {
+      const el = document.getElementById(id); if (!el) return;
+      el.style.display = key === tab ? 'flex' : 'none';
+    });
+    Object.entries(tabs).forEach(([key, id]) => {
+      document.getElementById(id)?.classList.toggle('active', key === tab);
+    });
+    if (tab === 'history') this._loadHistory();
   },
 
   // ══════════════════════════════════════════
@@ -939,10 +1027,14 @@ const Manager = {
     if (nocat) {
       const cart = this._noEmailOrderType === 'consumables' ? this._noC : this._no;
       const mats  = this._noEmailOrderType === 'consumables' ? this.consumables : this.materials;
-      Object.keys(cart._items).forEach(id => {
-        const m = mats.find(x => x.id == id);
-        if (m && m.category === nocat) delete cart._items[id];
-      });
+      if (nocat === '__all__') {
+        cart._items = {};  // clear entire consumables cart
+      } else {
+        Object.keys(cart._items).forEach(id => {
+          const m = mats.find(x => x.id == id);
+          if (m && m.category === nocat) delete cart._items[id];
+        });
+      }
       this._noEmailCategory  = null;
       this._noEmailOrderType = null;
       this._updateNoBadge();
@@ -1113,7 +1205,12 @@ const Manager = {
       </div>`;
     const cats = [...new Set(items.map(i => i.category))];
     const btns = document.getElementById('no-email-buttons'); if (!btns) return;
-    btns.innerHTML = cats.map(cat => `
+    const emailAllBtn = isConsumables && cats.length > 1
+      ? `<button class="btn btn-primary" id="btn-no-email-all" style="margin-bottom:6px">
+           <i class="ti ti-mail-forward"></i> Email all consumables
+         </button>`
+      : '';
+    btns.innerHTML = emailAllBtn + cats.map(cat => `
       <button class="btn btn-green" data-no-cat="${esc(cat)}" style="margin-bottom:6px">
         <i class="ti ti-mail"></i> Email — ${esc(cat)}
       </button>`).join('') + `
@@ -1121,6 +1218,9 @@ const Manager = {
     // Show/hide Add to queue
     const addBtn = document.getElementById('btn-no-add-to-orders');
     if (addBtn) addBtn.style.display = isConsumables ? 'none' : '';
+    if (document.getElementById('btn-no-email-all')) {
+      document.getElementById('btn-no-email-all').addEventListener('click', () => this.noOpenBulkConsumablesEmail());
+    }
     document.getElementById('btn-no-clear-inner').addEventListener('click', () => {
       if (!confirm('Clear all items?')) return;
       const cart = this._cart(); cart._items = {};
@@ -1128,7 +1228,22 @@ const Manager = {
     });
   },
 
-  noOpenCategoryEmail(category) {
+  noOpenBulkConsumablesEmail() {
+    const items = this.noItems();
+    if (!items.length) return;
+    const { subject, body } = buildBulkConsumablesEmail(items);
+    const s = Settings.get();
+    document.getElementById('email-panel-title').textContent = 'Consumables Order — All';
+    document.getElementById('email-to').value      = s.supplierEmail;
+    document.getElementById('email-cc').value      = s.ccEmail;
+    document.getElementById('email-subject').value = subject;
+    document.getElementById('email-body').value    = body;
+    this._pendingEmailMeta  = null;
+    this._noEmailCategory   = '__all__';
+    this._noEmailOrderType  = 'consumables';
+    this.closePanel('no-review-panel');
+    this.openPanel('email-panel');
+  },
     const items = this.noItems().filter(i => i.category === category);
     if (!items.length) return;
     const orderType = this._orderType();
@@ -1184,6 +1299,298 @@ const Manager = {
   },
 
   // ══════════════════════════════════════════
+  // STOCK TAB
+  // ══════════════════════════════════════════
+  startStockListening() {
+    if (this._unsubStock) this._unsubStock();
+    this._unsubStock = DB.listenStock(records => {
+      this._stock = records;
+      this.renderStockList();
+      this._updateStockBadge();
+    });
+  },
+
+  // Returns the stock record for a given stockId, or null
+  _stockFor(sid) { return this._stock.find(r => r._id === sid) || null; },
+
+  // Classify a tracked item: 'ok' | 'warning' | 'critical' | 'zero'
+  _stockStatus(rec) {
+    if (!rec || !rec.tracked) return 'untracked';
+    const qty = rec.qty || 0;
+    if (qty <= 0) return 'zero';
+    if (rec.warningQty > 0 && qty <= rec.warningQty) return qty <= (rec.reorderQty||0) ? 'critical' : 'warning';
+    return 'ok';
+  },
+
+  _updateStockBadge() {
+    const low = this.consumables.filter(m => {
+      const rec = this._stockFor(stockId(m));
+      if (!rec || !rec.tracked) return false;
+      return rec.warningQty > 0 && (rec.qty||0) <= rec.warningQty;
+    }).length;
+    const badge = document.getElementById('stock-low-badge');
+    if (badge) { badge.textContent = low; badge.classList.toggle('zero', low === 0); }
+    const banner = document.getElementById('stock-low-banner');
+    const bannerText = document.getElementById('stock-low-text');
+    if (banner && bannerText) {
+      banner.style.display = low > 0 ? 'flex' : 'none';
+      bannerText.textContent = `${low} item${low!==1?'s':''} at or below warning quantity`;
+    }
+  },
+
+  renderStockList() {
+    const list = document.getElementById('stock-list'); if (!list) return;
+    const q = (document.getElementById('stock-search')?.value || '').toLowerCase();
+    let items = [...this.consumables];
+    if (q) items = items.filter(m => m.description.toLowerCase().includes(q) || m.partCode.toLowerCase().includes(q));
+
+    // Sort: critical → warning → zero → ok → untracked
+    const order = { critical:0, warning:1, zero:2, ok:3, untracked:4 };
+    items.sort((a, b) => {
+      const ra = this._stockFor(stockId(a)), rb = this._stockFor(stockId(b));
+      const sa = this._stockStatus(ra), sb = this._stockStatus(rb);
+      return (order[sa]??4) - (order[sb]??4) || a.description.localeCompare(b.description);
+    });
+
+    if (!items.length) { list.innerHTML = `<div class="empty-state"><i class="ti ti-package-off"></i><p>No consumables found.</p></div>`; return; }
+
+    // Group by tracked / untracked with section headers
+    const tracked   = items.filter(m => { const r=this._stockFor(stockId(m)); return r?.tracked; });
+    const untracked = items.filter(m => { const r=this._stockFor(stockId(m)); return !r?.tracked; });
+
+    let html = '';
+    if (tracked.length) {
+      html += `<div class="stock-section-header">Tracked (${tracked.length})</div>`;
+      html += tracked.map(m => this._stockCard(m)).join('');
+    }
+    if (untracked.length) {
+      html += `<div class="stock-section-header" style="margin-top:8px">Not yet tracked (${untracked.length})</div>`;
+      html += untracked.map(m => this._stockCard(m)).join('');
+    }
+    list.innerHTML = html;
+
+    // Re-apply open state
+    for (const sid of this._openStockCards) {
+      const body = document.getElementById(`stock-body-${sid}`);
+      const chev = document.getElementById(`stock-chev-${sid}`);
+      if (body) { body.classList.add('open'); chev?.classList.add('open'); }
+    }
+  },
+
+  _stockCard(m) {
+    const sid  = stockId(m);
+    const rec  = this._stockFor(sid);
+    const tracked = rec?.tracked || false;
+    const status  = this._stockStatus(rec);
+    const qty     = rec?.qty ?? 0;
+    const ci      = CAT_ICONS[m.category] || CAT_ICONS.default;
+    const showCode = m.partCode && !Data.isDummyCode(m.partCode);
+    const isOpen  = this._openStockCards.has(sid);
+
+    const badgeClass = status === 'ok' ? '' : status === 'zero' ? ' zero' : status === 'warning' ? ' warning' : status === 'critical' ? ' critical' : ' zero';
+    const cardClass  = status === 'untracked' ? ' untracked' : status === 'warning' ? ' warning' : status === 'critical' ? ' critical' : status === 'zero' ? ' zero' : '';
+
+    const qtyBadge = tracked
+      ? `<span class="stock-qty-badge${badgeClass}">${qty} ${esc(m.qtyType||'')}</span>`
+      : `<span style="font-size:11px;color:var(--text3);font-family:var(--mono)">Not tracked</span>`;
+
+    const body = tracked ? `
+      <div class="stock-card-body" id="stock-body-${esc(sid)}">
+        <div class="stock-actions">
+          <div class="stock-action-row">
+            <span class="stock-action-label">Add stock</span>
+            <input class="stock-delta-input" type="number" min="1" step="1" placeholder="Qty" id="si-intake-${esc(sid)}">
+            <button class="btn-sm btn-sm-save" data-stock-intake="${esc(sid)}" style="font-size:11px"><i class="ti ti-plus"></i> Intake</button>
+            <button class="btn-sm" data-stock-hist="${esc(sid)}" data-stock-name="${esc(m.description)}" style="font-size:11px;margin-left:auto"><i class="ti ti-history"></i></button>
+          </div>
+          <div class="stock-action-row">
+            <span class="stock-action-label">Set absolute</span>
+            <input class="stock-delta-input" type="number" min="0" step="1" placeholder="Qty" id="si-set-${esc(sid)}">
+            <button class="btn-sm" data-stock-set="${esc(sid)}" style="font-size:11px"><i class="ti ti-pencil"></i> Override</button>
+          </div>
+          <div class="stock-threshold-row">
+            <span class="stock-threshold-label">Warning ≤</span>
+            <input class="stock-threshold-input" type="number" min="0" step="1" value="${rec?.warningQty||0}" id="si-warn-${esc(sid)}">
+            <span class="stock-threshold-label" style="margin-left:8px">Reorder ≤</span>
+            <input class="stock-threshold-input" type="number" min="0" step="1" value="${rec?.reorderQty||0}" id="si-reorder-${esc(sid)}">
+            <button class="btn-sm btn-sm-save" data-stock-thresh="${esc(sid)}" style="font-size:11px;margin-left:auto">Save</button>
+          </div>
+          <div class="stock-action-row" style="border-top:1px solid var(--border);padding-top:8px;margin-top:2px">
+            <button class="btn-sm btn-sm-danger" data-stock-disable="${esc(sid)}" style="font-size:11px;margin-left:auto">Disable tracking</button>
+          </div>
+        </div>
+      </div>` : `
+      <div class="stock-card-body" id="stock-body-${esc(sid)}">
+        <div class="stock-actions">
+          <div class="stock-action-row">
+            <span style="font-size:12px;color:var(--text2);flex:1">Enable tracking to manage stock levels for this item.</span>
+            <input class="stock-delta-input" type="number" min="0" step="1" placeholder="Initial qty" id="si-init-${esc(sid)}" style="width:80px">
+            <button class="btn-sm btn-sm-save" data-stock-enable="${esc(sid)}" style="font-size:11px"><i class="ti ti-check"></i> Enable</button>
+          </div>
+        </div>
+      </div>`;
+
+    return `<div class="stock-card${cardClass}" id="stock-card-${esc(sid)}">
+      <div class="stock-card-header" data-stock-hdr="${esc(sid)}">
+        <div class="stock-card-icon" style="background:${ci.bg}"><i class="ti ${ci.icon}" style="color:${ci.color}"></i></div>
+        <div class="stock-card-info">
+          <div class="stock-card-name">${esc(m.description)}</div>
+          <div class="stock-card-meta">${showCode ? esc(m.partCode)+' · ' : ''}${esc(m.category)} · ${esc(m.subcategory)}</div>
+        </div>
+        ${qtyBadge}
+        <i class="ti ti-chevron-right chevron ${isOpen?'open':''}" id="stock-chev-${esc(sid)}"></i>
+      </div>
+      ${body}
+    </div>`;
+  },
+
+  toggleStockCard(sid) {
+    const body = document.getElementById(`stock-body-${sid}`);
+    const chev = document.getElementById(`stock-chev-${sid}`);
+    if (!body) return;
+    const opening = !body.classList.contains('open');
+    body.classList.toggle('open', opening);
+    chev?.classList.toggle('open', opening);
+    if (opening) this._openStockCards.add(sid); else this._openStockCards.delete(sid);
+  },
+
+  async stockEnable(sid) {
+    const initEl = document.getElementById(`si-init-${sid}`);
+    const initQty = parseInt(initEl?.value || '0') || 0;
+    try {
+      await DB.enableTracking(sid, initQty);
+      if (initQty > 0) {
+        const item = this.consumables.find(m => stockId(m) === sid);
+        const s = Settings.get();
+        const by = (s.managerName || 'Manager').trim() || 'Manager';
+        await DB.adjustStock(sid, item?.description || sid, initQty, 'intake', by);
+      }
+    } catch(e) { alert('Failed to enable tracking: ' + e.message); }
+  },
+
+  async stockDisable(sid) {
+    await new Promise(r => setTimeout(r, 0));
+    if (!confirm('Disable tracking for this item? Stock history will be preserved.')) return;
+    try { await DB.disableTracking(sid); } catch(e) { alert('Failed: ' + e.message); }
+  },
+
+  async stockIntake(sid) {
+    const el = document.getElementById(`si-intake-${sid}`);
+    const delta = parseInt(el?.value || '0');
+    if (!delta || delta <= 0) { alert('Enter a quantity to add.'); return; }
+    const item = this.consumables.find(m => stockId(m) === sid);
+    const s = Settings.get();
+    const by = (s.managerName || 'Manager').trim() || 'Manager';
+    try {
+      await DB.adjustStock(sid, item?.description || sid, delta, 'intake', by);
+      if (el) el.value = '';
+    } catch(e) { alert('Intake failed: ' + e.message); }
+  },
+
+  async stockSetAbsolute(sid) {
+    const el = document.getElementById(`si-set-${sid}`);
+    const newQty = parseInt(el?.value ?? '');
+    if (isNaN(newQty) || newQty < 0) { alert('Enter a valid quantity.'); return; }
+    await new Promise(r => setTimeout(r, 0));
+    if (!confirm(`Set stock to ${newQty}?`)) return;
+    const item = this.consumables.find(m => stockId(m) === sid);
+    const s = Settings.get();
+    const by = (s.managerName || 'Manager').trim() || 'Manager';
+    try {
+      await DB.setStock(sid, item?.description || sid, newQty, by);
+      if (el) el.value = '';
+    } catch(e) { alert('Override failed: ' + e.message); }
+  },
+
+  async stockSaveThresholds(sid) {
+    const warnEl   = document.getElementById(`si-warn-${sid}`);
+    const reordEl  = document.getElementById(`si-reorder-${sid}`);
+    const warnQty  = parseInt(warnEl?.value  || '0') || 0;
+    const reordQty = parseInt(reordEl?.value || '0') || 0;
+    try {
+      await DB.updateThresholds(sid, reordQty, warnQty);
+      const btn = document.querySelector(`[data-stock-thresh="${sid}"]`);
+      if (btn) { btn.textContent = '✓ Saved'; setTimeout(() => btn.textContent = 'Save', 1500); }
+    } catch(e) { alert('Failed to save thresholds: ' + e.message); }
+  },
+
+  stockOpenHistory(sid, itemName) {
+    this._historyFilter = { stockId: sid, itemName };
+    this._historyRecords = [];
+    this._historyLastDoc = null;
+    this.renderHistoryFilter();
+    this.setMainTab('history');
+    this._loadHistory();
+  },
+
+  // ══════════════════════════════════════════
+  // HISTORY TAB
+  // ══════════════════════════════════════════
+  renderHistoryFilter() {
+    const chip  = document.getElementById('history-clear-filter');
+    const label = document.getElementById('history-filter-label');
+    const all   = document.getElementById('history-filter-all');
+    if (!chip || !label || !all) return;
+    if (this._historyFilter) {
+      chip.style.display = 'flex';
+      label.textContent  = this._historyFilter.itemName || this._historyFilter.stockId;
+      all.style.display  = 'none';
+    } else {
+      chip.style.display = 'none';
+      all.style.display  = 'inline';
+    }
+  },
+
+  async _loadHistory(append) {
+    if (this._historyLoading) return;
+    this._historyLoading = true;
+    const list = document.getElementById('history-list'); if (!list) { this._historyLoading=false; return; }
+    if (!append) {
+      this._historyRecords = [];
+      this._historyLastDoc = null;
+      list.innerHTML = `<div class="empty-state"><i class="ti ti-loader" style="animation:spin 1s linear infinite"></i><p>Loading…</p></div>`;
+    }
+    try {
+      const { records, lastDoc, hasMore } = await DB.fetchHistory(
+        this._historyFilter?.stockId || null, 50, append ? this._historyLastDoc : null
+      );
+      if (append) this._historyRecords.push(...records);
+      else        this._historyRecords = records;
+      this._historyLastDoc = lastDoc;
+      this._historyHasMore = hasMore;
+      this.renderHistoryList();
+    } catch(e) {
+      if (list) list.innerHTML = `<div class="empty-state"><i class="ti ti-alert-circle"></i><p>Failed to load history: ${esc(e.message)}</p></div>`;
+    } finally { this._historyLoading = false; }
+  },
+
+  renderHistoryList() {
+    const list = document.getElementById('history-list'); if (!list) return;
+    if (!this._historyRecords.length) {
+      list.innerHTML = `<div class="empty-state"><i class="ti ti-history"></i><p>No history yet.</p></div>`;
+      return;
+    }
+    const rows = this._historyRecords.map(r => {
+      const ts     = r.timestamp?.toDate ? fmtTime(r.timestamp.toDate()) : fmtTime(r.timestamp);
+      const delta  = r.delta >= 0 ? `+${r.delta}` : `${r.delta}`;
+      const dClass = r.delta >= 0 ? 'positive' : 'negative';
+      const action = r.action || 'adjustment';
+      return `<div class="history-row">
+        <span class="history-action-pill ${action}">${action}</span>
+        <span class="history-delta ${dClass}">${delta}</span>
+        <div style="flex:1;min-width:0">
+          <div class="history-item-name">${esc(r.itemName||r.stockId||'')}</div>
+          <div class="history-meta">${esc(r.by||'')}${ts ? ' · '+ts : ''} · now: ${r.newQty??'?'}</div>
+        </div>
+      </div>`;
+    }).join('');
+    const moreBtn = this._historyHasMore
+      ? `<div style="padding:12px;text-align:center"><button class="btn-sm" data-hist-more="1">Load more</button></div>`
+      : '';
+    list.innerHTML = rows + moreBtn;
+  },
+
+  // ══════════════════════════════════════════
   // SETTINGS
   // ══════════════════════════════════════════
   _populateSettings() {
@@ -1213,6 +1620,10 @@ const Manager = {
           <div class="settings-row">
             <div><div class="settings-row-label">Subject template</div><div class="settings-row-sub">{category} {date} available</div></div>
             <input type="text" id="s-subject" value="${esc(s.emailSubject||DEFAULT_SETTINGS.emailSubject)}">
+          </div>
+          <div class="settings-row">
+            <div><div class="settings-row-label">Bulk consumables subject</div><div class="settings-row-sub">Used when emailing all consumables at once</div></div>
+            <input type="text" id="s-bulk-subject" value="${esc(s.bulkConsumablesSubject||DEFAULT_SETTINGS.bulkConsumablesSubject)}">
           </div>
           <div class="settings-row">
             <div><div class="settings-row-label">Closing note</div><div class="settings-row-sub">Added after items</div></div>
@@ -1294,13 +1705,14 @@ const Manager = {
 
   saveSettings() {
     Settings.save({
-      managerName:    document.getElementById('s-manager-name')?.value.trim(),
-      supplierEmail:  document.getElementById('s-supplier')?.value.trim(),
-      ccEmail:        document.getElementById('s-cc')?.value.trim(),
-      emailSubject:   document.getElementById('s-subject')?.value.trim(),
-      deliveryNote:   document.getElementById('s-delivery')?.value.trim(),
-      emailSignature: document.getElementById('s-signature')?.value,
-      emailTemplate:  document.getElementById('s-template')?.value,
+      managerName:            document.getElementById('s-manager-name')?.value.trim(),
+      supplierEmail:          document.getElementById('s-supplier')?.value.trim(),
+      ccEmail:                document.getElementById('s-cc')?.value.trim(),
+      emailSubject:           document.getElementById('s-subject')?.value.trim(),
+      bulkConsumablesSubject: document.getElementById('s-bulk-subject')?.value.trim(),
+      deliveryNote:           document.getElementById('s-delivery')?.value.trim(),
+      emailSignature:         document.getElementById('s-signature')?.value,
+      emailTemplate:          document.getElementById('s-template')?.value,
     });
     const btn = document.getElementById('btn-save-settings');
     if (btn) { btn.textContent = '✓ Saved'; setTimeout(() => btn.textContent = 'Save', 1500); }

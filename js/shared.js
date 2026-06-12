@@ -1,6 +1,6 @@
-// shared.js — v21
+// shared.js — v22
 
-const APP_VERSION = 'v0.28';
+const APP_VERSION = 'v0.29';
 
 const DEFAULT_MATERIALS = [
   { id:1,  category:'Stainless Steel', subcategory:'Box Section', partCode:'SL0300', description:'100 x 50 x 3mm x 6m Box Section 316 S/S', qtyType:'Length' },
@@ -17,12 +17,13 @@ const DEFAULT_MATERIALS = [
 ];
 
 const DEFAULT_SETTINGS = {
-  supplierEmail:  'procurement@supplier.com',
-  ccEmail:        'orders@yourcompany.com',
-  deliveryNote:   'Please confirm availability and expected delivery date.',
-  emailSubject:   '{orderType} - {category} - {date}',
-  emailSignature: '',
-  emailTemplate:  '{date}\r\n\r\n────────────────────────────────────────────────────\r\n{orderType} - {category}\r\n────────────────────────────────────────────────────\r\n\r\n{items}\r\n────────────────────────────────────────────────────\r\n{closingNote}',
+  supplierEmail:        'procurement@supplier.com',
+  ccEmail:              'orders@yourcompany.com',
+  deliveryNote:         'Please confirm availability and expected delivery date.',
+  emailSubject:         '{orderType} - {category} - {date}',
+  bulkConsumablesSubject: '{orderType} - {date}',
+  emailSignature:       '',
+  emailTemplate:        '{date}\r\n\r\n────────────────────────────────────────────────────\r\n{orderType} - {category}\r\n────────────────────────────────────────────────────\r\n\r\n{items}\r\n────────────────────────────────────────────────────\r\n{closingNote}',
 };
 
 const CAT_ICONS = {
@@ -163,7 +164,22 @@ const Order = {
   },
 };
 
-const FirebaseConfig = {
+// Generate a stable Firestore document ID for a consumable item.
+// Uses real part code if available; otherwise slugifies description.
+function stockId(item) {
+  if (item.partCode && !Data.isDummyCode(item.partCode)) {
+    return item.partCode.replace(/[^a-zA-Z0-9_-]/g, '_').toLowerCase();
+  }
+  // Fallback: first 40 chars of slugified description
+  return item.description.toLowerCase().replace(/[^a-z0-9]+/g, '_').slice(0, 40);
+}
+
+const ConsumablesDeviceName = {
+  _key: 'cons_device_name',
+  get()      { return localStorage.getItem(this._key) || ''; },
+  save(name) { localStorage.setItem(this._key, name.trim()); },
+  isSet()    { return !!this.get(); },
+};
   _key: 'mo_firebase_config',
   get()     { try { const s=localStorage.getItem(this._key); return s?JSON.parse(s):null; } catch { return null; } },
   save(cfg) { localStorage.setItem(this._key, JSON.stringify(cfg)); },
@@ -223,6 +239,39 @@ function buildCategoryEmail(items, category, orderType) {
   const sig = s.emailSignature || '';
   const bodyWithSig = sig ? body + '\r\n\r\n' + sig : body;
   return { subject, body: bodyWithSig };
+}
+
+// Build a single bulk email covering ALL consumable items across all categories.
+// items: full array of {partCode, description, category, qtyType, qty}
+function buildBulkConsumablesEmail(items) {
+  const s         = Settings.get();
+  const orderType = 'Consumables Order';
+  const dateStr   = new Date().toLocaleDateString('en-AU',{day:'2-digit',month:'long',year:'numeric'});
+  const dateShort = new Date().toLocaleDateString('en-AU',{day:'2-digit',month:'short',year:'numeric'});
+
+  // Group by category, with a header per category in the body
+  const byCategory = {};
+  for (const i of items) {
+    if (!byCategory[i.category]) byCategory[i.category] = [];
+    byCategory[i.category].push(i);
+  }
+  const itemsStr = Object.entries(byCategory).map(([cat, catItems]) => {
+    const lines = catItems.map(i => {
+      const showCode = i.partCode && !Data.isDummyCode(i.partCode);
+      const codePart = showCode ? `${i.partCode} - ` : '';
+      return `  ${codePart}${i.description}\r\n    Qty: ${i.qty} ${i.qtyType||''}`;
+    }).join('\r\n\r\n');
+    return `── ${cat} ──\r\n\r\n${lines}`;
+  }).join('\r\n\r\n');
+
+  const subjTemplate = s.bulkConsumablesSubject || DEFAULT_SETTINGS.bulkConsumablesSubject;
+  const subject = applyPlaceholders(subjTemplate, '', dateShort, '', '', orderType);
+  const body    = applyPlaceholders(
+    s.emailTemplate || DEFAULT_SETTINGS.emailTemplate,
+    'All Categories', `Date: ${dateStr}`, itemsStr, s.deliveryNote, orderType
+  );
+  const sig = s.emailSignature || '';
+  return { subject, body: sig ? body + '\r\n\r\n' + sig : body };
 }
 
 // Group items by category across orders.
