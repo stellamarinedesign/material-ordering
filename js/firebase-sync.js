@@ -1,4 +1,4 @@
-// firebase-sync.js — v19
+// firebase-sync.js — v20
 let _db = null, _configured = false;
 
 const DB = {
@@ -250,5 +250,18 @@ const DB = {
       lastDoc:  snap.docs[snap.docs.length - 1] || null,
       hasMore:  snap.docs.length === (limitN || 50),
     };
+  },
+
+  // Fetch all records sharing a sessionId (used for whole-session revert/delete)
+  async fetchSessionRecords(sessionId) {
+    if (!this.isReady()) throw new Error('Firebase not initialised');
+    const snap = await _db.collection('stock_history').where('sessionId', '==', sessionId).get();
+    return snap.docs.map(d => ({ _id: d.id, ...d.data() }));
+  },
+
+  // Permanently deletes a single history record (only meaningful for already-reverted records)
+  async deleteHistoryRecord(historyId) {
+    if (!this.isReady()) throw new Error('Firebase not initialised');
+    await _db.collection('stock_history').doc(historyId).delete();
   },
 };

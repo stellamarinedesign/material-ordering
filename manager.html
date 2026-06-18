@@ -35,23 +35,38 @@ const Manager = {
   mainTab:   'queue',
   materials:    [],
   consumables:  [],
-  activeType: 'materials',   // 'materials' | 'consumables'
   activeCat: null,
   activeSub: null,
   orderRef:  '',
   _cats:     [],
   _subs:     [],
-  _no:       { _items: {} },  // materials cart
-  _noC:      { _items: {} },  // consumables cart
+  _no:       { _items: {} },  // materials cart (New Order tab)
   _pendingEmailMeta: null,
   _noEmailCategory:  null,
-  _noEmailOrderType: null,
+
+  // Consumables Order panel state (launched from Stock tab)
+  _co:           { _items: {} },
+  _coActiveCat:  null,
+  _coActiveSub:  null,
+  _coCats:       [],
+  _coSubs:       [],
+  _coEmailCategory: null,
+
+  // Receive Stock panel state
+  _receive:           { _items: {} },
+  _receiveActiveCat:  null,
+  _receiveActiveSub:  null,
+  _receiveCats:       [],
+  _receiveSubs:       [],
 
   // Stock tab state
   _stock:           [],       // live array from Firestore onSnapshot
   _unsubStock:      null,
   _openStockCards:  new Set(),
   _stockActiveCat:  null,     // null = All, '__low__' = low stock virtual tab, or a category name
+  _stockActiveSub:  null,
+  _stockCats:       [],
+  _stockSubs:       [],
 
   // History tab state
   _historyRecords:  [],
@@ -134,22 +149,33 @@ const Manager = {
         <!-- MAIN TABS -->
         <div style="background:var(--surface);border-bottom:1px solid var(--border);flex-shrink:0">
           <div class="col" style="padding:0">
-            <div style="display:flex;overflow-x:auto;scrollbar-width:none">
-              <button class="main-tab active" id="main-tab-queue">
-                <i class="ti ti-inbox"></i>Order Queue
-                <span class="sidebar-count zero" id="queue-pending-badge">0</span>
-              </button>
-              <button class="main-tab" id="main-tab-new">
-                <i class="ti ti-plus"></i>New Order
-                <span class="sidebar-count zero" id="new-order-badge">0</span>
-              </button>
-              <button class="main-tab" id="main-tab-stock">
-                <i class="ti ti-package"></i>Stock
-                <span class="sidebar-count zero" id="stock-low-badge">0</span>
-              </button>
-              <button class="main-tab" id="main-tab-history">
-                <i class="ti ti-history"></i>History
-              </button>
+            <div style="display:flex;overflow-x:auto;scrollbar-width:none;align-items:stretch">
+              <div class="main-tab-group">
+                <div class="main-tab-group-label">Materials</div>
+                <div style="display:flex">
+                  <button class="main-tab active" id="main-tab-queue">
+                    <i class="ti ti-inbox"></i>Order Queue
+                    <span class="sidebar-count zero" id="queue-pending-badge">0</span>
+                  </button>
+                  <button class="main-tab" id="main-tab-new">
+                    <i class="ti ti-plus"></i>New Order
+                    <span class="sidebar-count zero" id="new-order-badge">0</span>
+                  </button>
+                </div>
+              </div>
+              <div class="main-tab-divider"></div>
+              <div class="main-tab-group">
+                <div class="main-tab-group-label">Consumables</div>
+                <div style="display:flex">
+                  <button class="main-tab" id="main-tab-stock">
+                    <i class="ti ti-package"></i>Stock
+                    <span class="sidebar-count zero" id="stock-low-badge">0</span>
+                  </button>
+                  <button class="main-tab" id="main-tab-history">
+                    <i class="ti ti-history"></i>History
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -185,9 +211,8 @@ const Manager = {
           </div>
         </div>
 
-        <!-- NEW ORDER VIEW -->
+        <!-- NEW ORDER VIEW (materials only) -->
         <div id="view-new-order" style="display:none;flex:1;flex-direction:column;overflow:hidden;min-height:0">
-          <div id="no-type-wrap"></div>
           <div id="no-tabs-wrap"></div>
           <div class="search-bar"><div class="col"><div class="search-wrap">
             <i class="ti ti-search"></i>
@@ -195,12 +220,17 @@ const Manager = {
           </div></div></div>
           <div class="app-scroll" id="no-scroll"><div class="col"><div class="mat-list" id="no-mat-list"></div></div></div>
           <div class="action-bar"><div class="action-bar-inner">
-            <button class="btn btn-primary" id="btn-no-review"><i class="ti ti-clipboard-list"></i><span id="btn-no-review-label">Review &amp; compose email</span></button>
+            <button class="btn btn-primary" id="btn-no-review"><i class="ti ti-clipboard-list"></i>Review &amp; compose email</button>
           </div></div>
         </div>
 
         <!-- STOCK VIEW -->
         <div id="view-stock" style="display:none;flex:1;flex-direction:column;overflow:hidden;min-height:0">
+          <div class="stock-action-buttons">
+            <button class="btn-sm btn-sm-save" id="btn-receive-stock"><i class="ti ti-truck-delivery"></i> Receive Stock</button>
+            <button class="btn-sm" id="btn-new-cons-order"><i class="ti ti-plus"></i> New Consumables Order</button>
+            <button class="btn-sm" id="btn-reorder-all" style="display:none;margin-left:auto"><i class="ti ti-refresh"></i> Reorder All</button>
+          </div>
           <div id="stock-low-banner" style="display:none" class="low-stock-banner">
             <i class="ti ti-alert-triangle"></i>
             <span id="stock-low-text"></span>
@@ -218,13 +248,13 @@ const Manager = {
         <!-- HISTORY VIEW -->
         <div id="view-history" style="display:none;flex:1;flex-direction:column;overflow:hidden;min-height:0">
           <div class="history-filter-bar" id="history-filter-bar">
-            <span style="font-size:12px;color:var(--text2);font-weight:500">Filter:</span>
             <div class="history-filter-chip" id="history-clear-filter" style="display:none">
               <i class="ti ti-x"></i><span id="history-filter-label">All items</span>
             </div>
-            <span id="history-filter-all" style="font-size:12px;color:var(--text3)">All items</span>
-            <input type="search" id="history-person-search" placeholder="Filter by name…" autocomplete="off"
-              style="margin-left:auto;width:160px;height:28px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);padding:0 10px;font-size:12px;color:var(--text);outline:none">
+            <input type="search" id="history-item-search" placeholder="Filter by item…" autocomplete="off"
+              style="width:140px;height:28px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);padding:0 10px;font-size:12px;color:var(--text);outline:none">
+            <input type="search" id="history-person-search" placeholder="Filter by checkout name…" autocomplete="off"
+              style="width:160px;height:28px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);padding:0 10px;font-size:12px;color:var(--text);outline:none">
           </div>
           <div class="app-scroll" id="history-scroll">
             <div id="history-list" class="history-list"></div>
@@ -261,6 +291,66 @@ const Manager = {
           </div></div>
         </div>
 
+        <!-- CONSUMABLES ORDER PANEL (launched from Stock tab) -->
+        <div class="panel" id="cons-order-panel">
+          <div class="panel-header">
+            <button class="back-btn" id="btn-close-cons-order"><i class="ti ti-chevron-left"></i>Back</button>
+            <div class="panel-title">New Consumables Order</div>
+            <div class="panel-spacer"></div>
+          </div>
+          <div id="co-tabs-wrap"></div>
+          <div class="search-bar"><div class="col"><div class="search-wrap">
+            <i class="ti ti-search"></i>
+            <input type="search" id="co-search" placeholder="Search part code or description…" autocomplete="off">
+          </div></div></div>
+          <div class="app-scroll" id="co-scroll"><div class="col"><div class="mat-list" id="co-mat-list"></div></div></div>
+          <div class="action-bar"><div class="action-bar-inner">
+            <button class="btn btn-primary" id="btn-co-review"><i class="ti ti-clipboard-list"></i>Review &amp; compose email
+              <span class="sidebar-count zero" id="co-badge" style="margin-left:4px">0</span>
+            </button>
+          </div></div>
+        </div>
+
+        <!-- CONSUMABLES ORDER REVIEW PANEL -->
+        <div class="panel" id="co-review-panel">
+          <div class="panel-header">
+            <button class="back-btn" id="btn-close-co-review"><i class="ti ti-chevron-left"></i>Back</button>
+            <div class="panel-title">Order Confirmation</div>
+            <div class="panel-spacer"></div>
+          </div>
+          <div class="panel-scroll"><div class="panel-col" id="co-review-contents"></div></div>
+          <div class="action-bar"><div class="action-bar-inner">
+            <div id="co-email-buttons"></div>
+          </div></div>
+        </div>
+
+        <!-- RECEIVE STOCK PANEL -->
+        <div class="panel" id="receive-panel">
+          <div class="panel-header">
+            <button class="back-btn" id="btn-close-receive"><i class="ti ti-chevron-left"></i>Back</button>
+            <div class="panel-title">Receive Stock</div>
+            <div class="panel-spacer"></div>
+          </div>
+          <div style="padding:10px 0;background:var(--surface);border-bottom:1px solid var(--border);flex-shrink:0">
+            <div class="col">
+              <div style="font-size:11px;font-weight:500;text-transform:uppercase;letter-spacing:0.06em;color:var(--text3);font-family:var(--mono);margin-bottom:5px">Reference (e.g. invoice or order #)</div>
+              <input type="text" id="receive-reference" placeholder="Invoice #4521 — ABC Fasteners" autocomplete="off"
+                style="width:100%;border:1px solid var(--border);background:var(--bg);border-radius:var(--radius);padding:8px 12px;font-size:14px;color:var(--text);outline:none">
+            </div>
+          </div>
+          <div id="receive-tabs-wrap"></div>
+          <div class="search-bar"><div class="col"><div class="search-wrap">
+            <i class="ti ti-search"></i>
+            <input type="search" id="receive-search" placeholder="Search part code or description…" autocomplete="off">
+          </div></div></div>
+          <div class="app-scroll" id="receive-scroll"><div class="col"><div class="mat-list" id="receive-mat-list"></div></div></div>
+          <div class="action-bar"><div class="action-bar-inner">
+            <button class="btn btn-primary" id="btn-receive-submit"><i class="ti ti-truck-delivery"></i>Confirm Stock Received
+              <span class="sidebar-count zero" id="receive-badge" style="margin-left:4px">0</span>
+            </button>
+          </div></div>
+        </div>
+
         <!-- SETTINGS PANEL -->
         <div class="panel" id="settings-panel">
           <div class="panel-header">
@@ -289,6 +379,72 @@ const Manager = {
     document.getElementById('btn-no-review')      .addEventListener('click', () => this.noOpenReview());
     document.getElementById('btn-close-no-review').addEventListener('click', () => this.closePanel('no-review-panel'));
     document.getElementById('btn-no-add-to-orders').addEventListener('click', () => this.noAddToOrders());
+
+    // Consumables Order panel (launched from Stock tab)
+    document.getElementById('btn-close-cons-order').addEventListener('click', () => this.closePanel('cons-order-panel'));
+    document.getElementById('co-tabs-wrap').addEventListener('click', e => {
+      const c = e.target.closest('[data-co-cat-idx]');
+      const s = e.target.closest('[data-co-sub-idx]');
+      if (c) { const i=+c.dataset.coCatIdx; this.coSetCat(i===-1?null:this._coCats[i]); }
+      else if (s) { const i=+s.dataset.coSubIdx; this.coSetSub(i===-1?null:this._coSubs[i]); }
+    });
+    document.getElementById('co-mat-list').addEventListener('click', e => {
+      const dec=e.target.closest('[data-dec]'), inc=e.target.closest('[data-inc]');
+      const add=e.target.closest('[data-add]'), bin=e.target.closest('[data-bin]');
+      if (dec) { e.stopPropagation(); this.coAdj(+dec.dataset.dec, -1); }
+      if (inc) { e.stopPropagation(); this.coAdj(+inc.dataset.inc,  1); }
+      if (add) { e.stopPropagation(); this.coQuickAdd(+add.dataset.add); }
+      if (bin) { e.stopPropagation(); this.coZero(+bin.dataset.bin); }
+    });
+    document.getElementById('co-mat-list').addEventListener('change', e => {
+      const inp = e.target.closest('[data-qid]'); if (inp) this.coSetQty(+inp.dataset.qid, inp.value);
+    });
+    document.getElementById('co-search').addEventListener('input', () => this.renderCoList());
+    document.getElementById('btn-co-review').addEventListener('click', () => this.coOpenReview());
+    document.getElementById('btn-close-co-review').addEventListener('click', () => this.closePanel('co-review-panel'));
+    document.getElementById('co-review-contents').addEventListener('click', e => {
+      const dec=e.target.closest('[data-rdec]'), inc=e.target.closest('[data-rinc]'), rem=e.target.closest('[data-rrem]');
+      if (dec) this.coAdj(+dec.dataset.rdec, -1);
+      if (inc) this.coAdj(+inc.dataset.rinc,  1);
+      if (rem) this.coZero(+rem.dataset.rrem);
+    });
+    document.getElementById('co-review-contents').addEventListener('change', e => {
+      const inp = e.target.closest('[data-rqid]'); if (inp) this.coSetQty(+inp.dataset.rqid, inp.value);
+    });
+    document.getElementById('co-email-buttons').addEventListener('click', e => {
+      const all = e.target.closest('[data-co-email-all]');
+      const cat = e.target.closest('[data-co-cat]');
+      const clr = e.target.closest('[data-co-clear]');
+      if (all) this.coOpenBulkEmail();
+      else if (cat) this.coOpenCategoryEmail(cat.dataset.coCat);
+      else if (clr) {
+        if (!confirm('Clear all items?')) return;
+        this._co._items = {};
+        this._updateCoBadge(); this.renderCoList(); this.closePanel('co-review-panel');
+      }
+    });
+
+    // Receive Stock panel
+    document.getElementById('btn-close-receive').addEventListener('click', () => this.closePanel('receive-panel'));
+    document.getElementById('receive-tabs-wrap').addEventListener('click', e => {
+      const c = e.target.closest('[data-rc-cat-idx]');
+      const s = e.target.closest('[data-rc-sub-idx]');
+      if (c) { const i=+c.dataset.rcCatIdx; this.receiveSetCat(i===-1?null:this._receiveCats[i]); }
+      else if (s) { const i=+s.dataset.rcSubIdx; this.receiveSetSub(i===-1?null:this._receiveSubs[i]); }
+    });
+    document.getElementById('receive-mat-list').addEventListener('click', e => {
+      const dec=e.target.closest('[data-dec]'), inc=e.target.closest('[data-inc]');
+      const add=e.target.closest('[data-add]'), bin=e.target.closest('[data-bin]');
+      if (dec) { e.stopPropagation(); this.receiveAdj(+dec.dataset.dec, -1); }
+      if (inc) { e.stopPropagation(); this.receiveAdj(+inc.dataset.inc,  1); }
+      if (add) { e.stopPropagation(); this.receiveQuickAdd(+add.dataset.add); }
+      if (bin) { e.stopPropagation(); this.receiveZero(+bin.dataset.bin); }
+    });
+    document.getElementById('receive-mat-list').addEventListener('change', e => {
+      const inp = e.target.closest('[data-qid]'); if (inp) this.receiveSetQty(+inp.dataset.qid, inp.value);
+    });
+    document.getElementById('receive-search').addEventListener('input', () => this.renderReceiveList());
+    document.getElementById('btn-receive-submit').addEventListener('click', () => this.receiveSubmit());
 
     document.querySelectorAll('[data-sb]').forEach(b => b.addEventListener('click', () => this.setView(b.dataset.sb)));
     document.getElementById('mobile-tabs').addEventListener('click', e => {
@@ -339,21 +495,6 @@ const Manager = {
       if (cdec) { e.stopPropagation(); this.stepCombinedSubQty(cdec.dataset.cqdec, cdec.dataset.orderId, cdec.dataset.partcode, -1); }
     }, true);
 
-    // New order type switcher (Materials / Consumables)
-    document.getElementById('no-type-wrap').addEventListener('click', e => {
-      const t = e.target.closest('[data-type]');
-      if (t && t.dataset.type !== this.activeType) {
-        this.activeType = t.dataset.type;
-        this.activeCat  = null;
-        this.activeSub  = null;
-        this.renderNoType();
-        this.renderNoTabs();
-        this.renderNoList();
-        this._updateNoBadge();
-        this._updateNoReviewBtn();
-        const s = document.getElementById('no-scroll'); if (s) s.scrollTop = 0;
-      }
-    });
     // New order tab
     document.getElementById('no-tabs-wrap').addEventListener('click', e => {
       const c = e.target.closest('[data-cat-idx]');
@@ -408,19 +549,39 @@ const Manager = {
     document.getElementById('stock-search').addEventListener('input', () => this.renderStockList());
     document.getElementById('stock-tabs-wrap').addEventListener('click', e => {
       const t = e.target.closest('[data-stock-cat]');
-      if (t) { this._stockActiveCat = t.dataset.stockCat === '__all__' ? null : t.dataset.stockCat; this.renderStockTabs(); this.renderStockList(); }
+      const s = e.target.closest('[data-stock-sub]');
+      if (t) { this._stockActiveCat = t.dataset.stockCat === '__all__' ? null : t.dataset.stockCat; this._stockActiveSub = null; this.renderStockTabs(); this.renderStockList(); }
+      else if (s) { this._stockActiveSub = s.dataset.stockSub === '__all__' ? null : s.dataset.stockSub; this.renderStockTabs(); this.renderStockList(); }
     });
+    document.getElementById('btn-receive-stock').addEventListener('click', () => {
+      this._receive._items = {}; this._receiveActiveCat = null; this._receiveActiveSub = null;
+      document.getElementById('receive-reference').value = '';
+      this.renderReceiveTabs(); this.renderReceiveList(); this._updateReceiveBadge();
+      this.openPanel('receive-panel');
+    });
+    document.getElementById('btn-new-cons-order').addEventListener('click', () => {
+      this.openPanel('cons-order-panel');
+    });
+    document.getElementById('btn-reorder-all').addEventListener('click', () => this.stockReorderAll());
 
     // History delegated listener
     document.getElementById('history-list').addEventListener('click', e => {
-      const more   = e.target.closest('[data-hist-more]');
-      const sess   = e.target.closest('[data-hist-session]');
-      const revert = e.target.closest('[data-hist-revert]');
-      const unrev  = e.target.closest('[data-hist-unrevert]');
-      if (more)   { this._loadHistory(true); return; }
-      if (sess)   { this.toggleHistorySession(sess.dataset.histSession); return; }
-      if (revert) { e.stopPropagation(); this.historyRevert(revert.dataset.histRevert); return; }
-      if (unrev)  { e.stopPropagation(); this.historyUnrevert(unrev.dataset.histUnrevert); return; }
+      const more       = e.target.closest('[data-hist-more]');
+      const sess        = e.target.closest('[data-hist-session]');
+      const revert      = e.target.closest('[data-hist-revert]');
+      const unrev       = e.target.closest('[data-hist-unrevert]');
+      const del         = e.target.closest('[data-hist-delete]');
+      const sessRevert  = e.target.closest('[data-hist-session-revert]');
+      const sessUnrev   = e.target.closest('[data-hist-session-unrevert]');
+      const sessDelete  = e.target.closest('[data-hist-session-delete]');
+      if (more)        { this._loadHistory(true); return; }
+      if (sessRevert)  { e.stopPropagation(); this.historySessionRevert(sessRevert.dataset.histSessionRevert); return; }
+      if (sessUnrev)   { e.stopPropagation(); this.historySessionUnrevert(sessUnrev.dataset.histSessionUnrevert); return; }
+      if (sessDelete)  { e.stopPropagation(); this.historySessionDelete(sessDelete.dataset.histSessionDelete); return; }
+      if (revert)      { e.stopPropagation(); this.historyRevert(revert.dataset.histRevert); return; }
+      if (unrev)       { e.stopPropagation(); this.historyUnrevert(unrev.dataset.histUnrevert); return; }
+      if (del)         { e.stopPropagation(); this.historyDelete(del.dataset.histDelete); return; }
+      if (sess)        { this.toggleHistorySession(sess.dataset.histSession); return; }
     });
     document.getElementById('history-clear-filter').addEventListener('click', () => {
       this._historyFilter = null;
@@ -430,14 +591,17 @@ const Manager = {
       this._loadHistory();
     });
     document.getElementById('history-person-search').addEventListener('input', () => this.renderHistoryList());
+    document.getElementById('history-item-search').addEventListener('input', () => this.renderHistoryList());
 
     this._populateSettings();
     this.renderQueue();
-    this.renderNoType();
     this.renderNoTabs();
     this.renderNoList();
-    this._updateNoReviewBtn();
     this.renderStockTabs();
+    this.renderCoTabs();
+    this.renderCoList();
+    this.renderReceiveTabs();
+    this.renderReceiveList();
   },
 
   openPanel(id)  { document.getElementById(id)?.classList.add('open'); },
@@ -1041,25 +1205,33 @@ const Manager = {
       this._pendingEmailMeta = null;
     }
 
-    // Clear new-order items for this category if applicable
+    // Clear New Order (materials) cart items for this category if applicable
     const nocat = this._noEmailCategory;
     if (nocat) {
-      const cart = this._noEmailOrderType === 'consumables' ? this._noC : this._no;
-      const mats  = this._noEmailOrderType === 'consumables' ? this.consumables : this.materials;
-      if (nocat === '__all__') {
-        cart._items = {};  // clear entire consumables cart
-      } else {
-        Object.keys(cart._items).forEach(id => {
-          const m = mats.find(x => x.id == id);
-          if (m && m.category === nocat) delete cart._items[id];
-        });
-      }
-      this._noEmailCategory  = null;
-      this._noEmailOrderType = null;
+      Object.keys(this._no._items).forEach(id => {
+        const m = this.materials.find(x => x.id == id);
+        if (m && m.category === nocat) delete this._no._items[id];
+      });
+      this._noEmailCategory = null;
       this._updateNoBadge();
       this.renderNoList();
-      this.renderNoType();
       this.orderRef = genRef();
+    }
+
+    // Clear Consumables Order cart items for this category (or all) if applicable
+    const cocat = this._coEmailCategory;
+    if (cocat) {
+      if (cocat === '__all__') {
+        this._co._items = {};
+      } else {
+        Object.keys(this._co._items).forEach(id => {
+          const m = this.consumables.find(x => x.id == id);
+          if (m && m.category === cocat) delete this._co._items[id];
+        });
+      }
+      this._coEmailCategory = null;
+      this._updateCoBadge();
+      this.renderCoList();
     }
 
     this.closePanel('email-panel');
@@ -1079,29 +1251,21 @@ const Manager = {
   },
 
   // ══════════════════════════════════════════
-  // NEW ORDER TAB
+  // NEW ORDER TAB (materials only)
   // ══════════════════════════════════════════
-
-  // Helpers — operate on whichever cart is active
-  _cart()         { return this.activeType === 'consumables' ? this._noC : this._no; },
-  _activeMats()   { return this.activeType === 'consumables' ? this.consumables : this.materials; },
-  _orderType()    { return this.activeType === 'consumables' ? 'Consumables Order' : 'Material Order'; },
-
-  noGet(id)       { return this._cart()._items[id]||0; },
-  noSet(id,qty)   { if(qty<=0) delete this._cart()._items[id]; else this._cart()._items[id]=qty; },
+  noGet(id)       { return this._no._items[id]||0; },
+  noSet(id,qty)   { if(qty<=0) delete this._no._items[id]; else this._no._items[id]=qty; },
   noAdj(id,d)     { this.noSet(id, this.noGet(id)+d); this._noChanged(); },
   noSetQty(id,v)  { this.noSet(id, parseInt(v)||0);   this._noChanged(); },
   noQuickAdd(id)  { if(!this.noGet(id)) this.noSet(id,1); this._noChanged(); },
-  noZero(id)      { delete this._cart()._items[id]; this._noChanged(); },
+  noZero(id)      { delete this._no._items[id]; this._noChanged(); },
   noRevAdj(id,d)  { this.noAdj(id,d); },
   noRevSet(id,v)  { this.noSetQty(id,v); },
-  noCount()       { return Object.keys(this._cart()._items).length; },
+  noCount()       { return Object.keys(this._no._items).length; },
   noItems()       {
-    const cart = this._cart();
-    const mats  = this._activeMats();
-    return Object.keys(cart._items).map(id => {
-      const m = mats.find(x => x.id == id);
-      return m ? { ...m, qty: cart._items[id] } : null;
+    return Object.keys(this._no._items).map(id => {
+      const m = this.materials.find(x => x.id == id);
+      return m ? { ...m, qty: this._no._items[id] } : null;
     }).filter(Boolean);
   },
 
@@ -1111,37 +1275,13 @@ const Manager = {
   },
   _updateNoBadge() {
     const b = document.getElementById('new-order-badge'); if (!b) return;
-    // Badge shows total across both carts
-    const n = Object.keys(this._no._items).length + Object.keys(this._noC._items).length;
-    b.textContent = n; b.classList.toggle('zero', n === 0);
-  },
-  _updateNoReviewBtn() {
-    const lbl = document.getElementById('btn-no-review-label'); if (!lbl) return;
-    lbl.textContent = 'Review & compose email';
-    // Show/hide Add to queue button based on type
-    const addBtn = document.getElementById('btn-no-add-to-orders');
-    if (addBtn) addBtn.style.display = this.activeType === 'consumables' ? 'none' : '';
-  },
-
-  renderNoType() {
-    const wrap = document.getElementById('no-type-wrap'); if (!wrap) return;
-    wrap.innerHTML = `<div class="tabs-bar type-bar"><div class="tabs-inner">
-      <button class="tab type-tab ${this.activeType==='materials'?'active':''}" data-type="materials">
-        <i class="ti ti-ruler-2" style="font-size:13px"></i> Materials
-        ${Object.keys(this._no._items).length > 0 ? `<span class="sidebar-count" style="margin-left:4px">${Object.keys(this._no._items).length}</span>` : ''}
-      </button>
-      <button class="tab type-tab ${this.activeType==='consumables'?'active':''}" data-type="consumables">
-        <i class="ti ti-package" style="font-size:13px"></i> Consumables
-        ${Object.keys(this._noC._items).length > 0 ? `<span class="sidebar-count" style="margin-left:4px">${Object.keys(this._noC._items).length}</span>` : ''}
-      </button>
-    </div></div>`;
+    const n = this.noCount(); b.textContent = n; b.classList.toggle('zero', n === 0);
   },
 
   renderNoTabs() {
     const wrap = document.getElementById('no-tabs-wrap'); if (!wrap) return;
-    const mats = this._activeMats();
-    this._cats = Data.categories(mats);
-    this._subs = this.activeCat ? Data.subcategories(mats, this.activeCat) : [];
+    this._cats = Data.categories(this.materials);
+    this._subs = this.activeCat ? Data.subcategories(this.materials, this.activeCat) : [];
     const catBtns = this._cats.map((c,i) => `<button class="tab ${this.activeCat===c?'active':''}" data-cat-idx="${i}">${esc(c)}</button>`).join('');
     let subHtml = '';
     if (this.activeCat && this._subs.length) {
@@ -1156,12 +1296,10 @@ const Manager = {
 
   renderNoList() {
     const q = document.getElementById('no-search')?.value || '';
-    const mats = this._activeMats();
-    const filtered = Data.filter(mats, this.activeCat, this.activeSub, q);
+    const filtered = Data.filter(this.materials, this.activeCat, this.activeSub, q);
     const list = document.getElementById('no-mat-list'); if (!list) return;
-    const isConsumables = this.activeType === 'consumables';
     if (!filtered.length) {
-      list.innerHTML = `<div class="empty-state"><i class="ti ti-package-off"></i><p>No ${isConsumables ? 'consumables' : 'materials'} found.</p></div>`;
+      list.innerHTML = `<div class="empty-state"><i class="ti ti-package-off"></i><p>No materials found.</p></div>`;
       return;
     }
     list.innerHTML = filtered.map(m => {
@@ -1194,7 +1332,6 @@ const Manager = {
   _renderNoReview() {
     const wrap = document.getElementById('no-review-contents'); if (!wrap) return;
     const items = this.noItems();
-    const isConsumables = this.activeType === 'consumables';
     if (!items.length) { wrap.innerHTML = `<div class="empty-state"><i class="ti ti-clipboard"></i><p>No items.</p></div>`; return; }
     wrap.innerHTML = items.map(i => {
       const showCode = i.partCode && !Data.isDummyCode(i.partCode);
@@ -1224,60 +1361,30 @@ const Manager = {
       </div>`;
     const cats = [...new Set(items.map(i => i.category))];
     const btns = document.getElementById('no-email-buttons'); if (!btns) return;
-    const emailAllBtn = isConsumables && cats.length > 1
-      ? `<button class="btn btn-primary" id="btn-no-email-all" style="margin-bottom:6px">
-           <i class="ti ti-mail-forward"></i> Email all consumables
-         </button>`
-      : '';
-    btns.innerHTML = emailAllBtn + cats.map(cat => `
+    btns.innerHTML = cats.map(cat => `
       <button class="btn btn-green" data-no-cat="${esc(cat)}" style="margin-bottom:6px">
         <i class="ti ti-mail"></i> Email — ${esc(cat)}
       </button>`).join('') + `
       <button class="btn btn-danger" id="btn-no-clear-inner"><i class="ti ti-x"></i> Clear order</button>`;
-    // Show/hide Add to queue
-    const addBtn = document.getElementById('btn-no-add-to-orders');
-    if (addBtn) addBtn.style.display = isConsumables ? 'none' : '';
-    if (document.getElementById('btn-no-email-all')) {
-      document.getElementById('btn-no-email-all').addEventListener('click', () => this.noOpenBulkConsumablesEmail());
-    }
     document.getElementById('btn-no-clear-inner').addEventListener('click', () => {
       if (!confirm('Clear all items?')) return;
-      const cart = this._cart(); cart._items = {};
-      this._updateNoBadge(); this.renderNoList(); this.renderNoType(); this.closePanel('no-review-panel');
+      this._no._items = {};
+      this._updateNoBadge(); this.renderNoList(); this.closePanel('no-review-panel');
     });
-  },
-
-  noOpenBulkConsumablesEmail() {
-    const items = this.noItems();
-    if (!items.length) return;
-    const { subject, body } = buildBulkConsumablesEmail(items);
-    const s = Settings.get();
-    document.getElementById('email-panel-title').textContent = 'Consumables Order — All';
-    document.getElementById('email-to').value      = s.supplierEmail;
-    document.getElementById('email-cc').value      = s.ccEmail;
-    document.getElementById('email-subject').value = subject;
-    document.getElementById('email-body').value    = body;
-    this._pendingEmailMeta  = null;
-    this._noEmailCategory   = '__all__';
-    this._noEmailOrderType  = 'consumables';
-    this.closePanel('no-review-panel');
-    this.openPanel('email-panel');
   },
 
   noOpenCategoryEmail(category) {
     const items = this.noItems().filter(i => i.category === category);
     if (!items.length) return;
-    const orderType = this._orderType();
-    const { subject, body } = buildCategoryEmail(items, category, orderType);
+    const { subject, body } = buildCategoryEmail(items, category, 'Material Order');
     const s = Settings.get();
-    document.getElementById('email-panel-title').textContent = `${orderType} — ${category}`;
+    document.getElementById('email-panel-title').textContent = category;
     document.getElementById('email-to').value      = s.supplierEmail;
     document.getElementById('email-cc').value      = s.ccEmail;
     document.getElementById('email-subject').value = subject;
     document.getElementById('email-body').value    = body;
     this._pendingEmailMeta  = null;
     this._noEmailCategory   = category;
-    this._noEmailOrderType  = this.activeType;
     this.closePanel('no-review-panel');
     this.openPanel('email-panel');
   },
@@ -1300,7 +1407,6 @@ const Manager = {
       this.orderRef = genRef();
       this._updateNoBadge();
       this.renderNoList();
-      this.renderNoType();
       this.closePanel('no-review-panel');
       this.setMainTab('queue');
       const ow = document.getElementById('overlay-wrap');
@@ -1317,6 +1423,267 @@ const Manager = {
     } catch(e) {
       alert('Failed to submit: ' + e.message);
     }
+  },
+
+  // ══════════════════════════════════════════
+  // CONSUMABLES ORDER PANEL (launched from Stock tab)
+  // ══════════════════════════════════════════
+  coGet(id)      { return this._co._items[id]||0; },
+  coSet(id,qty)  { if(qty<=0) delete this._co._items[id]; else this._co._items[id]=qty; },
+  coAdj(id,d)    { this.coSet(id, this.coGet(id)+d); this._coChanged(); },
+  coSetQty(id,v) { this.coSet(id, parseInt(v)||0);   this._coChanged(); },
+  coQuickAdd(id) { if(!this.coGet(id)) this.coSet(id,1); this._coChanged(); },
+  coZero(id)     { delete this._co._items[id]; this._coChanged(); },
+  coCount()      { return Object.keys(this._co._items).length; },
+  coItems()      {
+    return Object.keys(this._co._items).map(id => {
+      const m = this.consumables.find(x => x.id == id);
+      return m ? { ...m, qty: this._co._items[id] } : null;
+    }).filter(Boolean);
+  },
+  _coChanged() {
+    this._updateCoBadge(); this.renderCoList();
+    if (document.getElementById('co-review-panel')?.classList.contains('open')) this._renderCoReview();
+  },
+  _updateCoBadge() {
+    const b = document.getElementById('co-badge'); if (!b) return;
+    const n = this.coCount(); b.textContent = n; b.classList.toggle('zero', n === 0);
+  },
+
+  renderCoTabs() {
+    const wrap = document.getElementById('co-tabs-wrap'); if (!wrap) return;
+    this._coCats = Data.categories(this.consumables);
+    this._coSubs = this._coActiveCat ? Data.subcategories(this.consumables, this._coActiveCat) : [];
+    const catBtns = this._coCats.map((c,i) => `<button class="tab ${this._coActiveCat===c?'active':''}" data-co-cat-idx="${i}">${esc(c)}</button>`).join('');
+    let subHtml = '';
+    if (this._coActiveCat && this._coSubs.length) {
+      const subBtns = this._coSubs.map((s,i) => `<button class="tab ${this._coActiveSub===s?'active':''}" data-co-sub-idx="${i}">${esc(s)}</button>`).join('');
+      subHtml = `<div class="tabs-bar sub-bar"><div class="tabs-inner"><button class="tab ${!this._coActiveSub?'active':''}" data-co-sub-idx="-1">All</button>${subBtns}</div></div>`;
+    }
+    wrap.innerHTML = `<div class="tabs-bar"><div class="tabs-inner"><button class="tab ${!this._coActiveCat?'active':''}" data-co-cat-idx="-1">All</button>${catBtns}</div></div>${subHtml}`;
+  },
+  coSetCat(cat) { this._coActiveCat=cat; this._coActiveSub=null; this.renderCoTabs(); this.renderCoList(); const s=document.getElementById('co-scroll'); if(s)s.scrollTop=0; },
+  coSetSub(sub) { this._coActiveSub=sub; this.renderCoTabs(); this.renderCoList(); },
+
+  // Renders consumables list with untracked items greyed and sorted to the bottom (visual only — still orderable)
+  renderCoList() {
+    const q = document.getElementById('co-search')?.value || '';
+    const filtered = Data.filter(this.consumables, this._coActiveCat, this._coActiveSub, q);
+    const list = document.getElementById('co-mat-list'); if (!list) return;
+    if (!filtered.length) { list.innerHTML = `<div class="empty-state"><i class="ti ti-package-off"></i><p>No consumables found.</p></div>`; return; }
+    const sorted = [...filtered].sort((a,b) => {
+      const ta = this._stockFor(stockId(a))?.tracked ? 0 : 1;
+      const tb = this._stockFor(stockId(b))?.tracked ? 0 : 1;
+      return ta - tb || a.description.localeCompare(b.description);
+    });
+    list.innerHTML = sorted.map(m => {
+      const qty = this.coGet(m.id), inOrder = qty > 0;
+      const ci = CAT_ICONS[m.category] || CAT_ICONS.default;
+      const showCode = m.partCode && !Data.isDummyCode(m.partCode);
+      const isUntracked = !this._stockFor(stockId(m))?.tracked;
+      return `<div class="mat-card ${inOrder?'in-order':''} ${isUntracked?'untracked-item':''}">
+        <button class="mat-bin" data-bin="${m.id}"><i class="ti ti-trash"></i></button>
+        <div class="mat-icon" style="background:${ci.bg}"><i class="ti ${ci.icon}" style="color:${ci.color}"></i></div>
+        <div class="mat-info">
+          <div class="mat-name">${esc(m.description)}</div>
+          ${showCode ? `<div class="mat-partcode">${esc(m.partCode)}</div>` : '<div class="mat-partcode"></div>'}
+          <div class="mat-unit">${esc(m.qtyType||'')}${isUntracked?' · Not tracked':''}</div>
+        </div>
+        <div class="mat-controls">
+          <button class="qty-btn" data-dec="${m.id}">−</button>
+          <input class="qty-input" type="number" min="0" step="1" value="${qty}" data-qid="${m.id}">
+          <button class="qty-btn" data-inc="${m.id}">+</button>
+          <button class="add-btn ${inOrder?'in-order':''}" data-add="${m.id}"><i class="ti ${inOrder?'ti-check':'ti-plus'}"></i></button>
+        </div>
+      </div>`;
+    }).join('');
+  },
+
+  coOpenReview() {
+    if (this.coCount() === 0) { alert('No items on this order.'); return; }
+    this._renderCoReview(); this.openPanel('co-review-panel');
+  },
+
+  _renderCoReview() {
+    const wrap = document.getElementById('co-review-contents'); if (!wrap) return;
+    const items = this.coItems();
+    if (!items.length) { wrap.innerHTML = `<div class="empty-state"><i class="ti ti-clipboard"></i><p>No items.</p></div>`; return; }
+    wrap.innerHTML = items.map(i => {
+      const showCode = i.partCode && !Data.isDummyCode(i.partCode);
+      return `
+      <div class="order-item">
+        <div class="order-item-row">
+          <div>
+            <div class="order-item-name">${esc(i.description)}</div>
+            ${showCode ? `<div class="order-item-code">${esc(i.partCode)}</div>` : ''}
+            <div class="order-item-unit">${esc(i.qtyType||'')}</div>
+          </div>
+          <div class="order-item-qty">× ${i.qty}</div>
+        </div>
+        <div class="order-item-foot">
+          <button class="qty-btn" data-rdec="${i.id}">−</button>
+          <input class="qty-input" type="number" min="1" step="1" value="${i.qty}" data-rqid="${i.id}">
+          <button class="qty-btn" data-rinc="${i.id}">+</button>
+          <button class="remove-btn" data-rrem="${i.id}"><i class="ti ti-x"></i> Remove</button>
+        </div>
+      </div>`;
+    }).join('') + `
+      <div class="order-summary-card">
+        <div class="order-summary-row total">
+          <span>Total items</span>
+          <span>${items.reduce((s,i)=>s+i.qty,0)} across ${items.length} line${items.length!==1?'s':''}</span>
+        </div>
+      </div>`;
+    const cats = [...new Set(items.map(i => i.category))];
+    const btns = document.getElementById('co-email-buttons'); if (!btns) return;
+    const emailAllBtn = cats.length > 1
+      ? `<button class="btn btn-primary" data-co-email-all="1" style="margin-bottom:6px"><i class="ti ti-mail-forward"></i> Email all consumables</button>`
+      : '';
+    btns.innerHTML = emailAllBtn + cats.map(cat => `
+      <button class="btn btn-green" data-co-cat="${esc(cat)}" style="margin-bottom:6px"><i class="ti ti-mail"></i> Email — ${esc(cat)}</button>`).join('') + `
+      <button class="btn btn-danger" data-co-clear="1"><i class="ti ti-x"></i> Clear order</button>`;
+  },
+
+  coOpenBulkEmail() {
+    const items = this.coItems();
+    if (!items.length) return;
+    const { subject, body } = buildBulkConsumablesEmail(items);
+    const s = Settings.get();
+    document.getElementById('email-panel-title').textContent = 'Consumables Order — All';
+    document.getElementById('email-to').value      = s.supplierEmail;
+    document.getElementById('email-cc').value      = s.ccEmail;
+    document.getElementById('email-subject').value = subject;
+    document.getElementById('email-body').value    = body;
+    this._pendingEmailMeta = null;
+    this._coEmailCategory  = '__all__';
+    this.closePanel('co-review-panel');
+    this.openPanel('email-panel');
+  },
+
+  coOpenCategoryEmail(category) {
+    const items = this.coItems().filter(i => i.category === category);
+    if (!items.length) return;
+    const { subject, body } = buildCategoryEmail(items, category, 'Consumables Order');
+    const s = Settings.get();
+    document.getElementById('email-panel-title').textContent = `Consumables Order — ${category}`;
+    document.getElementById('email-to').value      = s.supplierEmail;
+    document.getElementById('email-cc').value      = s.ccEmail;
+    document.getElementById('email-subject').value = subject;
+    document.getElementById('email-body').value    = body;
+    this._pendingEmailMeta = null;
+    this._coEmailCategory  = category;
+    this.closePanel('co-review-panel');
+    this.openPanel('email-panel');
+  },
+
+  // ══════════════════════════════════════════
+  // RECEIVE STOCK PANEL (mass intake with reference)
+  // ══════════════════════════════════════════
+  receiveGet(id)      { return this._receive._items[id]||0; },
+  receiveSet(id,qty)  { if(qty<=0) delete this._receive._items[id]; else this._receive._items[id]=qty; },
+  receiveAdj(id,d)    { this.receiveSet(id, this.receiveGet(id)+d); this._receiveChanged(); },
+  receiveSetQty(id,v) { this.receiveSet(id, parseInt(v)||0);   this._receiveChanged(); },
+  receiveQuickAdd(id) { if(!this.receiveGet(id)) this.receiveSet(id,1); this._receiveChanged(); },
+  receiveZero(id)     { delete this._receive._items[id]; this._receiveChanged(); },
+  receiveCount()      { return Object.keys(this._receive._items).length; },
+  receiveItems()      {
+    return Object.keys(this._receive._items).map(id => {
+      const m = this.consumables.find(x => x.id == id);
+      return m ? { ...m, qty: this._receive._items[id] } : null;
+    }).filter(Boolean);
+  },
+  _receiveChanged() { this._updateReceiveBadge(); this.renderReceiveList(); },
+  _updateReceiveBadge() {
+    const b = document.getElementById('receive-badge'); if (!b) return;
+    const n = this.receiveCount(); b.textContent = n; b.classList.toggle('zero', n === 0);
+  },
+
+  renderReceiveTabs() {
+    const wrap = document.getElementById('receive-tabs-wrap'); if (!wrap) return;
+    this._receiveCats = Data.categories(this.consumables);
+    this._receiveSubs = this._receiveActiveCat ? Data.subcategories(this.consumables, this._receiveActiveCat) : [];
+    const catBtns = this._receiveCats.map((c,i) => `<button class="tab ${this._receiveActiveCat===c?'active':''}" data-rc-cat-idx="${i}">${esc(c)}</button>`).join('');
+    let subHtml = '';
+    if (this._receiveActiveCat && this._receiveSubs.length) {
+      const subBtns = this._receiveSubs.map((s,i) => `<button class="tab ${this._receiveActiveSub===s?'active':''}" data-rc-sub-idx="${i}">${esc(s)}</button>`).join('');
+      subHtml = `<div class="tabs-bar sub-bar"><div class="tabs-inner"><button class="tab ${!this._receiveActiveSub?'active':''}" data-rc-sub-idx="-1">All</button>${subBtns}</div></div>`;
+    }
+    wrap.innerHTML = `<div class="tabs-bar"><div class="tabs-inner"><button class="tab ${!this._receiveActiveCat?'active':''}" data-rc-cat-idx="-1">All</button>${catBtns}</div></div>${subHtml}`;
+  },
+  receiveSetCat(cat) { this._receiveActiveCat=cat; this._receiveActiveSub=null; this.renderReceiveTabs(); this.renderReceiveList(); const s=document.getElementById('receive-scroll'); if(s)s.scrollTop=0; },
+  receiveSetSub(sub) { this._receiveActiveSub=sub; this.renderReceiveTabs(); this.renderReceiveList(); },
+
+  renderReceiveList() {
+    const q = document.getElementById('receive-search')?.value || '';
+    const filtered = Data.filter(this.consumables, this._receiveActiveCat, this._receiveActiveSub, q);
+    const list = document.getElementById('receive-mat-list'); if (!list) return;
+    if (!filtered.length) { list.innerHTML = `<div class="empty-state"><i class="ti ti-package-off"></i><p>No consumables found.</p></div>`; return; }
+    list.innerHTML = filtered.map(m => {
+      const qty = this.receiveGet(m.id), inOrder = qty > 0;
+      const ci = CAT_ICONS[m.category] || CAT_ICONS.default;
+      const showCode = m.partCode && !Data.isDummyCode(m.partCode);
+      const isBoxed = hasBoxTracking(m);
+      return `<div class="mat-card ${inOrder?'in-order':''}">
+        <button class="mat-bin" data-bin="${m.id}"><i class="ti ti-trash"></i></button>
+        <div class="mat-icon" style="background:${ci.bg}"><i class="ti ${ci.icon}" style="color:${ci.color}"></i></div>
+        <div class="mat-info">
+          <div class="mat-name">${esc(m.description)}</div>
+          ${showCode ? `<div class="mat-partcode">${esc(m.partCode)}</div>` : '<div class="mat-partcode"></div>'}
+          <div class="mat-unit">${esc(m.qtyType||'')}${isBoxed?` · ${m.boxSize}/${esc(m.boxUnit||'Box')}`:''}</div>
+        </div>
+        <div class="mat-controls">
+          <button class="qty-btn" data-dec="${m.id}">−</button>
+          <input class="qty-input" type="number" min="0" step="1" value="${qty}" data-qid="${m.id}">
+          <button class="qty-btn" data-inc="${m.id}">+</button>
+          <button class="add-btn ${inOrder?'in-order':''}" data-add="${m.id}"><i class="ti ${inOrder?'ti-check':'ti-plus'}"></i></button>
+        </div>
+      </div>`;
+    }).join('');
+  },
+
+  async receiveSubmit() {
+    const items = this.receiveItems();
+    if (!items.length) { alert('Select at least one item received.'); return; }
+    const reference = document.getElementById('receive-reference')?.value.trim();
+    const s = Settings.get();
+    const fallbackBy = (s.managerName || 'Manager').trim() || 'Manager';
+    const by = reference || fallbackBy;
+    const sessionId = genRef();
+
+    const btn = document.getElementById('btn-receive-submit');
+    if (btn) { btn.disabled = true; btn.innerHTML = '<i class="ti ti-loader" style="animation:spin 1s linear infinite"></i> Processing…'; }
+
+    const errors = [];
+    for (const item of items) {
+      const sid = stockId(item);
+      if (!this._stockFor(sid)?.tracked) {
+        try { await DB.enableTracking(sid); } catch(e) { errors.push(`${item.description}: ${e.message}`); continue; }
+      }
+      try {
+        await DB.adjustStock(sid, item.description, item.qty, 'intake', by, sessionId);
+      } catch(e) { errors.push(`${item.description}: ${e.message}`); }
+    }
+
+    if (btn) { btn.disabled = false; btn.innerHTML = '<i class="ti ti-truck-delivery"></i>Confirm Stock Received <span class="sidebar-count zero" id="receive-badge" style="margin-left:4px">0</span>'; }
+
+    if (errors.length) alert(`Some items failed:\n\n${errors.join('\n')}`);
+
+    this._receive._items = {};
+    this._updateReceiveBadge();
+    this.renderReceiveList();
+    this.closePanel('receive-panel');
+
+    const ow = document.getElementById('overlay-wrap');
+    ow.innerHTML = `
+      <div class="success-overlay">
+        <div class="success-card">
+          <div class="success-icon green"><i class="ti ti-circle-check"></i></div>
+          <h3>Stock received!</h3>
+          <p>Stock levels have been updated${reference ? ` and recorded under "${esc(reference)}"` : ''}.</p>
+          <button class="btn btn-primary" id="btn-done-receive">Done</button>
+        </div>
+      </div>`;
+    document.getElementById('btn-done-receive').addEventListener('click', () => { ow.innerHTML=''; });
   },
 
   // ══════════════════════════════════════════
@@ -1363,10 +1730,11 @@ const Manager = {
   renderStockTabs() {
     const wrap = document.getElementById('stock-tabs-wrap'); if (!wrap) return;
     const cats = Data.categories(this.consumables);
-    const lowCount = this.consumables.filter(m => {
+    const lowItems = this.consumables.filter(m => {
       const rec = this._stockFor(stockId(m));
       return rec?.tracked && rec.warningQty > 0 && (rec.qty||0) <= rec.warningQty;
-    }).length;
+    });
+    const lowCount = lowItems.length;
     const catBtns = cats.map(c => `<button class="tab ${this._stockActiveCat===c?'active':''}" data-stock-cat="${esc(c)}">${esc(c)}</button>`).join('');
     wrap.innerHTML = `<div class="tabs-bar"><div class="tabs-inner">
       <button class="tab ${!this._stockActiveCat?'active':''}" data-stock-cat="__all__">All</button>
@@ -1375,6 +1743,26 @@ const Manager = {
       </button>
       ${catBtns}
     </div></div>`;
+
+    // Subcategory tabs — only when a real category (not All/Low Stock) is selected
+    let subHtml = '';
+    if (this._stockActiveCat && this._stockActiveCat !== '__low__') {
+      this._stockSubs = Data.subcategories(this.consumables, this._stockActiveCat);
+      if (this._stockSubs.length) {
+        const subBtns = this._stockSubs.map(s => `<button class="tab ${this._stockActiveSub===s?'active':''}" data-stock-sub="${esc(s)}">${esc(s)}</button>`).join('');
+        subHtml = `<div class="tabs-bar sub-bar"><div class="tabs-inner"><button class="tab ${!this._stockActiveSub?'active':''}" data-stock-sub="__all__">All</button>${subBtns}</div></div>`;
+      }
+    } else {
+      this._stockSubs = [];
+    }
+    wrap.innerHTML += subHtml;
+
+    // Reorder All button — only visible on the Low Stock tab, and only when at least one item has a reorder qty set
+    const reorderBtn = document.getElementById('btn-reorder-all');
+    if (reorderBtn) {
+      const canReorder = this._stockActiveCat === '__low__' && lowItems.some(m => (this._stockFor(stockId(m))?.reorderQty||0) > 0);
+      reorderBtn.style.display = canReorder ? '' : 'none';
+    }
   },
 
   renderStockList() {
@@ -1389,6 +1777,7 @@ const Manager = {
       });
     } else if (this._stockActiveCat) {
       items = items.filter(m => m.category === this._stockActiveCat);
+      if (this._stockActiveSub) items = items.filter(m => m.subcategory === this._stockActiveSub);
     }
     if (q) items = items.filter(m => m.description.toLowerCase().includes(q) || m.partCode.toLowerCase().includes(q));
 
@@ -1468,7 +1857,7 @@ const Manager = {
           <div class="stock-threshold-row">
             <span class="stock-threshold-label">Warning ≤</span>
             <input class="stock-threshold-input" type="number" min="0" step="1" value="${rec?.warningQty||0}" id="si-warn-${esc(sid)}">
-            <span class="stock-threshold-label" style="margin-left:8px">Reorder ≤</span>
+            <span class="stock-threshold-label" style="margin-left:8px">Reorder:</span>
             <input class="stock-threshold-input" type="number" min="0" step="1" value="${rec?.reorderQty||0}" id="si-reorder-${esc(sid)}">
             <button class="btn-sm btn-sm-save" data-stock-thresh="${esc(sid)}" style="font-size:11px;margin-left:auto">Save</button>
           </div>
@@ -1590,21 +1979,35 @@ const Manager = {
     this._loadHistory();
   },
 
+  // Loads every low-stock item (that has a reorder qty set) into the Consumables Order
+  // cart at its configured reorder quantity, then opens the order panel for review.
+  stockReorderAll() {
+    const lowItems = this.consumables.filter(m => {
+      const rec = this._stockFor(stockId(m));
+      return rec?.tracked && rec.warningQty > 0 && (rec.qty||0) <= rec.warningQty && (rec.reorderQty||0) > 0;
+    });
+    if (!lowItems.length) { alert('No low-stock items have a reorder quantity set.'); return; }
+    for (const m of lowItems) {
+      const rec = this._stockFor(stockId(m));
+      this.coSet(m.id, rec.reorderQty);
+    }
+    this._updateCoBadge();
+    this.renderCoList();
+    this.openPanel('cons-order-panel');
+  },
+
   // ══════════════════════════════════════════
   // HISTORY TAB
   // ══════════════════════════════════════════
   renderHistoryFilter() {
     const chip  = document.getElementById('history-clear-filter');
     const label = document.getElementById('history-filter-label');
-    const all   = document.getElementById('history-filter-all');
-    if (!chip || !label || !all) return;
+    if (!chip || !label) return;
     if (this._historyFilter) {
       chip.style.display = 'flex';
       label.textContent  = this._historyFilter.itemName || this._historyFilter.stockId;
-      all.style.display  = 'none';
     } else {
       chip.style.display = 'none';
-      all.style.display  = 'inline';
     }
   },
 
@@ -1638,8 +2041,10 @@ const Manager = {
       return;
     }
     const nameFilter = (document.getElementById('history-person-search')?.value || '').toLowerCase().trim();
+    const itemFilter = (document.getElementById('history-item-search')?.value || '').toLowerCase().trim();
     let records = this._historyRecords;
     if (nameFilter) records = records.filter(r => (r.by||'').toLowerCase().includes(nameFilter));
+    if (itemFilter) records = records.filter(r => (r.itemName||'').toLowerCase().includes(itemFilter));
 
     if (!records.length) {
       list.innerHTML = `<div class="empty-state"><i class="ti ti-history"></i><p>No matching history.</p></div>`;
@@ -1680,6 +2085,10 @@ const Manager = {
             <div class="history-item-name">${esc(by)}</div>
             <div class="history-meta">${ts} · ${totalAbs} total units</div>
           </div>
+          ${allReverted
+            ? `<button class="btn-sm" data-hist-session-unrevert="${esc(sessId)}" style="font-size:10px;padding:2px 7px">Unrevert all</button>
+               <button class="btn-sm btn-sm-danger" data-hist-session-delete="${esc(sessId)}" style="font-size:10px;padding:2px 7px">Delete</button>`
+            : `<button class="btn-sm btn-sm-danger" data-hist-session-revert="${esc(sessId)}" style="font-size:10px;padding:2px 7px">Revert all</button>`}
           <i class="ti ti-chevron-right chevron ${isOpen?'open':''}" style="margin-right:2px"></i>
         </div>
         <div class="history-session-body ${isOpen?'open':''}" id="hist-sess-${esc(sessId)}">
@@ -1704,7 +2113,8 @@ const Manager = {
     const dClass = r.delta >= 0 ? 'positive' : 'negative';
     const action = r.action || 'adjustment';
     const revertBtn = r.reverted
-      ? `<button class="btn-sm" data-hist-unrevert="${esc(r._id)}" style="font-size:10px;padding:2px 7px">Unrevert</button>`
+      ? `<button class="btn-sm" data-hist-unrevert="${esc(r._id)}" style="font-size:10px;padding:2px 7px">Unrevert</button>
+         <button class="btn-sm btn-sm-danger" data-hist-delete="${esc(r._id)}" style="font-size:10px;padding:2px 7px">Delete</button>`
       : `<button class="btn-sm btn-sm-danger" data-hist-revert="${esc(r._id)}" style="font-size:10px;padding:2px 7px">Revert</button>`;
     return `<div class="history-row${r.reverted?' reverted':''}${nested?' nested':''}">
       <span class="history-action-pill ${action}">${action}</span>
@@ -1739,6 +2149,52 @@ const Manager = {
       await DB.unrevertHistoryRecord(historyId);
       this._loadHistory();
     } catch(e) { alert('Unrevert failed: ' + e.message); }
+  },
+
+  async historyDelete(historyId) {
+    await new Promise(r => setTimeout(r, 0));
+    if (!confirm('Permanently delete this reverted entry? This cannot be undone.')) return;
+    try {
+      await DB.deleteHistoryRecord(historyId);
+      this._loadHistory();
+    } catch(e) { alert('Delete failed: ' + e.message); }
+  },
+
+  // Session-level operations: fetch all records for the session, then act on each
+  async historySessionRevert(sessId) {
+    await new Promise(r => setTimeout(r, 0));
+    if (!confirm('Revert all stock changes in this order session?')) return;
+    try {
+      const records = await DB.fetchSessionRecords(sessId);
+      for (const r of records) {
+        if (!r.reverted) await DB.revertHistoryRecord(r._id);
+      }
+      this._loadHistory();
+    } catch(e) { alert('Session revert failed: ' + e.message); }
+  },
+
+  async historySessionUnrevert(sessId) {
+    await new Promise(r => setTimeout(r, 0));
+    if (!confirm('Re-apply all stock changes in this order session?')) return;
+    try {
+      const records = await DB.fetchSessionRecords(sessId);
+      for (const r of records) {
+        if (r.reverted) await DB.unrevertHistoryRecord(r._id);
+      }
+      this._loadHistory();
+    } catch(e) { alert('Session unrevert failed: ' + e.message); }
+  },
+
+  async historySessionDelete(sessId) {
+    await new Promise(r => setTimeout(r, 0));
+    if (!confirm('Permanently delete all entries in this reverted order session? This cannot be undone.')) return;
+    try {
+      const records = await DB.fetchSessionRecords(sessId);
+      for (const r of records) {
+        if (r.reverted) await DB.deleteHistoryRecord(r._id);
+      }
+      this._loadHistory();
+    } catch(e) { alert('Session delete failed: ' + e.message); }
   },
 
   // ══════════════════════════════════════════
