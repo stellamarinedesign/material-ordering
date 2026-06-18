@@ -1,6 +1,6 @@
-// shared.js — v22
+// shared.js — v23
 
-const APP_VERSION = 'v0.29';
+const APP_VERSION = 'v0.30';
 
 const DEFAULT_MATERIALS = [
   { id:1,  category:'Stainless Steel', subcategory:'Box Section', partCode:'SL0300', description:'100 x 50 x 3mm x 6m Box Section 316 S/S', qtyType:'Length' },
@@ -111,13 +111,21 @@ const Data = {
     const iCat  = findCol('category','cat');
     const iSub  = findCol('subcategory','sub category','sub_category','sub');
     const iQty  = findCol('quantity type','quantity_type','quantitytype','qty type','qty_type','unit');
+    const iBoxSize = findCol('box size','box_size','boxsize');
+    const iBoxUnit = findCol('box unit','box_unit','boxunit');
     if (iCode < 0 || iDesc < 0) { console.error('[CSV] Missing required columns. Got:', headers); return []; }
     return lines.slice(1).map((line, i) => {
       const cols = this._splitLine(line);
       const get  = idx => (idx >= 0 && idx < cols.length) ? cols[idx].trim() : '';
       const code = get(iCode), desc = get(iDesc);
       if (!code && !desc) return null;
-      return { id:i+1, partCode:code, description:desc, category:get(iCat)||'Uncategorised', subcategory:get(iSub)||'General', qtyType:get(iQty)||'Each' };
+      const boxSizeRaw = get(iBoxSize);
+      const boxSize = boxSizeRaw ? parseInt(boxSizeRaw) || 0 : 0;
+      return {
+        id:i+1, partCode:code, description:desc,
+        category:get(iCat)||'Uncategorised', subcategory:get(iSub)||'General', qtyType:get(iQty)||'Each',
+        boxSize, boxUnit: get(iBoxUnit) || 'Box',
+      };
     }).filter(Boolean);
   },
   _splitLine(line) {
@@ -174,6 +182,21 @@ function stockId(item) {
   return item.description.toLowerCase().replace(/[^a-z0-9]+/g, '_').slice(0, 40);
 }
 
+// Returns true if an item uses dual-unit (box) tracking
+function hasBoxTracking(item) { return !!(item && item.boxSize && item.boxSize > 0); }
+
+// Format a rolling individual qty alongside its box equivalent, e.g. "47 Each (≈0.9 Box)"
+function boxDisplay(item, qty) {
+  if (!hasBoxTracking(item)) return `${qty} ${item.qtyType||''}`;
+  const boxes = (qty / item.boxSize).toFixed(1).replace(/\.0$/, '');
+  return `${qty} ${item.qtyType||''} (≈${boxes} ${item.boxUnit||'Box'})`;
+}
+
+// For reorder emails: append box size info to the item name, e.g. "Safety Glasses Clear Lens (Box of 50)"
+function boxSuffix(item) {
+  return hasBoxTracking(item) ? ` (Box of ${item.boxSize} ${item.qtyType||'Each'})` : '';
+}
+
 const ConsumablesDeviceName = {
   _key: 'cons_device_name',
   get()      { return localStorage.getItem(this._key) || ''; },
@@ -222,11 +245,11 @@ function buildCategoryEmail(items, category, orderType) {
   const dateStr  = new Date().toLocaleDateString('en-AU',{day:'2-digit',month:'long',year:'numeric'});
   const dateShort= new Date().toLocaleDateString('en-AU',{day:'2-digit',month:'short',year:'numeric'});
 
-  // Items block — suppress dummy part codes (SC prefix) from display
+  // Items block — suppress dummy part codes (SC prefix) from display, append box info
   const itemsStr = items.map(i => {
     const showCode = i.partCode && !Data.isDummyCode(i.partCode);
     const codePart = showCode ? `${i.partCode} - ` : '';
-    return `${codePart}${i.description}\r\n  Qty: ${i.qty} ${i.qtyType||''}`;
+    return `${codePart}${i.description}${boxSuffix(i)}\r\n  Qty: ${i.qty} ${i.qtyType||''}`;
   }).join('\r\n\r\n');
 
   const subject = applyPlaceholders(
@@ -261,7 +284,7 @@ function buildBulkConsumablesEmail(items) {
     const lines = catItems.map(i => {
       const showCode = i.partCode && !Data.isDummyCode(i.partCode);
       const codePart = showCode ? `${i.partCode} - ` : '';
-      return `  ${codePart}${i.description}\r\n    Qty: ${i.qty} ${i.qtyType||''}`;
+      return `  ${codePart}${i.description}${boxSuffix(i)}\r\n    Qty: ${i.qty} ${i.qtyType||''}`;
     }).join('\r\n\r\n');
     return `── ${cat} ──\r\n\r\n${lines}`;
   }).join('\r\n\r\n');

@@ -545,6 +545,14 @@ button { cursor: pointer; }
 .history-action-pill.intake     { background: var(--green-bg); color: var(--green-text); }
 .history-action-pill.checkout   { background: var(--blue-bg);  color: var(--blue-text); }
 .history-action-pill.adjustment { background: var(--bg2);      color: var(--text2); }
+.history-row.reverted { opacity: 0.45; }
+.history-row.reverted .history-delta { text-decoration: line-through; }
+.history-row.nested { border-radius: 0; border-left: none; border-right: none; margin-top: -1px; background: var(--bg); }
+.history-session-group { border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; margin-bottom: 4px; }
+.history-session-group.reverted { opacity: 0.55; }
+.history-session-group .history-row { border: none; border-radius: 0; }
+.history-session-body { display: none; border-top: 1px solid var(--border); }
+.history-session-body.open { display: block; }
 .history-filter-bar {
   background: var(--surface); border-bottom: 1px solid var(--border);
   padding: 8px 12px; display: flex; align-items: center; gap: 8px; flex-shrink: 0; flex-wrap: wrap;

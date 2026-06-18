@@ -130,16 +130,10 @@ const ConsApp = {
           <div class="col"><div class="mat-list" id="cons-mat-list"></div></div>
         </div>
 
-        <!-- TRADESMAN NAME BAR -->
-        <div class="checkout-name-bar"><div class="col">
-          <div class="checkout-name-label">Your name</div>
-          <input class="checkout-name-input" type="text" id="cons-tradesman-name" placeholder="Enter your name before checking out…" autocomplete="off">
-        </div></div>
-
         <!-- ACTION BAR -->
         <div class="action-bar"><div class="action-bar-inner">
           <button class="btn btn-primary" id="btn-cons-review">
-            <i class="ti ti-clipboard-check"></i>Review &amp; Check Out
+            <i class="ti ti-clipboard-check"></i>Review &amp; Sign Out Items
             <span class="sidebar-count zero" id="cons-badge" style="margin-left:4px">0</span>
           </button>
         </div></div>
@@ -148,13 +142,13 @@ const ConsApp = {
         <div class="panel" id="cons-review-panel">
           <div class="panel-header">
             <button class="back-btn" id="btn-close-cons-review"><i class="ti ti-chevron-left"></i>Back</button>
-            <div class="panel-title">Checkout Review</div>
+            <div class="panel-title">Review &amp; Sign Out Items</div>
             <div class="panel-spacer"></div>
           </div>
           <div class="panel-scroll"><div class="panel-col" id="cons-review-contents"></div></div>
           <div class="action-bar"><div class="action-bar-inner">
             <button class="btn btn-primary" id="btn-cons-submit">
-              <i class="ti ti-check"></i> Confirm Checkout
+              <i class="ti ti-check"></i> Confirm Item Sign Out
             </button>
           </div></div>
         </div>
@@ -375,13 +369,10 @@ const ConsApp = {
     </div>`;
   },
 
-  async submitCheckout() {
-    const tradesmanName = document.getElementById('cons-tradesman-name')?.value.trim();
-    if (!tradesmanName) { alert('Please enter your name before checking out.'); return; }
+  // Step 1: validate items, then show the name-entry overlay (same style as the success card)
+  submitCheckout() {
     const items = this.items();
-    if (!items.length) { alert('No items to check out.'); return; }
-
-    // Validate quantities against current stock
+    if (!items.length) { alert('No items to sign out.'); return; }
     for (const item of items) {
       const avail = this._availableQty(item);
       if (avail !== null && item.qty > avail) {
@@ -389,53 +380,70 @@ const ConsApp = {
         return;
       }
     }
+    const ow = document.getElementById('overlay-wrap');
+    ow.innerHTML = `
+      <div class="success-overlay">
+        <div class="success-card">
+          <div class="success-icon blue"><i class="ti ti-user"></i></div>
+          <h3>Who's signing out?</h3>
+          <p>Enter your name to confirm this item sign out.</p>
+          <input class="checkout-name-input" type="text" id="overlay-tradesman-name" placeholder="Your name" autocomplete="off" style="margin:10px 0">
+          <button class="btn btn-primary" id="btn-overlay-confirm" style="width:100%">
+            <i class="ti ti-check"></i> Confirm Item Sign Out
+          </button>
+        </div>
+      </div>`;
+    const nameInput = document.getElementById('overlay-tradesman-name');
+    nameInput.focus();
+    const confirm = () => this._doCheckout(nameInput.value.trim());
+    document.getElementById('btn-overlay-confirm').addEventListener('click', confirm);
+    nameInput.addEventListener('keydown', e => { if (e.key === 'Enter') confirm(); });
+  },
+
+  // Step 2: actually write the stock adjustments, called once a name has been entered
+  async _doCheckout(tradesmanName) {
+    if (!tradesmanName) { alert('Please enter your name to confirm.'); return; }
+    const items = this.items();
+    if (!items.length) { document.getElementById('overlay-wrap').innerHTML=''; return; }
 
     const deviceName = ConsumablesDeviceName.get();
     const by = deviceName ? `${deviceName} — ${tradesmanName}` : tradesmanName;
+    const sessionId = genRef();
 
-    const btn = document.getElementById('btn-cons-submit');
+    const btn = document.getElementById('btn-overlay-confirm');
     if (btn) { btn.disabled = true; btn.innerHTML = '<i class="ti ti-loader" style="animation:spin 1s linear infinite"></i> Processing…'; }
 
     const errors = [];
     for (const item of items) {
       try {
-        await DB.adjustStock(stockId(item), item.description, -item.qty, 'checkout', by);
+        await DB.adjustStock(stockId(item), item.description, -item.qty, 'checkout', by, sessionId);
       } catch(e) {
-        if (e.message === 'INSUFFICIENT_STOCK') {
-          errors.push(`${item.description}: insufficient stock`);
-        } else {
-          errors.push(`${item.description}: ${e.message}`);
-        }
+        if (e.message === 'INSUFFICIENT_STOCK') errors.push(`${item.description}: insufficient stock`);
+        else errors.push(`${item.description}: ${e.message}`);
       }
     }
 
-    if (btn) { btn.disabled = false; btn.innerHTML = '<i class="ti ti-check"></i> Confirm Checkout'; }
-
-    if (errors.length) {
-      alert(`Some items could not be checked out:\n\n${errors.join('\n')}\n\nOther items were processed.`);
-    }
-
-    // Clear only successfully processed items (approximation — clear all then re-add errors)
     this._items = {};
     this._changed();
     this.closePanel('cons-review-panel');
-    if (document.getElementById('cons-tradesman-name')) {
-      document.getElementById('cons-tradesman-name').value = '';
+
+    const ow = document.getElementById('overlay-wrap');
+    if (errors.length) {
+      ow.innerHTML = '';
+      alert(`Some items could not be signed out:\n\n${errors.join('\n')}\n\nOther items were processed.`);
+      return;
     }
 
-    if (!errors.length) {
-      const ow = document.getElementById('overlay-wrap');
-      ow.innerHTML = `
-        <div class="success-overlay">
-          <div class="success-card">
-            <div class="success-icon green"><i class="ti ti-circle-check"></i></div>
-            <h3>Checkout complete!</h3>
-            <p>Stock levels have been updated. Thank you, ${esc(tradesmanName)}.</p>
-            <button class="btn btn-primary" id="btn-done-checkout">Done</button>
-          </div>
-        </div>`;
-      document.getElementById('btn-done-checkout').addEventListener('click', () => { ow.innerHTML=''; });
-    }
+    ow.innerHTML = `
+      <div class="success-overlay">
+        <div class="success-card">
+          <div class="success-icon green"><i class="ti ti-circle-check"></i></div>
+          <h3>Item sign out complete!</h3>
+          <p>Stock levels have been updated. Thank you, ${esc(tradesmanName)}.</p>
+          <button class="btn btn-primary" id="btn-done-checkout">Done</button>
+        </div>
+      </div>`;
+    document.getElementById('btn-done-checkout').addEventListener('click', () => { ow.innerHTML=''; });
   },
 };
 

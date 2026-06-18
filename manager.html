@@ -51,6 +51,7 @@ const Manager = {
   _stock:           [],       // live array from Firestore onSnapshot
   _unsubStock:      null,
   _openStockCards:  new Set(),
+  _stockActiveCat:  null,     // null = All, '__low__' = low stock virtual tab, or a category name
 
   // History tab state
   _historyRecords:  [],
@@ -58,6 +59,7 @@ const Manager = {
   _historyHasMore:  false,
   _historyFilter:   null,     // null = all, or { stockId, itemName }
   _historyLoading:  false,
+  _openHistorySessions: new Set(),
 
   async init() {
     const cfg = FirebaseConfig.get();
@@ -203,6 +205,7 @@ const Manager = {
             <i class="ti ti-alert-triangle"></i>
             <span id="stock-low-text"></span>
           </div>
+          <div id="stock-tabs-wrap"></div>
           <div class="search-bar"><div class="col"><div class="search-wrap">
             <i class="ti ti-search"></i>
             <input type="search" id="stock-search" placeholder="Search consumables…" autocomplete="off">
@@ -220,6 +223,8 @@ const Manager = {
               <i class="ti ti-x"></i><span id="history-filter-label">All items</span>
             </div>
             <span id="history-filter-all" style="font-size:12px;color:var(--text3)">All items</span>
+            <input type="search" id="history-person-search" placeholder="Filter by name…" autocomplete="off"
+              style="margin-left:auto;width:160px;height:28px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);padding:0 10px;font-size:12px;color:var(--text);outline:none">
           </div>
           <div class="app-scroll" id="history-scroll">
             <div id="history-list" class="history-list"></div>
@@ -387,11 +392,13 @@ const Manager = {
       const enableBtn= e.target.closest('[data-stock-enable]');
       const disBtn   = e.target.closest('[data-stock-disable]');
       const intakeBtn= e.target.closest('[data-stock-intake]');
+      const boxBtn   = e.target.closest('[data-stock-intake-box]');
       const setBtn   = e.target.closest('[data-stock-set]');
       const histBtn  = e.target.closest('[data-stock-hist]');
       const saveThresh = e.target.closest('[data-stock-thresh]');
       if (enableBtn) { e.stopPropagation(); this.stockEnable(enableBtn.dataset.stockEnable); return; }
       if (disBtn)    { e.stopPropagation(); this.stockDisable(disBtn.dataset.stockDisable); return; }
+      if (boxBtn)    { e.stopPropagation(); this.stockIntakeBox(boxBtn.dataset.stockIntakeBox, parseInt(boxBtn.dataset.boxSize)); return; }
       if (intakeBtn) { e.stopPropagation(); this.stockIntake(intakeBtn.dataset.stockIntake); return; }
       if (setBtn)    { e.stopPropagation(); this.stockSetAbsolute(setBtn.dataset.stockSet); return; }
       if (histBtn)   { e.stopPropagation(); this.stockOpenHistory(histBtn.dataset.stockHist, histBtn.dataset.stockName); return; }
@@ -399,11 +406,21 @@ const Manager = {
       if (hdr)       { this.toggleStockCard(hdr.dataset.stockHdr); }
     });
     document.getElementById('stock-search').addEventListener('input', () => this.renderStockList());
+    document.getElementById('stock-tabs-wrap').addEventListener('click', e => {
+      const t = e.target.closest('[data-stock-cat]');
+      if (t) { this._stockActiveCat = t.dataset.stockCat === '__all__' ? null : t.dataset.stockCat; this.renderStockTabs(); this.renderStockList(); }
+    });
 
     // History delegated listener
     document.getElementById('history-list').addEventListener('click', e => {
-      const more = e.target.closest('[data-hist-more]');
-      if (more) { this._loadHistory(true); }
+      const more   = e.target.closest('[data-hist-more]');
+      const sess   = e.target.closest('[data-hist-session]');
+      const revert = e.target.closest('[data-hist-revert]');
+      const unrev  = e.target.closest('[data-hist-unrevert]');
+      if (more)   { this._loadHistory(true); return; }
+      if (sess)   { this.toggleHistorySession(sess.dataset.histSession); return; }
+      if (revert) { e.stopPropagation(); this.historyRevert(revert.dataset.histRevert); return; }
+      if (unrev)  { e.stopPropagation(); this.historyUnrevert(unrev.dataset.histUnrevert); return; }
     });
     document.getElementById('history-clear-filter').addEventListener('click', () => {
       this._historyFilter = null;
@@ -412,6 +429,7 @@ const Manager = {
       this.renderHistoryFilter();
       this._loadHistory();
     });
+    document.getElementById('history-person-search').addEventListener('input', () => this.renderHistoryList());
 
     this._populateSettings();
     this.renderQueue();
@@ -419,6 +437,7 @@ const Manager = {
     this.renderNoTabs();
     this.renderNoList();
     this._updateNoReviewBtn();
+    this.renderStockTabs();
   },
 
   openPanel(id)  { document.getElementById(id)?.classList.add('open'); },
@@ -1307,6 +1326,7 @@ const Manager = {
     if (this._unsubStock) this._unsubStock();
     this._unsubStock = DB.listenStock(records => {
       this._stock = records;
+      this.renderStockTabs();
       this.renderStockList();
       this._updateStockBadge();
     });
@@ -1340,10 +1360,36 @@ const Manager = {
     }
   },
 
+  renderStockTabs() {
+    const wrap = document.getElementById('stock-tabs-wrap'); if (!wrap) return;
+    const cats = Data.categories(this.consumables);
+    const lowCount = this.consumables.filter(m => {
+      const rec = this._stockFor(stockId(m));
+      return rec?.tracked && rec.warningQty > 0 && (rec.qty||0) <= rec.warningQty;
+    }).length;
+    const catBtns = cats.map(c => `<button class="tab ${this._stockActiveCat===c?'active':''}" data-stock-cat="${esc(c)}">${esc(c)}</button>`).join('');
+    wrap.innerHTML = `<div class="tabs-bar"><div class="tabs-inner">
+      <button class="tab ${!this._stockActiveCat?'active':''}" data-stock-cat="__all__">All</button>
+      <button class="tab ${this._stockActiveCat==='__low__'?'active':''}" data-stock-cat="__low__" style="${lowCount>0?'color:var(--amber-text)':''}">
+        <i class="ti ti-alert-triangle" style="font-size:12px"></i> Low Stock${lowCount>0?` (${lowCount})`:''}
+      </button>
+      ${catBtns}
+    </div></div>`;
+  },
+
   renderStockList() {
     const list = document.getElementById('stock-list'); if (!list) return;
     const q = (document.getElementById('stock-search')?.value || '').toLowerCase();
     let items = [...this.consumables];
+
+    if (this._stockActiveCat === '__low__') {
+      items = items.filter(m => {
+        const rec = this._stockFor(stockId(m));
+        return rec?.tracked && rec.warningQty > 0 && (rec.qty||0) <= rec.warningQty;
+      });
+    } else if (this._stockActiveCat) {
+      items = items.filter(m => m.category === this._stockActiveCat);
+    }
     if (q) items = items.filter(m => m.description.toLowerCase().includes(q) || m.partCode.toLowerCase().includes(q));
 
     // Sort: critical → warning → zero → ok → untracked
@@ -1356,18 +1402,21 @@ const Manager = {
 
     if (!items.length) { list.innerHTML = `<div class="empty-state"><i class="ti ti-package-off"></i><p>No consumables found.</p></div>`; return; }
 
-    // Group by tracked / untracked with section headers
-    const tracked   = items.filter(m => { const r=this._stockFor(stockId(m)); return r?.tracked; });
-    const untracked = items.filter(m => { const r=this._stockFor(stockId(m)); return !r?.tracked; });
-
+    // Group by tracked / untracked with section headers (skip grouping on the Low Stock tab — already filtered)
     let html = '';
-    if (tracked.length) {
-      html += `<div class="stock-section-header">Tracked (${tracked.length})</div>`;
-      html += tracked.map(m => this._stockCard(m)).join('');
-    }
-    if (untracked.length) {
-      html += `<div class="stock-section-header" style="margin-top:8px">Not yet tracked (${untracked.length})</div>`;
-      html += untracked.map(m => this._stockCard(m)).join('');
+    if (this._stockActiveCat === '__low__') {
+      html = items.map(m => this._stockCard(m)).join('');
+    } else {
+      const tracked   = items.filter(m => { const r=this._stockFor(stockId(m)); return r?.tracked; });
+      const untracked = items.filter(m => { const r=this._stockFor(stockId(m)); return !r?.tracked; });
+      if (tracked.length) {
+        html += `<div class="stock-section-header">Tracked (${tracked.length})</div>`;
+        html += tracked.map(m => this._stockCard(m)).join('');
+      }
+      if (untracked.length) {
+        html += `<div class="stock-section-header" style="margin-top:8px">Not yet tracked (${untracked.length})</div>`;
+        html += untracked.map(m => this._stockCard(m)).join('');
+      }
     }
     list.innerHTML = html;
 
@@ -1388,21 +1437,27 @@ const Manager = {
     const ci      = CAT_ICONS[m.category] || CAT_ICONS.default;
     const showCode = m.partCode && !Data.isDummyCode(m.partCode);
     const isOpen  = this._openStockCards.has(sid);
+    const isBoxed = hasBoxTracking(m);
 
     const badgeClass = status === 'ok' ? '' : status === 'zero' ? ' zero' : status === 'warning' ? ' warning' : status === 'critical' ? ' critical' : ' zero';
     const cardClass  = status === 'untracked' ? ' untracked' : status === 'warning' ? ' warning' : status === 'critical' ? ' critical' : status === 'zero' ? ' zero' : '';
 
     const qtyBadge = tracked
-      ? `<span class="stock-qty-badge${badgeClass}">${qty} ${esc(m.qtyType||'')}</span>`
+      ? `<span class="stock-qty-badge${badgeClass}">${esc(boxDisplay(m, qty))}</span>`
       : `<span style="font-size:11px;color:var(--text3);font-family:var(--mono)">Not tracked</span>`;
+
+    const boxIntakeBtn = isBoxed ? `
+            <button class="btn-sm" data-stock-intake-box="${esc(sid)}" data-box-size="${m.boxSize}" style="font-size:11px">+1 ${esc(m.boxUnit||'Box')} (${m.boxSize})</button>` : '';
 
     const body = tracked ? `
       <div class="stock-card-body" id="stock-body-${esc(sid)}">
         <div class="stock-actions">
+          ${isBoxed ? `<div style="font-size:11px;color:var(--text3);font-family:var(--mono);margin-bottom:2px">Tracked individually · 1 ${esc(m.boxUnit||'Box')} = ${m.boxSize} ${esc(m.qtyType||'Each')}</div>` : ''}
           <div class="stock-action-row">
             <span class="stock-action-label">Add stock</span>
             <input class="stock-delta-input" type="number" min="1" step="1" placeholder="Qty" id="si-intake-${esc(sid)}">
             <button class="btn-sm btn-sm-save" data-stock-intake="${esc(sid)}" style="font-size:11px"><i class="ti ti-plus"></i> Intake</button>
+            ${boxIntakeBtn}
             <button class="btn-sm" data-stock-hist="${esc(sid)}" data-stock-name="${esc(m.description)}" style="font-size:11px;margin-left:auto"><i class="ti ti-history"></i></button>
           </div>
           <div class="stock-action-row">
@@ -1460,12 +1515,12 @@ const Manager = {
     const initEl = document.getElementById(`si-init-${sid}`);
     const initQty = parseInt(initEl?.value || '0') || 0;
     try {
-      await DB.enableTracking(sid, initQty);
+      await DB.enableTracking(sid);
       if (initQty > 0) {
         const item = this.consumables.find(m => stockId(m) === sid);
         const s = Settings.get();
         const by = (s.managerName || 'Manager').trim() || 'Manager';
-        await DB.adjustStock(sid, item?.description || sid, initQty, 'intake', by);
+        await DB.adjustStock(sid, item?.description || sid, initQty, 'intake', by, genRef());
       }
     } catch(e) { alert('Failed to enable tracking: ' + e.message); }
   },
@@ -1484,8 +1539,18 @@ const Manager = {
     const s = Settings.get();
     const by = (s.managerName || 'Manager').trim() || 'Manager';
     try {
-      await DB.adjustStock(sid, item?.description || sid, delta, 'intake', by);
+      await DB.adjustStock(sid, item?.description || sid, delta, 'intake', by, genRef());
       if (el) el.value = '';
+    } catch(e) { alert('Intake failed: ' + e.message); }
+  },
+
+  async stockIntakeBox(sid, boxSize) {
+    if (!boxSize || boxSize <= 0) return;
+    const item = this.consumables.find(m => stockId(m) === sid);
+    const s = Settings.get();
+    const by = (s.managerName || 'Manager').trim() || 'Manager';
+    try {
+      await DB.adjustStock(sid, item?.description || sid, boxSize, 'intake', by, genRef());
     } catch(e) { alert('Intake failed: ' + e.message); }
   },
 
@@ -1499,7 +1564,7 @@ const Manager = {
     const s = Settings.get();
     const by = (s.managerName || 'Manager').trim() || 'Manager';
     try {
-      await DB.setStock(sid, item?.description || sid, newQty, by);
+      await DB.setStock(sid, item?.description || sid, newQty, by, genRef());
       if (el) el.value = '';
     } catch(e) { alert('Override failed: ' + e.message); }
   },
@@ -1572,24 +1637,108 @@ const Manager = {
       list.innerHTML = `<div class="empty-state"><i class="ti ti-history"></i><p>No history yet.</p></div>`;
       return;
     }
-    const rows = this._historyRecords.map(r => {
-      const ts     = r.timestamp?.toDate ? fmtTime(r.timestamp.toDate()) : fmtTime(r.timestamp);
-      const delta  = r.delta >= 0 ? `+${r.delta}` : `${r.delta}`;
-      const dClass = r.delta >= 0 ? 'positive' : 'negative';
-      const action = r.action || 'adjustment';
-      return `<div class="history-row">
-        <span class="history-action-pill ${action}">${action}</span>
-        <span class="history-delta ${dClass}">${delta}</span>
-        <div style="flex:1;min-width:0">
-          <div class="history-item-name">${esc(r.itemName||r.stockId||'')}</div>
-          <div class="history-meta">${esc(r.by||'')}${ts ? ' · '+ts : ''} · now: ${r.newQty??'?'}</div>
+    const nameFilter = (document.getElementById('history-person-search')?.value || '').toLowerCase().trim();
+    let records = this._historyRecords;
+    if (nameFilter) records = records.filter(r => (r.by||'').toLowerCase().includes(nameFilter));
+
+    if (!records.length) {
+      list.innerHTML = `<div class="empty-state"><i class="ti ti-history"></i><p>No matching history.</p></div>`;
+      return;
+    }
+
+    // Group consecutive-ish records by sessionId (preserving overall newest-first order)
+    const groups = [];
+    const seenSessions = new Map();
+    for (const r of records) {
+      if (r.sessionId && seenSessions.has(r.sessionId)) {
+        groups[seenSessions.get(r.sessionId)].push(r);
+      } else if (r.sessionId) {
+        seenSessions.set(r.sessionId, groups.length);
+        groups.push([r]);
+      } else {
+        groups.push([r]);
+      }
+    }
+
+    const rows = groups.map(group => {
+      if (group.length === 1 && !group[0].sessionId) {
+        return this._historyRowHtml(group[0]);
+      }
+      // Session group — show a summary row, expandable
+      const sessId  = group[0].sessionId;
+      const ts      = group[0].timestamp?.toDate ? fmtTime(group[0].timestamp.toDate()) : fmtTime(group[0].timestamp);
+      const by      = group[0].by || '';
+      const action  = group[0].action || 'adjustment';
+      const totalAbs= group.reduce((s,r)=>s+Math.abs(r.delta||0),0);
+      const allReverted = group.every(r => r.reverted);
+      const isOpen  = this._openHistorySessions.has(sessId);
+      return `<div class="history-session-group${allReverted?' reverted':''}">
+        <div class="history-row" data-hist-session="${esc(sessId)}" style="cursor:pointer">
+          <span class="history-action-pill ${action}">${action} · order</span>
+          <span class="history-delta" style="color:var(--text2)">${group.length} item${group.length!==1?'s':''}</span>
+          <div style="flex:1;min-width:0">
+            <div class="history-item-name">${esc(by)}</div>
+            <div class="history-meta">${ts} · ${totalAbs} total units</div>
+          </div>
+          <i class="ti ti-chevron-right chevron ${isOpen?'open':''}" style="margin-right:2px"></i>
+        </div>
+        <div class="history-session-body ${isOpen?'open':''}" id="hist-sess-${esc(sessId)}">
+          ${group.map(r => this._historyRowHtml(r, true)).join('')}
         </div>
       </div>`;
     }).join('');
+
     const moreBtn = this._historyHasMore
       ? `<div style="padding:12px;text-align:center"><button class="btn-sm" data-hist-more="1">Load more</button></div>`
       : '';
     list.innerHTML = rows + moreBtn;
+    // Re-apply open session state
+    for (const sessId of this._openHistorySessions) {
+      document.getElementById(`hist-sess-${sessId}`)?.classList.add('open');
+    }
+  },
+
+  _historyRowHtml(r, nested) {
+    const ts     = r.timestamp?.toDate ? fmtTime(r.timestamp.toDate()) : fmtTime(r.timestamp);
+    const delta  = r.delta >= 0 ? `+${r.delta}` : `${r.delta}`;
+    const dClass = r.delta >= 0 ? 'positive' : 'negative';
+    const action = r.action || 'adjustment';
+    const revertBtn = r.reverted
+      ? `<button class="btn-sm" data-hist-unrevert="${esc(r._id)}" style="font-size:10px;padding:2px 7px">Unrevert</button>`
+      : `<button class="btn-sm btn-sm-danger" data-hist-revert="${esc(r._id)}" style="font-size:10px;padding:2px 7px">Revert</button>`;
+    return `<div class="history-row${r.reverted?' reverted':''}${nested?' nested':''}">
+      <span class="history-action-pill ${action}">${action}</span>
+      <span class="history-delta ${dClass}">${delta}</span>
+      <div style="flex:1;min-width:0">
+        <div class="history-item-name">${esc(r.itemName||r.stockId||'')}</div>
+        <div class="history-meta">${esc(r.by||'')}${ts ? ' · '+ts : ''} · now: ${r.newQty??'?'}${r.reverted?' · reverted':''}</div>
+      </div>
+      ${revertBtn}
+    </div>`;
+  },
+
+  toggleHistorySession(sessId) {
+    if (this._openHistorySessions.has(sessId)) this._openHistorySessions.delete(sessId);
+    else this._openHistorySessions.add(sessId);
+    this.renderHistoryList();
+  },
+
+  async historyRevert(historyId) {
+    await new Promise(r => setTimeout(r, 0));
+    if (!confirm('Revert this stock change? The quantity it caused will be reversed.')) return;
+    try {
+      await DB.revertHistoryRecord(historyId);
+      this._loadHistory(); // refresh to reflect reverted flag
+    } catch(e) { alert('Revert failed: ' + e.message); }
+  },
+
+  async historyUnrevert(historyId) {
+    await new Promise(r => setTimeout(r, 0));
+    if (!confirm('Re-apply this stock change?')) return;
+    try {
+      await DB.unrevertHistoryRecord(historyId);
+      this._loadHistory();
+    } catch(e) { alert('Unrevert failed: ' + e.message); }
   },
 
   // ══════════════════════════════════════════

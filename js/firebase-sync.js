@@ -1,4 +1,4 @@
-// firebase-sync.js — v18
+// firebase-sync.js — v19
 let _db = null, _configured = false;
 
 const DB = {
@@ -119,11 +119,13 @@ const DB = {
       );
   },
 
-  // Enable tracking for an item (creates doc if not exists, or sets tracked=true)
-  async enableTracking(stockId, initialQty) {
+  // Enable tracking for an item (creates doc if not exists, or sets tracked=true).
+  // Always starts at qty 0 — caller should use adjustStock for any initial qty
+  // so the history record and stock total stay in sync (avoids double-counting).
+  async enableTracking(stockId) {
     if (!this.isReady()) throw new Error('Firebase not initialised');
     await _db.collection('stock').doc(stockId).set({
-      qty:        initialQty || 0,
+      qty:        0,
       reorderQty: 0,
       warningQty: 0,
       tracked:    true,
@@ -148,8 +150,9 @@ const DB = {
   // Delta-based adjustment (intake, checkout, or manual override).
   // action: 'intake' | 'checkout' | 'adjustment'
   // by: display string e.g. "John Smith" or "Workshop iPad — Tom"
+  // sessionId: optional — groups multiple line items from one checkout/intake batch
   // Returns new qty, throws if checkout would go negative.
-  async adjustStock(stockId, itemName, delta, action, by) {
+  async adjustStock(stockId, itemName, delta, action, by, sessionId) {
     if (!this.isReady()) throw new Error('Firebase not initialised');
     const ref = _db.collection('stock').doc(stockId);
     let newQty;
@@ -162,20 +165,23 @@ const DB = {
       tx.update(ref, { qty: newQty });
     });
     // Write history record outside the transaction (best-effort, non-blocking)
-    _db.collection('stock_history').add({
+    const histRef = _db.collection('stock_history').doc();
+    histRef.set({
       stockId,
       itemName:  itemName || '',
       delta,
       newQty,
       action,
-      by:        by || '',
-      timestamp: firebase.firestore.FieldValue.serverTimestamp(),
+      by:         by || '',
+      sessionId:  sessionId || null,
+      reverted:   false,
+      timestamp:  firebase.firestore.FieldValue.serverTimestamp(),
     }).catch(e => console.warn('History write failed:', e));
     return newQty;
   },
 
   // Absolute set (for physical stocktake override).
-  async setStock(stockId, itemName, newQty, by) {
+  async setStock(stockId, itemName, newQty, by, sessionId) {
     if (!this.isReady()) throw new Error('Firebase not initialised');
     const ref = _db.collection('stock').doc(stockId);
     const doc = await ref.get();
@@ -187,9 +193,48 @@ const DB = {
       delta:     newQty - oldQty,
       newQty,
       action:    'adjustment',
-      by:        by || '',
-      timestamp: firebase.firestore.FieldValue.serverTimestamp(),
+      by:         by || '',
+      sessionId:  sessionId || null,
+      reverted:   false,
+      timestamp:  firebase.firestore.FieldValue.serverTimestamp(),
     }).catch(e => console.warn('History write failed:', e));
+  },
+
+  // Revert a history record: applies a compensating adjustment (−delta) to the
+  // affected stock item, then marks the original record reverted (greyed out, ignored).
+  // Does not delete or rewrite the original — stays append-only.
+  async revertHistoryRecord(historyId) {
+    if (!this.isReady()) throw new Error('Firebase not initialised');
+    const histRef = _db.collection('stock_history').doc(historyId);
+    const histDoc = await histRef.get();
+    if (!histDoc.exists) throw new Error('History record not found');
+    const rec = histDoc.data();
+    if (rec.reverted) return; // already reverted, no-op
+    const stockRef = _db.collection('stock').doc(rec.stockId);
+    await _db.runTransaction(async tx => {
+      const doc = await tx.get(stockRef);
+      const current = doc.exists ? (doc.data().qty || 0) : 0;
+      const newQty  = current - rec.delta;
+      tx.update(stockRef, { qty: newQty < 0 ? 0 : newQty });
+    });
+    await histRef.update({ reverted: true });
+  },
+
+  // Reverses a revert: re-applies the original delta and clears the reverted flag.
+  async unrevertHistoryRecord(historyId) {
+    if (!this.isReady()) throw new Error('Firebase not initialised');
+    const histRef = _db.collection('stock_history').doc(historyId);
+    const histDoc = await histRef.get();
+    if (!histDoc.exists) throw new Error('History record not found');
+    const rec = histDoc.data();
+    if (!rec.reverted) return; // not reverted, no-op
+    const stockRef = _db.collection('stock').doc(rec.stockId);
+    await _db.runTransaction(async tx => {
+      const doc = await tx.get(stockRef);
+      const current = doc.exists ? (doc.data().qty || 0) : 0;
+      tx.update(stockRef, { qty: current + rec.delta });
+    });
+    await histRef.update({ reverted: false });
   },
 
   // ── STOCK HISTORY ─────────────────────────────────────────────────
