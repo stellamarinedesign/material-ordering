@@ -1,49 +1,49 @@
-Part Code,Description,Category,Subcategory,Quantity Type
-SDC0257,Multi-Guard GP33 Off white Base - Primer 8L,Paint,Primer,Can
-SDC0258,Multi-Guard GP48 Coral White - Top coat 8L,Paint,Top Coat,Can
-SDC0259,Body filler POLEASY 3L,Paint,Filler,Can
-SDC0260,Dolfin Glaze Fine Filler 440ml,Paint,Filler,Can
-SDC0261,Thinning solvent #20 20L,Paint,Solvent,Can
-SDC0262,Thinning Solvent #25 20L,Paint,Solvent,Can
-SDC0263,Gunwash 9 20L,Paint,Solvent,Can
-SDC0264,Altra-Etch 1 pack Etch Primer 4L,Paint,Primer,Can
-SDC0265,Caboguard 504ZP 4L,Paint,Primer,Can
-SDC0267,Multi-Guard GP33 Converter 2L,Paint,Converter,Can
-SDC0268,Multi-Guard GP48 Converter 2l,Paint,Converter,Can
-SDC0269,Carbogaurd 504 converter 1L,Paint,Converter,Can
-SDC0270,Altra Bond 3094 Base 1L,Paint,Primer,Can
-SDC0271,Altra Bond 3094 Converter 1L,Paint,Converter,Can
-SDC0272,Wax and Grease Remover 20L,Paint,Solvent,Can
-SC0001,"4.5"" Grinding Disc 4mm Thickness",Abrasives,Grinding Discs,Each
-SC0002,"4.5"" Cutting Disc 1mm Thickness",Abrasives,Cutting Discs,Each
-SC0003,"4.5"" Flap Disc 40 Grit",Abrasives,Flap Discs,Each
-SC0004,"4.5"" Flap Disc 80 Grit",Abrasives,Flap Discs,Each
-SC0005,"9"" Grinding Disc 6mm Thickness",Abrasives,Grinding Discs,Each
-SC0006,Sandpaper Roll 80 Grit 115mm x 5m,Abrasives,Sandpaper,Roll
-SC0007,Sandpaper Roll 120 Grit 115mm x 5m,Abrasives,Sandpaper,Roll
-SC0010,MIG Wire ER316L 0.9mm 5kg Spool,Welding,MIG Wire,Spool
-SC0011,MIG Wire ER316L 1.2mm 5kg Spool,Welding,MIG Wire,Spool
-SC0012,MIG Wire ER4043 0.9mm 5kg Spool,Welding,MIG Wire,Spool
-SC0013,TIG Filler Rod ER316L 2.4mm 5kg Pack,Welding,TIG Filler,Pack
-SC0014,TIG Filler Rod ER316L 3.2mm 5kg Pack,Welding,TIG Filler,Pack
-SC0015,Anti-Spatter Spray 400ml,Welding,Consumables,Can
-SC0016,Welding Wire Brush Stainless,Welding,Consumables,Each
-SC0017,M6 x 16mm Hex Bolt 316 S/S (Box 100),Fasteners,Bolts,Box
-SC0018,M6 Hex Nut 316 S/S (Box 100),Fasteners,Nuts,Box
-SC0019,M6 Flat Washer 316 S/S (Box 100),Fasteners,Washers,Box
-SC0020,M8 x 20mm Hex Bolt 316 S/S (Box 50),Fasteners,Bolts,Box
-SC0021,M8 Hex Nut 316 S/S (Box 100),Fasteners,Nuts,Box
-SC0022,M10 x 25mm Hex Bolt 316 S/S (Box 50),Fasteners,Bolts,Box
-SC0023,Safety Glasses Clear Lens,Safety,Eye Protection,Each
-SC0024,Safety Glasses Tinted Lens,Safety,Eye Protection,Each
-SC0025,P2 Dust Mask (Box 20),Safety,Respiratory,Box
-SC0030,Nitrile Gloves Medium (Box 100),Safety,Gloves,Box
-SC0031,Nitrile Gloves Large (Box 100),Safety,Gloves,Box
-SC0032,Hearing Protection Ear Plugs (Box 50),Safety,Hearing,Box
-SC0033,Acetone 4L,Chemicals,Solvents,Tin
-SC0034,Methylated Spirits 4L,Chemicals,Solvents,Tin
-SC0035,Inox MX3 Lubricant 400ml,Chemicals,Lubricants,Can
-SC0036,WD-40 400ml,Chemicals,Lubricants,Can
-SC0037,Anti-Seize Compound 250g,Chemicals,Lubricants,Tub
-SC0038,Contact Cleaner 400ml,Chemicals,Cleaners,Can
-SC0039,Stainless Steel Cleaner 500ml,Chemicals,Cleaners,Bottle
+Part Code,Description,Category,Subcategory,Quantity Type,BoxSize,BoxUnit
+SDC0257,Multi-Guard GP33 Off white Base - Primer 8L,Paint,Primer,Can,,
+SDC0258,Multi-Guard GP48 Coral White - Top coat 8L,Paint,Top Coat,Can,,
+SDC0259,Body filler POLEASY 3L,Paint,Filler,Can,,
+SDC0260,Dolfin Glaze Fine Filler 440ml,Paint,Filler,Can,,
+SDC0261,Thinning solvent #20 20L,Paint,Solvent,Can,,
+SDC0262,Thinning Solvent #25 20L,Paint,Solvent,Can,,
+SDC0263,Gunwash 9 20L,Paint,Solvent,Can,,
+SDC0264,Altra-Etch 1 pack Etch Primer 4L,Paint,Primer,Can,,
+SDC0265,Caboguard 504ZP 4L,Paint,Primer,Can,,
+SDC0267,Multi-Guard GP33 Converter 2L,Paint,Converter,Can,,
+SDC0268,Multi-Guard GP48 Converter 2l,Paint,Converter,Can,,
+SDC0269,Carbogaurd 504 converter 1L,Paint,Converter,Can,,
+SDC0270,Altra Bond 3094 Base 1L,Paint,Primer,Can,,
+SDC0271,Altra Bond 3094 Converter 1L,Paint,Converter,Can,,
+SDC0272,Wax and Grease Remover 20L,Paint,Solvent,Can,,
+SC0001,"4.5"" Grinding Disc 4mm Thickness",Abrasives,Grinding Discs,Each,,
+SC0002,"4.5"" Cutting Disc 1mm Thickness",Abrasives,Cutting Discs,Each,,
+SC0003,"4.5"" Flap Disc 40 Grit",Abrasives,Flap Discs,Each,,
+SC0004,"4.5"" Flap Disc 80 Grit",Abrasives,Flap Discs,Each,,
+SC0005,"9"" Grinding Disc 6mm Thickness",Abrasives,Grinding Discs,Each,,
+SC0006,Sandpaper Roll 80 Grit 115mm x 5m,Abrasives,Sandpaper,Roll,,
+SC0007,Sandpaper Roll 120 Grit 115mm x 5m,Abrasives,Sandpaper,Roll,,
+SC0010,MIG Wire ER316L 0.9mm 5kg Spool,Welding,MIG Wire,Spool,,
+SC0011,MIG Wire ER316L 1.2mm 5kg Spool,Welding,MIG Wire,Spool,,
+SC0012,MIG Wire ER4043 0.9mm 5kg Spool,Welding,MIG Wire,Spool,,
+SC0013,TIG Filler Rod ER316L 2.4mm 5kg Pack,Welding,TIG Filler,Pack,,
+SC0014,TIG Filler Rod ER316L 3.2mm 5kg Pack,Welding,TIG Filler,Pack,,
+SC0015,Anti-Spatter Spray 400ml,Welding,Consumables,Can,,
+SC0016,Welding Wire Brush Stainless,Welding,Consumables,Each,,
+SC0017,M6 x 16mm Hex Bolt 316 S/S (Box 100),Fasteners,Bolts,Box,,
+SC0018,M6 Hex Nut 316 S/S (Box 100),Fasteners,Nuts,Box,,
+SC0019,M6 Flat Washer 316 S/S (Box 100),Fasteners,Washers,Box,,
+SC0020,M8 x 20mm Hex Bolt 316 S/S (Box 50),Fasteners,Bolts,Box,,
+SC0021,M8 Hex Nut 316 S/S (Box 100),Fasteners,Nuts,Box,,
+SC0022,M10 x 25mm Hex Bolt 316 S/S (Box 50),Fasteners,Bolts,Box,,
+SC0023,Safety Glasses Clear Lens,Safety,Eye Protection,Each,20,Box
+SC0024,Safety Glasses Tinted Lens,Safety,Eye Protection,Each,,
+SC0025,P2 Respirator with Valve,Safety,Respiratory,Box,12,Box
+SC0030,Nitrile Gloves Medium (Box 100),Safety,Gloves,Each,,
+SC0031,Nitrile Gloves XL,Safety,Gloves,Each,100,Box
+SC0032,Hearing Protection Ear Plugs (Box 50),Safety,Hearing,Box,,
+SC0033,Acetone 4L,Chemicals,Solvents,Tin,,
+SC0034,Methylated Spirits 4L,Chemicals,Solvents,Tin,,
+SC0035,Inox MX3 Lubricant 400ml,Chemicals,Lubricants,Can,,
+SC0036,WD-40 400ml,Chemicals,Lubricants,Can,,
+SC0037,Anti-Seize Compound 250g,Chemicals,Lubricants,Tub,,
+SC0038,Contact Cleaner 400ml,Chemicals,Cleaners,Can,,
+SC0039,Stainless Steel Cleaner 500ml,Chemicals,Cleaners,Bottle,,

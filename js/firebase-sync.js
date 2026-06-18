@@ -1,10 +1,45 @@
-// firebase-sync.js — v20
+// firebase-sync.js — v21
 let _db = null, _configured = false;
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// APP CHECK — Firebase request verification via reCAPTCHA v3.
+// Invisible to end users. Blocks bots/scripts that extract the
+// Firebase config from page source and try to access Firestore.
+//
+// TO REMOVE: delete this entire block (between the ━ lines),
+// remove the firebase-app-check-compat.js script tag from all
+// HTML files, and set enforcement to "unenforced" in the Firebase
+// console (App Check → your app → overflow menu → Unenforce).
+//
+// SITE KEY: replace REPLACE_WITH_RECAPTCHA_SITE_KEY below with
+// the key from: Firebase Console → App Check → Apps → Register
+// → reCAPTCHA v3 → your site key.
+const APPCHECK_SITE_KEY = '6LcvOCctAAAAAFXUhpQRg2c09P1g5l7qULqwZCbh';
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 const DB = {
   async init(config) {
     if (_configured) return true;
-    try { firebase.initializeApp(config); _db = firebase.firestore(); _configured = true; return true; }
+    try {
+      firebase.initializeApp(config);
+
+      // ── APP CHECK INIT (remove this block to disable App Check) ──
+      if (typeof firebase.appCheck === 'function' && APPCHECK_SITE_KEY !== 'REPLACE_WITH_RECAPTCHA_SITE_KEY') {
+        try {
+          firebase.appCheck().activate(
+            new firebase.appCheck.ReCaptchaV3Provider(APPCHECK_SITE_KEY),
+            true  // auto-refresh tokens
+          );
+        } catch(acErr) {
+          console.warn('[AppCheck] Activation failed — continuing without it:', acErr.message);
+        }
+      }
+      // ── END APP CHECK INIT ────────────────────────────────────────
+
+      _db = firebase.firestore();
+      _configured = true;
+      return true;
+    }
     catch(e) { console.error('Firebase init failed:', e); return false; }
   },
   isReady() { return _configured && _db !== null; },
