@@ -356,7 +356,7 @@ const Worker = {
   revAdj(id,d)  { Order.adjust(id,d);           this.updateBadge(); this._syncReview(); },
   revSet(id,v)  { Order.set(id,parseInt(v)||0); this.updateBadge(); this._syncReview(); },
   removeItem(id){ Order.remove(id);              this.updateBadge(); this._syncReview(); },
-  clearOrder()  { if(!confirm('Clear all items?')) return; Order.clear(); this.updateBadge(); this._syncReview(); },
+  clearOrder()  { if(!confirm('Clear all items?')) return; Order.clear(); this.updateBadge(); this._syncReview(); this.closePanel('review-panel'); },
 
   _changed()    { this.updateBadge(); this.renderList(); if(document.getElementById('review-panel')?.classList.contains('open')) this._renderReviewContents(); },
   _syncReview() { this._renderReviewContents(); this.renderList(); },

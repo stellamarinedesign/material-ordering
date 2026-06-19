@@ -280,6 +280,7 @@ const Manager = {
           <div class="app-scroll" id="no-scroll"><div class="col"><div class="mat-list" id="no-mat-list"></div></div></div>
           <div class="action-bar"><div class="action-bar-inner">
             <button class="btn btn-primary" id="btn-no-review"><i class="ti ti-clipboard-list"></i>Review &amp; compose email</button>
+            <button class="btn btn-danger" id="btn-no-clear-main" style="margin-top:2px"><i class="ti ti-x"></i> Clear order</button>
           </div></div>
         </div>
 
@@ -367,6 +368,7 @@ const Manager = {
             <button class="btn btn-primary" id="btn-co-review"><i class="ti ti-clipboard-list"></i>Review &amp; compose email
               <span class="sidebar-count zero" id="co-badge" style="margin-left:4px">0</span>
             </button>
+            <button class="btn btn-danger" id="btn-co-clear-main" style="margin-top:2px"><i class="ti ti-x"></i> Clear order</button>
           </div></div>
         </div>
 
@@ -407,6 +409,7 @@ const Manager = {
             <button class="btn btn-primary" id="btn-receive-submit"><i class="ti ti-truck-delivery"></i>Confirm Stock Received
               <span class="sidebar-count zero" id="receive-badge" style="margin-left:4px">0</span>
             </button>
+            <button class="btn btn-danger" id="btn-receive-clear-main" style="margin-top:2px"><i class="ti ti-x"></i> Clear order</button>
           </div></div>
         </div>
 
@@ -438,6 +441,11 @@ const Manager = {
     document.getElementById('btn-no-review')      .addEventListener('click', () => this.noOpenReview());
     document.getElementById('btn-close-no-review').addEventListener('click', () => this.closePanel('no-review-panel'));
     document.getElementById('btn-no-add-to-orders').addEventListener('click', () => this.noAddToOrders());
+    document.getElementById('btn-no-clear-main').addEventListener('click', () => {
+      if (!confirm('Clear all items?')) return;
+      this._no._items = {};
+      this._updateNoBadge(); this.renderNoList(); this.closePanel('no-review-panel');
+    });
 
     // Consumables Order panel (launched from Stock tab)
     document.getElementById('btn-close-cons-order').addEventListener('click', () => this.closePanel('cons-order-panel'));
@@ -460,6 +468,11 @@ const Manager = {
     });
     document.getElementById('co-search').addEventListener('input', () => this.renderCoList());
     document.getElementById('btn-co-review').addEventListener('click', () => this.coOpenReview());
+    document.getElementById('btn-co-clear-main').addEventListener('click', () => {
+      if (!confirm('Clear all items?')) return;
+      this._co._items = {};
+      this._updateCoBadge(); this.renderCoList(); this.closePanel('co-review-panel');
+    });
     document.getElementById('btn-close-co-review').addEventListener('click', () => this.closePanel('co-review-panel'));
     document.getElementById('co-review-contents').addEventListener('click', e => {
       const dec=e.target.closest('[data-rdec]'), inc=e.target.closest('[data-rinc]'), rem=e.target.closest('[data-rrem]');
@@ -504,6 +517,12 @@ const Manager = {
     });
     document.getElementById('receive-search').addEventListener('input', () => this.renderReceiveList());
     document.getElementById('btn-receive-submit').addEventListener('click', () => this.receiveSubmit());
+    document.getElementById('btn-receive-clear-main').addEventListener('click', () => {
+      if (!confirm('Clear all items?')) return;
+      this._receive._items = {};
+      document.getElementById('receive-reference').value = '';
+      this._updateReceiveBadge(); this.renderReceiveList();
+    });
 
     document.querySelectorAll('[data-sb]').forEach(b => b.addEventListener('click', () => this.setView(b.dataset.sb)));
     document.getElementById('mobile-tabs').addEventListener('click', e => {
@@ -593,6 +612,7 @@ const Manager = {
       const disBtn     = e.target.closest('[data-stock-disable]');
       const intakeBtn  = e.target.closest('[data-stock-intake]');
       const intakeBoxN = e.target.closest('[data-stock-intake-boxn]');
+      const removeBtn  = e.target.closest('[data-stock-remove]');
       const openBoxBtn = e.target.closest('[data-stock-open-box]');
       const setBtn     = e.target.closest('[data-stock-set]');
       const setBoxedBtn= e.target.closest('[data-stock-set-boxed]');
@@ -601,6 +621,7 @@ const Manager = {
       if (enableBtn)   { e.stopPropagation(); this.stockEnable(enableBtn.dataset.stockEnable); return; }
       if (disBtn)      { e.stopPropagation(); this.stockDisable(disBtn.dataset.stockDisable); return; }
       if (intakeBoxN)  { e.stopPropagation(); this.stockIntakeBoxes(intakeBoxN.dataset.stockIntakeBoxn); return; }
+      if (removeBtn)   { e.stopPropagation(); this.stockRemove(removeBtn.dataset.stockRemove); return; }
       if (openBoxBtn)  { e.stopPropagation(); this.stockOpenNewBox(openBoxBtn.dataset.stockOpenBox); return; }
       if (intakeBtn)   { e.stopPropagation(); this.stockIntake(intakeBtn.dataset.stockIntake); return; }
       if (setBoxedBtn) { e.stopPropagation(); this.stockSetAbsoluteBoxed(setBoxedBtn.dataset.stockSetBoxed); return; }
@@ -1931,8 +1952,14 @@ const Manager = {
             <button class="btn-sm" data-stock-hist="${esc(sid)}" data-stock-name="${esc(m.description)}" style="font-size:11px;margin-left:auto"><i class="ti ti-history"></i></button>
           </div>
           <div class="stock-action-row">
-            <button class="btn-sm" data-stock-open-box="${esc(sid)}" style="font-size:11px" title="Round down to whole boxes — use when a box runs low and you're opening a fresh one">
-              <i class="ti ti-box-seam"></i> Open New Box (round down to whole ${esc((m.boxUnit||'Box').toLowerCase())}es)
+            <span class="stock-action-label">Remove stock</span>
+            <input class="stock-delta-input" type="number" min="1" step="1" placeholder="Qty" id="si-remove-${esc(sid)}">
+            <span style="font-size:10px;color:var(--text3)">individual units</span>
+            <button class="btn-sm btn-sm-danger" data-stock-remove="${esc(sid)}" style="font-size:11px;margin-left:auto"><i class="ti ti-minus"></i> Remove</button>
+          </div>
+          <div class="stock-action-row">
+            <button class="btn-sm" data-stock-open-box="${esc(sid)}" style="font-size:11px" title="Round down to whole boxes — use when a box runs low and you're opening a fresh one, or take away a full box if already at a whole number">
+              <i class="ti ti-box-seam"></i> Open New Box / Remove Full ${esc((m.boxUnit||'Box'))}
             </button>
           </div>
           <div class="stock-action-row">
@@ -1950,6 +1977,11 @@ const Manager = {
             <input class="stock-delta-input" type="number" min="1" step="1" placeholder="Qty" id="si-intake-${esc(sid)}">
             <button class="btn-sm btn-sm-save" data-stock-intake="${esc(sid)}" style="font-size:11px"><i class="ti ti-plus"></i> Intake</button>
             <button class="btn-sm" data-stock-hist="${esc(sid)}" data-stock-name="${esc(m.description)}" style="font-size:11px;margin-left:auto"><i class="ti ti-history"></i></button>
+          </div>
+          <div class="stock-action-row">
+            <span class="stock-action-label">Remove stock</span>
+            <input class="stock-delta-input" type="number" min="1" step="1" placeholder="Qty" id="si-remove-${esc(sid)}">
+            <button class="btn-sm btn-sm-danger" data-stock-remove="${esc(sid)}" style="font-size:11px;margin-left:auto"><i class="ti ti-minus"></i> Remove</button>
           </div>
           <div class="stock-action-row">
             <span class="stock-action-label">Set absolute</span>
@@ -2041,6 +2073,27 @@ const Manager = {
     } catch(e) { alert('Intake failed: ' + e.message); }
   },
 
+  // Take inventory out from the manager side — e.g. damaged/wasted stock, or
+  // manager personally using something, separate from the worker sign-out flow.
+  // Always entered in individual units (even for boxed items) since removals
+  // for these reasons are rarely a clean whole-box quantity.
+  async stockRemove(sid) {
+    const el = document.getElementById(`si-remove-${sid}`);
+    const delta = parseInt(el?.value || '0');
+    if (!delta || delta <= 0) { alert('Enter a quantity to remove.'); return; }
+    const item = this.consumables.find(m => stockId(m) === sid);
+    const rec = this._stockFor(sid);
+    if (delta > (rec?.qty || 0)) { alert(`Only ${rec?.qty||0} in stock — can't remove ${delta}.`); return; }
+    await new Promise(r => setTimeout(r, 0));
+    if (!confirm(`Remove ${delta} ${item?.qtyType||'units'} of ${item?.description||sid}?`)) return;
+    const s = Settings.get();
+    const by = (s.managerName || 'Manager').trim() || 'Manager';
+    try {
+      await DB.adjustStock(sid, item?.description || sid, -delta, 'adjustment', by, genRef());
+      if (el) el.value = '';
+    } catch(e) { alert('Remove failed: ' + e.message); }
+  },
+
   // Intake N whole boxes (default workflow for boxed items — adds boxSize * N units)
   async stockIntakeBoxes(sid) {
     const el = document.getElementById(`si-intake-box-${sid}`);
@@ -2066,11 +2119,26 @@ const Manager = {
     const rec = this._stockFor(sid);
     const currentQty = rec?.qty || 0;
     const roundedQty = Math.floor(currentQty / item.boxSize) * item.boxSize;
-    if (roundedQty === currentQty) { alert('Already at a whole number of boxes — nothing to round down.'); return; }
-    await new Promise(r => setTimeout(r, 0));
-    if (!confirm(`Round stock down from ${currentQty} to ${roundedQty} ${item.qtyType||'units'} (${roundedQty / item.boxSize} whole ${(item.boxUnit||'Box').toLowerCase()}(es))?`)) return;
+    const unit = (item.boxUnit||'Box').toLowerCase();
     const s = Settings.get();
     const by = (s.managerName || 'Manager').trim() || 'Manager';
+
+    if (roundedQty === currentQty) {
+      // Already a whole number of boxes — there's no loose remainder to round down.
+      // This usually means a box was opened without anyone recording usage from
+      // the previous one. Offer to take away one full box to correct for that.
+      if (currentQty < item.boxSize) { alert('Not enough stock to remove a full box.'); return; }
+      await new Promise(r => setTimeout(r, 0));
+      const newQty = currentQty - item.boxSize;
+      if (!confirm(`Already at a whole number of ${unit}(es). Remove one full ${unit} instead? This will take stock from ${currentQty} down to ${newQty} ${item.qtyType||'units'} (${newQty / item.boxSize} whole ${unit}(es)).`)) return;
+      try {
+        await DB.setStock(sid, item?.description || sid, newQty, by, genRef());
+      } catch(e) { alert('Failed: ' + e.message); }
+      return;
+    }
+
+    await new Promise(r => setTimeout(r, 0));
+    if (!confirm(`Round stock down from ${currentQty} to ${roundedQty} ${item.qtyType||'units'} (${roundedQty / item.boxSize} whole ${unit}(es))?`)) return;
     try {
       await DB.setStock(sid, item?.description || sid, roundedQty, by, genRef());
     } catch(e) { alert('Failed: ' + e.message); }

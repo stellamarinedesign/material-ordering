@@ -35,6 +35,20 @@
       font-size: 11px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.06em;
       color: var(--text3); font-family: var(--mono); margin-bottom: 5px;
     }
+    .signout-card { max-width: 380px; }
+    .signout-item-list { display: flex; flex-direction: column; gap: 6px; max-height: 240px; overflow-y: auto; text-align: left; }
+    .signout-item-row {
+      display: flex; align-items: center; justify-content: space-between; gap: 8px;
+      background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); padding: 8px 10px;
+    }
+    .signout-item-row.over-limit { border-color: var(--amber-text); }
+    .signout-item-info { flex: 1; min-width: 0; text-align: left; }
+    .signout-item-name { font-size: 13px; font-weight: 500; color: var(--text); line-height: 1.3; }
+    .signout-item-unit { font-size: 11px; color: var(--text3); margin-top: 1px; }
+    .signout-item-controls { display: flex; align-items: center; gap: 0; flex-shrink: 0; }
+    .signout-item-controls .qty-input { width: 36px; height: 28px; font-size: 12px; }
+    .signout-item-controls .qty-btn { width: 28px; height: 28px; font-size: 14px; }
+    .signout-item-controls .remove-btn { margin-left: 6px; width: 28px; height: 28px; padding: 0; display: flex; align-items: center; justify-content: center; }
   </style>
 </head>
 <body>
@@ -144,22 +158,10 @@ const ConsApp = {
             <i class="ti ti-clipboard-check"></i>Review &amp; Sign Out Items
             <span class="sidebar-count zero" id="cons-badge" style="margin-left:4px">0</span>
           </button>
+          <button class="btn btn-danger" id="btn-cons-clear-main" style="margin-top:2px">
+            <i class="ti ti-x"></i> Clear selection
+          </button>
         </div></div>
-
-        <!-- REVIEW PANEL -->
-        <div class="panel" id="cons-review-panel">
-          <div class="panel-header">
-            <button class="back-btn" id="btn-close-cons-review"><i class="ti ti-chevron-left"></i>Back</button>
-            <div class="panel-title">Review &amp; Sign Out Items</div>
-            <div class="panel-spacer"></div>
-          </div>
-          <div class="panel-scroll"><div class="panel-col" id="cons-review-contents"></div></div>
-          <div class="action-bar"><div class="action-bar-inner">
-            <button class="btn btn-primary" id="btn-cons-submit">
-              <i class="ti ti-check"></i> Confirm Item Sign Out
-            </button>
-          </div></div>
-        </div>
       </div>
       <div id="overlay-wrap"></div>`;
 
@@ -183,17 +185,11 @@ const ConsApp = {
       const inp = e.target.closest('[data-qid]'); if (inp) this.setQty(+inp.dataset.qid, inp.value);
     });
     document.getElementById('cons-search').addEventListener('input', () => this.renderList());
-    document.getElementById('btn-cons-review').addEventListener('click', () => this.openReview());
-    document.getElementById('btn-close-cons-review').addEventListener('click', () => this.closePanel('cons-review-panel'));
-    document.getElementById('btn-cons-submit').addEventListener('click', () => this.submitCheckout());
-    document.getElementById('cons-review-contents').addEventListener('click', e => {
-      const dec=e.target.closest('[data-rdec]'), inc=e.target.closest('[data-rinc]'), rem=e.target.closest('[data-rrem]');
-      if (dec) this.adj(+dec.dataset.rdec, -1);
-      if (inc) this.adj(+inc.dataset.rinc,  1);
-      if (rem) this.zero(+rem.dataset.rrem);
-    });
-    document.getElementById('cons-review-contents').addEventListener('change', e => {
-      const inp = e.target.closest('[data-rqid]'); if (inp) this.setQty(+inp.dataset.rqid, inp.value);
+    document.getElementById('btn-cons-review').addEventListener('click', () => this.openSignOutOverlay());
+    document.getElementById('btn-cons-clear-main').addEventListener('click', () => {
+      if (!confirm('Clear selected items?')) return;
+      this._items = {};
+      this._changed();
     });
 
     this._activeCat = null; this._activeSub = null;
@@ -257,8 +253,8 @@ const ConsApp = {
       this._stock = records;
       this._stockReady = true;
       this.renderList();
-      // Re-render review if open
-      if (document.getElementById('cons-review-panel')?.classList.contains('open')) this._renderReview();
+      // Re-render the sign-out overlay if it's currently open, so live stock changes reflect there too
+      if (document.getElementById('signout-item-list')) this._refreshSignOutItemsOnly();
     });
   },
 
@@ -299,7 +295,6 @@ const ConsApp = {
 
   _changed() {
     this._updateBadge(); this.renderList();
-    if (document.getElementById('cons-review-panel')?.classList.contains('open')) this._renderReview();
   },
   _updateBadge() {
     const b = document.getElementById('cons-badge'); if (!b) return;
@@ -374,62 +369,105 @@ const ConsApp = {
     }).join('');
   },
 
-  openReview() {
-    if (this.count()===0) { alert('No items selected.'); return; }
-    this._renderReview();
-    document.getElementById('cons-review-panel')?.classList.add('open');
-  },
   closePanel(id) { document.getElementById(id)?.classList.remove('open'); },
 
-  _renderReview() {
-    const wrap = document.getElementById('cons-review-contents'); if (!wrap) return;
-    const items = this.items();
-    if (!items.length) { wrap.innerHTML=`<div class="empty-state"><i class="ti ti-clipboard"></i><p>No items.</p></div>`; return; }
+  // Combined sign-out overlay: name field + small editable item list, all in one step.
+  // Replaces the old separate review panel — most sign-outs are a single line,
+  // so this keeps it to one screen rather than review-panel → name-popup.
+  openSignOutOverlay() {
+    if (this.count() === 0) { alert('No items selected.'); return; }
+    this._renderSignOutOverlay();
+  },
 
-    // Warn if any quantity exceeds current stock (race condition safety)
+  _renderSignOutOverlay() {
+    const items = this.items();
+    if (!items.length) { document.getElementById('overlay-wrap').innerHTML = ''; return; }
+
     const warnings = items.filter(i => {
       const avail = this._availableQty(i);
       return avail !== null && i.qty > avail;
     });
 
-    wrap.innerHTML = (warnings.length ? `
-      <div style="background:var(--amber-bg);border:1px solid var(--amber-text);border-radius:var(--radius);padding:10px 12px;font-size:12px;color:var(--amber-text);margin-bottom:8px">
-        <i class="ti ti-alert-triangle"></i>
-        Some quantities exceed current stock. Please review before confirming.
-      </div>` : '') +
-    items.map(i => {
-      const avail    = this._availableQty(i);
-      const showCode = i.partCode && !Data.isDummyCode(i.partCode);
-      const overLimit= avail !== null && i.qty > avail;
-      return `<div class="order-item" ${overLimit?'style="border-color:var(--amber-text)"':''}>
-        <div class="order-item-row">
-          <div>
-            <div class="order-item-name">${esc(i.description)}</div>
-            ${showCode ? `<div class="order-item-code">${esc(i.partCode)}</div>` : ''}
-            <div class="order-item-unit">${esc(i.qtyType||'')}${avail!==null?` · ${avail} in stock`:''}</div>
-          </div>
-          <div class="order-item-qty">× ${i.qty}</div>
+    const itemRows = items.map(i => {
+      const avail     = this._availableQty(i);
+      const overLimit = avail !== null && i.qty > avail;
+      return `<div class="signout-item-row${overLimit?' over-limit':''}">
+        <div class="signout-item-info">
+          <div class="signout-item-name">${esc(i.description)}</div>
+          <div class="signout-item-unit">${esc(i.qtyType||'')}${avail!==null?` · ${avail} in stock`:''}</div>
         </div>
-        <div class="order-item-foot">
-          <button class="qty-btn" data-rdec="${i.id}">−</button>
-          <input class="qty-input" type="number" min="1" ${avail!==null?`max="${avail}"`:''}  step="1" value="${i.qty}" data-rqid="${i.id}">
-          <button class="qty-btn" data-rinc="${i.id}">+</button>
-          <button class="remove-btn" data-rrem="${i.id}"><i class="ti ti-x"></i> Remove</button>
+        <div class="signout-item-controls">
+          <button class="qty-btn" data-so-dec="${i.id}">−</button>
+          <input class="qty-input" type="number" min="1" ${avail!==null?`max="${avail}"`:''} step="1" value="${i.qty}" data-so-qid="${i.id}">
+          <button class="qty-btn" data-so-inc="${i.id}">+</button>
+          <button class="remove-btn" data-so-rem="${i.id}"><i class="ti ti-x"></i></button>
         </div>
       </div>`;
-    }).join('') + `
-    <div class="order-summary-card">
-      <div class="order-summary-row total">
-        <span>Total items</span>
-        <span>${items.reduce((s,i)=>s+i.qty,0)} across ${items.length} line${items.length!==1?'s':''}</span>
-      </div>
-    </div>`;
+    }).join('');
+
+    const ow = document.getElementById('overlay-wrap');
+    ow.innerHTML = `
+      <div class="success-overlay">
+        <div class="success-card signout-card">
+          <div class="success-icon blue"><i class="ti ti-user"></i></div>
+          <h3>Sign out items</h3>
+          <input class="checkout-name-input" type="text" id="overlay-tradesman-name" placeholder="Your name" autocomplete="off" style="margin:10px 0">
+          ${warnings.length ? `
+            <div style="background:var(--amber-bg);border:1px solid var(--amber-text);border-radius:var(--radius);padding:8px 10px;font-size:12px;color:var(--amber-text);margin-bottom:8px;text-align:left">
+              <i class="ti ti-alert-triangle"></i> Some quantities exceed current stock.
+            </div>` : ''}
+          <div class="signout-item-list" id="signout-item-list">${itemRows}</div>
+          <button class="btn btn-primary" id="btn-overlay-confirm" style="width:100%;margin-top:12px">
+            <i class="ti ti-check"></i> Confirm Item Sign Out
+          </button>
+          <button class="btn btn-danger" id="btn-overlay-cancel" style="width:100%;margin-top:8px">
+            <i class="ti ti-x"></i> Cancel
+          </button>
+        </div>
+      </div>`;
+
+    const nameInput = document.getElementById('overlay-tradesman-name');
+    nameInput.focus();
+
+    document.getElementById('signout-item-list').addEventListener('click', e => {
+      const dec = e.target.closest('[data-so-dec]');
+      const inc = e.target.closest('[data-so-inc]');
+      const rem = e.target.closest('[data-so-rem]');
+      if (dec) { this.adj(+dec.dataset.soDec, -1); this._refreshSignOutItemsOnly(); }
+      if (inc) { this.adj(+inc.dataset.soInc,  1); this._refreshSignOutItemsOnly(); }
+      if (rem) { this.zero(+rem.dataset.soRem); this._refreshSignOutOrClose(); }
+    });
+    document.getElementById('signout-item-list').addEventListener('change', e => {
+      const inp = e.target.closest('[data-so-qid]');
+      if (inp) { this.setQty(+inp.dataset.soQid, inp.value); this._refreshSignOutItemsOnly(); }
+    });
+
+    const confirm = () => this._doCheckout(nameInput.value.trim());
+    document.getElementById('btn-overlay-confirm').addEventListener('click', confirm);
+    document.getElementById('btn-overlay-cancel').addEventListener('click', () => { ow.innerHTML = ''; });
+    nameInput.addEventListener('keydown', e => { if (e.key === 'Enter') confirm(); });
   },
 
-  // Step 1: validate items, then show the name-entry overlay (same style as the success card)
-  submitCheckout() {
+  // Re-render just the item list + name value preserved, after a qty change inside the overlay
+  _refreshSignOutItemsOnly() {
+    const nameVal = document.getElementById('overlay-tradesman-name')?.value || '';
+    this._renderSignOutOverlay();
+    const nameInput = document.getElementById('overlay-tradesman-name');
+    if (nameInput) nameInput.value = nameVal;
+  },
+
+  // If removing the last item empties the cart, close the overlay entirely; otherwise refresh
+  _refreshSignOutOrClose() {
+    if (this.count() === 0) { document.getElementById('overlay-wrap').innerHTML = ''; this._changed(); return; }
+    this._refreshSignOutItemsOnly();
+    this._changed();
+  },
+
+  // Writes the stock adjustments once a name has been entered
+  async _doCheckout(tradesmanName) {
+    if (!tradesmanName) { alert('Please enter your name to confirm.'); return; }
     const items = this.items();
-    if (!items.length) { alert('No items to sign out.'); return; }
+    if (!items.length) { document.getElementById('overlay-wrap').innerHTML=''; return; }
     for (const item of items) {
       const avail = this._availableQty(item);
       if (avail !== null && item.qty > avail) {
@@ -437,31 +475,6 @@ const ConsApp = {
         return;
       }
     }
-    const ow = document.getElementById('overlay-wrap');
-    ow.innerHTML = `
-      <div class="success-overlay">
-        <div class="success-card">
-          <div class="success-icon blue"><i class="ti ti-user"></i></div>
-          <h3>Who's signing out?</h3>
-          <p>Enter your name to confirm this item sign out.</p>
-          <input class="checkout-name-input" type="text" id="overlay-tradesman-name" placeholder="Your name" autocomplete="off" style="margin:10px 0">
-          <button class="btn btn-primary" id="btn-overlay-confirm" style="width:100%">
-            <i class="ti ti-check"></i> Confirm Item Sign Out
-          </button>
-        </div>
-      </div>`;
-    const nameInput = document.getElementById('overlay-tradesman-name');
-    nameInput.focus();
-    const confirm = () => this._doCheckout(nameInput.value.trim());
-    document.getElementById('btn-overlay-confirm').addEventListener('click', confirm);
-    nameInput.addEventListener('keydown', e => { if (e.key === 'Enter') confirm(); });
-  },
-
-  // Step 2: actually write the stock adjustments, called once a name has been entered
-  async _doCheckout(tradesmanName) {
-    if (!tradesmanName) { alert('Please enter your name to confirm.'); return; }
-    const items = this.items();
-    if (!items.length) { document.getElementById('overlay-wrap').innerHTML=''; return; }
 
     const deviceName = ConsumablesDeviceName.get();
     const by = deviceName ? `${deviceName} — ${tradesmanName}` : tradesmanName;
@@ -482,7 +495,6 @@ const ConsApp = {
 
     this._items = {};
     this._changed();
-    this.closePanel('cons-review-panel');
 
     const ow = document.getElementById('overlay-wrap');
     if (errors.length) {
