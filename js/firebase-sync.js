@@ -1,4 +1,4 @@
-// firebase-sync.js — v0.33
+// firebase-sync.js — v0.34.1
 let _db = null, _configured = false;
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -63,20 +63,23 @@ const DB = {
 
   // ── CONNECTION STATUS & APP VERSION ─────────────────────────────────
   // Live connection indicator: fires true/false as Firestore's connection
-  // state changes. Backed by the SDK's own online/offline detection via
-  // .onSnapshotsInSync (fires once the listener is healthy) combined with
-  // the error callback of a lightweight listener on the version doc itself.
+  // state actually changes. Uses snapshot metadata.fromCache rather than
+  // mere snapshot arrival — onSnapshot can resolve instantly from local
+  // cache even while fully offline, so "a snapshot arrived" is NOT a
+  // reliable signal on its own. fromCache:false means the data was just
+  // confirmed live from the server; fromCache:true means it's either
+  // served from cache while offline, or a pending local write.
   listenConnectionStatus(callback) {
     if (!this.isReady()) { callback(false); return ()=>{}; }
-    let gotFirstSnapshot = false;
+    let settled = false;
     const unsub = _db.collection('meta').doc('version').onSnapshot(
-      () => { gotFirstSnapshot = true; callback(true); },
-      ()  => { callback(false); }
+      { includeMetadataChanges: true },
+      snap => { settled = true; callback(!snap.metadata.fromCache); },
+      ()   => { settled = true; callback(false); }
     );
-    // If we haven't heard back within 8s, treat as disconnected (covers
-    // the case where the listener neither resolves nor errors quickly,
-    // e.g. on a fully offline device).
-    setTimeout(() => { if (!gotFirstSnapshot) callback(false); }, 8000);
+    // Fallback in case neither callback fires within a few seconds
+    // (e.g. a fully offline device that never gets even a cached read).
+    setTimeout(() => { if (!settled) callback(false); }, 5000);
     return unsub;
   },
 

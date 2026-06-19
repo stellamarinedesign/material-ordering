@@ -1478,6 +1478,9 @@ const Manager = {
   // ══════════════════════════════════════════
   async noAddToOrders() {
     if (this.noCount() === 0) { alert('No items on this order.'); return; }
+    if (this._connState && !this._connState.connected) {
+      alert("You're currently offline — orders can't be submitted without a connection."); return;
+    }
     const s = Settings.get();
     const deviceName = (s.managerName || 'Manager').trim() || 'Manager';
     const items = this.noItems().map(i => ({
@@ -1739,6 +1742,9 @@ const Manager = {
   async receiveSubmit() {
     const items = this.receiveItems();
     if (!items.length) { alert('Select at least one item received.'); return; }
+    if (this._connState && !this._connState.connected) {
+      alert("You're currently offline — stock can't be updated without a connection."); return;
+    }
     const reference = document.getElementById('receive-reference')?.value.trim();
     const s = Settings.get();
     const fallbackBy = (s.managerName || 'Manager').trim() || 'Manager';

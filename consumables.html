@@ -468,6 +468,10 @@ const ConsApp = {
     if (!tradesmanName) { alert('Please enter your name to confirm.'); return; }
     const items = this.items();
     if (!items.length) { document.getElementById('overlay-wrap').innerHTML=''; return; }
+    if (this._connState && !this._connState.connected) {
+      alert("You're currently offline — sign outs can't be recorded without a connection. Please reconnect and try again.");
+      return;
+    }
     for (const item of items) {
       const avail = this._availableQty(item);
       if (avail !== null && item.qty > avail) {

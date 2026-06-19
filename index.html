@@ -400,6 +400,10 @@ const Worker = {
 
   confirmSubmit() {
     if(Order.isEmpty()){ alert('No items on this order.'); return; }
+    if (this._connState && !this._connState.connected) {
+      alert("You're currently offline — orders can't be submitted without a connection. Please reconnect and try again.");
+      return;
+    }
     const items=Order.items(this.materials);
     const lines=items.map(i=>`${i.partCode}  ×${i.qty}  ${i.description}`).join('\n');
     const ow=document.getElementById('overlay-wrap');
@@ -434,13 +438,17 @@ const Worker = {
       id:i.id,partCode:i.partCode,description:i.description,
       category:i.category,subcategory:i.subcategory,qtyType:i.qtyType||'',qty:i.qty,
     }));
+    // Submit can take a moment to fail outright when offline (App Check needs
+    // a live network round-trip for a token, so offline writes don't queue
+    // the way plain Firestore writes normally would) — show a brief loading
+    // state rather than letting the button look unresponsive.
+    const yesBtn = document.getElementById('btn-confirm-yes');
     try {
-      // Include device name with the order
       await DB.submitOrder({ ref:this.orderRef, deviceName:DeviceName.get(), items });
       this.closePanel('review-panel');
       this.openPanel('success-panel');
     } catch(e) {
-      alert('Failed to submit. Check your internet connection.\n\n'+e.message);
+      alert("Couldn't submit the order — check your internet connection and try again.\n\n" + e.message);
     }
   },
 
