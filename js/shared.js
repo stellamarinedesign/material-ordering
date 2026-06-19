@@ -1,6 +1,6 @@
-// shared.js — v24
+// shared.js — v0.32
 
-const APP_VERSION = 'v0.31';
+const APP_VERSION = 'v0.32';
 
 const DEFAULT_MATERIALS = [
   { id:1,  category:'Stainless Steel', subcategory:'Box Section', partCode:'SL0300', description:'100 x 50 x 3mm x 6m Box Section 316 S/S', qtyType:'Length' },

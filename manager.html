@@ -13,6 +13,8 @@
 <div id="root"></div>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+<!-- APP CHECK: remove this line to disable App Check (also remove init block in firebase-sync.js) -->
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-check-compat.js"></script>
 <script src="js/shared.js"></script>
 <script src="js/firebase-sync.js"></script>
 <script>
@@ -229,7 +231,7 @@ const Manager = {
           <div class="stock-action-buttons">
             <button class="btn-sm btn-sm-save" id="btn-receive-stock"><i class="ti ti-truck-delivery"></i> Receive Stock</button>
             <button class="btn-sm" id="btn-new-cons-order"><i class="ti ti-plus"></i> New Consumables Order</button>
-            <button class="btn-sm" id="btn-reorder-all" style="display:none;margin-left:auto"><i class="ti ti-refresh"></i> Reorder All</button>
+            <button class="btn-sm" id="btn-reorder-all" style="display:none"><i class="ti ti-refresh"></i> Reorder All</button>
           </div>
           <div id="stock-low-banner" style="display:none" class="low-stock-banner">
             <i class="ti ti-alert-triangle"></i>
@@ -254,7 +256,7 @@ const Manager = {
             <input type="search" id="history-item-search" placeholder="Filter by item…" autocomplete="off"
               style="width:140px;height:28px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);padding:0 10px;font-size:12px;color:var(--text);outline:none">
             <input type="search" id="history-person-search" placeholder="Filter by checkout name…" autocomplete="off"
-              style="width:160px;height:28px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);padding:0 10px;font-size:12px;color:var(--text);outline:none">
+              style="width:210px;height:28px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);padding:0 10px;font-size:12px;color:var(--text);outline:none">
           </div>
           <div class="app-scroll" id="history-scroll">
             <div id="history-list" class="history-list"></div>
@@ -529,22 +531,26 @@ const Manager = {
 
     // Stock list delegated listener
     document.getElementById('stock-list').addEventListener('click', e => {
-      const hdr      = e.target.closest('[data-stock-hdr]');
-      const enableBtn= e.target.closest('[data-stock-enable]');
-      const disBtn   = e.target.closest('[data-stock-disable]');
-      const intakeBtn= e.target.closest('[data-stock-intake]');
-      const boxBtn   = e.target.closest('[data-stock-intake-box]');
-      const setBtn   = e.target.closest('[data-stock-set]');
-      const histBtn  = e.target.closest('[data-stock-hist]');
+      const hdr        = e.target.closest('[data-stock-hdr]');
+      const enableBtn  = e.target.closest('[data-stock-enable]');
+      const disBtn     = e.target.closest('[data-stock-disable]');
+      const intakeBtn  = e.target.closest('[data-stock-intake]');
+      const intakeBoxN = e.target.closest('[data-stock-intake-boxn]');
+      const openBoxBtn = e.target.closest('[data-stock-open-box]');
+      const setBtn     = e.target.closest('[data-stock-set]');
+      const setBoxedBtn= e.target.closest('[data-stock-set-boxed]');
+      const histBtn    = e.target.closest('[data-stock-hist]');
       const saveThresh = e.target.closest('[data-stock-thresh]');
-      if (enableBtn) { e.stopPropagation(); this.stockEnable(enableBtn.dataset.stockEnable); return; }
-      if (disBtn)    { e.stopPropagation(); this.stockDisable(disBtn.dataset.stockDisable); return; }
-      if (boxBtn)    { e.stopPropagation(); this.stockIntakeBox(boxBtn.dataset.stockIntakeBox, parseInt(boxBtn.dataset.boxSize)); return; }
-      if (intakeBtn) { e.stopPropagation(); this.stockIntake(intakeBtn.dataset.stockIntake); return; }
-      if (setBtn)    { e.stopPropagation(); this.stockSetAbsolute(setBtn.dataset.stockSet); return; }
-      if (histBtn)   { e.stopPropagation(); this.stockOpenHistory(histBtn.dataset.stockHist, histBtn.dataset.stockName); return; }
-      if (saveThresh){ e.stopPropagation(); this.stockSaveThresholds(saveThresh.dataset.stockThresh); return; }
-      if (hdr)       { this.toggleStockCard(hdr.dataset.stockHdr); }
+      if (enableBtn)   { e.stopPropagation(); this.stockEnable(enableBtn.dataset.stockEnable); return; }
+      if (disBtn)      { e.stopPropagation(); this.stockDisable(disBtn.dataset.stockDisable); return; }
+      if (intakeBoxN)  { e.stopPropagation(); this.stockIntakeBoxes(intakeBoxN.dataset.stockIntakeBoxn); return; }
+      if (openBoxBtn)  { e.stopPropagation(); this.stockOpenNewBox(openBoxBtn.dataset.stockOpenBox); return; }
+      if (intakeBtn)   { e.stopPropagation(); this.stockIntake(intakeBtn.dataset.stockIntake); return; }
+      if (setBoxedBtn) { e.stopPropagation(); this.stockSetAbsoluteBoxed(setBoxedBtn.dataset.stockSetBoxed); return; }
+      if (setBtn)      { e.stopPropagation(); this.stockSetAbsolute(setBtn.dataset.stockSet); return; }
+      if (histBtn)     { e.stopPropagation(); this.stockOpenHistory(histBtn.dataset.stockHist, histBtn.dataset.stockName); return; }
+      if (saveThresh)  { e.stopPropagation(); this.stockSaveThresholds(saveThresh.dataset.stockThresh); return; }
+      if (hdr)         { this.toggleStockCard(hdr.dataset.stockHdr); }
     });
     document.getElementById('stock-search').addEventListener('input', () => this.renderStockList());
     document.getElementById('stock-tabs-wrap').addEventListener('click', e => {
@@ -1618,18 +1624,27 @@ const Manager = {
     const filtered = Data.filter(this.consumables, this._receiveActiveCat, this._receiveActiveSub, q);
     const list = document.getElementById('receive-mat-list'); if (!list) return;
     if (!filtered.length) { list.innerHTML = `<div class="empty-state"><i class="ti ti-package-off"></i><p>No consumables found.</p></div>`; return; }
-    list.innerHTML = filtered.map(m => {
+    // Untracked items greyed and sorted to the bottom — visual only, still selectable
+    // (receiving stock for an untracked item auto-enables tracking on submit)
+    const sorted = [...filtered].sort((a,b) => {
+      const ta = this._stockFor(stockId(a))?.tracked ? 0 : 1;
+      const tb = this._stockFor(stockId(b))?.tracked ? 0 : 1;
+      return ta - tb || a.description.localeCompare(b.description);
+    });
+    list.innerHTML = sorted.map(m => {
       const qty = this.receiveGet(m.id), inOrder = qty > 0;
       const ci = CAT_ICONS[m.category] || CAT_ICONS.default;
       const showCode = m.partCode && !Data.isDummyCode(m.partCode);
       const isBoxed = hasBoxTracking(m);
-      return `<div class="mat-card ${inOrder?'in-order':''}">
+      const isUntracked = !this._stockFor(stockId(m))?.tracked;
+      const unitLabel = isBoxed ? `${esc(m.boxUnit||'Box')}(es)` : esc(m.qtyType||'');
+      return `<div class="mat-card ${inOrder?'in-order':''} ${isUntracked?'untracked-item':''}">
         <button class="mat-bin" data-bin="${m.id}"><i class="ti ti-trash"></i></button>
         <div class="mat-icon" style="background:${ci.bg}"><i class="ti ${ci.icon}" style="color:${ci.color}"></i></div>
         <div class="mat-info">
           <div class="mat-name">${esc(m.description)}</div>
           ${showCode ? `<div class="mat-partcode">${esc(m.partCode)}</div>` : '<div class="mat-partcode"></div>'}
-          <div class="mat-unit">${esc(m.qtyType||'')}${isBoxed?` · ${m.boxSize}/${esc(m.boxUnit||'Box')}`:''}</div>
+          <div class="mat-unit">${unitLabel}${isBoxed?` · ${m.boxSize} per ${esc((m.boxUnit||'Box').toLowerCase())}`:''}${isUntracked?' · Not tracked yet':''}</div>
         </div>
         <div class="mat-controls">
           <button class="qty-btn" data-dec="${m.id}">−</button>
@@ -1659,8 +1674,11 @@ const Manager = {
       if (!this._stockFor(sid)?.tracked) {
         try { await DB.enableTracking(sid); } catch(e) { errors.push(`${item.description}: ${e.message}`); continue; }
       }
+      // For boxed items, the quantity entered represents whole boxes received —
+      // convert to individual units before writing to stock.
+      const delta = hasBoxTracking(item) ? item.qty * item.boxSize : item.qty;
       try {
-        await DB.adjustStock(sid, item.description, item.qty, 'intake', by, sessionId);
+        await DB.adjustStock(sid, item.description, delta, 'intake', by, sessionId);
       } catch(e) { errors.push(`${item.description}: ${e.message}`); }
     }
 
@@ -1696,6 +1714,10 @@ const Manager = {
       this.renderStockTabs();
       this.renderStockList();
       this._updateStockBadge();
+      // These panels grey/sort items by tracked status, so they need to refresh
+      // whenever stock data changes too — not just the Stock tab itself.
+      this.renderCoList();
+      this.renderReceiveList();
     });
   },
 
@@ -1835,25 +1857,52 @@ const Manager = {
       ? `<span class="stock-qty-badge${badgeClass}">${esc(boxDisplay(m, qty))}</span>`
       : `<span style="font-size:11px;color:var(--text3);font-family:var(--mono)">Not tracked</span>`;
 
-    const boxIntakeBtn = isBoxed ? `
-            <button class="btn-sm" data-stock-intake-box="${esc(sid)}" data-box-size="${m.boxSize}" style="font-size:11px">+1 ${esc(m.boxUnit||'Box')} (${m.boxSize})</button>` : '';
+    // Boxed items get a box-centric workflow (add whole boxes, override by boxes+loose,
+    // and a quick "open new box" stocktake action) since that's how warehouse stock is
+    // actually handled — tracking individual units one at a time is rare in practice.
+    const wholeBoxes  = isBoxed ? Math.floor(qty / m.boxSize) : 0;
+    const looseUnits  = isBoxed ? qty % m.boxSize : 0;
 
-    const body = tracked ? `
-      <div class="stock-card-body" id="stock-body-${esc(sid)}">
-        <div class="stock-actions">
-          ${isBoxed ? `<div style="font-size:11px;color:var(--text3);font-family:var(--mono);margin-bottom:2px">Tracked individually · 1 ${esc(m.boxUnit||'Box')} = ${m.boxSize} ${esc(m.qtyType||'Each')}</div>` : ''}
+    const boxedIntakeRow = `
+          <div class="stock-action-row">
+            <span class="stock-action-label">Add stock</span>
+            <input class="stock-delta-input" type="number" min="1" step="1" placeholder="${esc(m.boxUnit||'Box')}es" id="si-intake-box-${esc(sid)}">
+            <span style="font-size:11px;color:var(--text3)">${esc(m.boxUnit||'Box')}(es)</span>
+            <button class="btn-sm btn-sm-save" data-stock-intake-boxn="${esc(sid)}" style="font-size:11px"><i class="ti ti-plus"></i> Intake</button>
+            <button class="btn-sm" data-stock-hist="${esc(sid)}" data-stock-name="${esc(m.description)}" style="font-size:11px;margin-left:auto"><i class="ti ti-history"></i></button>
+          </div>
+          <div class="stock-action-row">
+            <button class="btn-sm" data-stock-open-box="${esc(sid)}" style="font-size:11px" title="Round down to whole boxes — use when a box runs low and you're opening a fresh one">
+              <i class="ti ti-box-seam"></i> Open New Box (round down to whole ${esc((m.boxUnit||'Box').toLowerCase())}es)
+            </button>
+          </div>
+          <div class="stock-action-row">
+            <span class="stock-action-label">Set absolute</span>
+            <input class="stock-delta-input" type="number" min="0" step="1" placeholder="${esc(m.boxUnit||'Box')}es" id="si-set-boxes-${esc(sid)}" style="width:56px">
+            <span style="font-size:10px;color:var(--text3)">${esc(m.boxUnit||'Box')}(es) +</span>
+            <input class="stock-delta-input" type="number" min="0" step="1" placeholder="loose" id="si-set-loose-${esc(sid)}" style="width:56px">
+            <span style="font-size:10px;color:var(--text3)">loose</span>
+            <button class="btn-sm" data-stock-set-boxed="${esc(sid)}" style="font-size:11px">Override</button>
+          </div>`;
+
+    const simpleIntakeRow = `
           <div class="stock-action-row">
             <span class="stock-action-label">Add stock</span>
             <input class="stock-delta-input" type="number" min="1" step="1" placeholder="Qty" id="si-intake-${esc(sid)}">
             <button class="btn-sm btn-sm-save" data-stock-intake="${esc(sid)}" style="font-size:11px"><i class="ti ti-plus"></i> Intake</button>
-            ${boxIntakeBtn}
             <button class="btn-sm" data-stock-hist="${esc(sid)}" data-stock-name="${esc(m.description)}" style="font-size:11px;margin-left:auto"><i class="ti ti-history"></i></button>
           </div>
           <div class="stock-action-row">
             <span class="stock-action-label">Set absolute</span>
             <input class="stock-delta-input" type="number" min="0" step="1" placeholder="Qty" id="si-set-${esc(sid)}">
             <button class="btn-sm" data-stock-set="${esc(sid)}" style="font-size:11px"><i class="ti ti-pencil"></i> Override</button>
-          </div>
+          </div>`;
+
+    const body = tracked ? `
+      <div class="stock-card-body" id="stock-body-${esc(sid)}">
+        <div class="stock-actions">
+          ${isBoxed ? `<div style="font-size:11px;color:var(--text3);font-family:var(--mono);margin-bottom:2px">${wholeBoxes} whole ${esc((m.boxUnit||'Box').toLowerCase())}${wholeBoxes!==1?'es':''}${looseUnits?` + ${looseUnits} loose`:''} · 1 ${esc(m.boxUnit||'Box')} = ${m.boxSize} ${esc(m.qtyType||'Each')}</div>` : ''}
+          ${isBoxed ? boxedIntakeRow : simpleIntakeRow}
           <div class="stock-threshold-row">
             <span class="stock-threshold-label">Warning ≤</span>
             <input class="stock-threshold-input" type="number" min="0" step="1" value="${rec?.warningQty||0}" id="si-warn-${esc(sid)}">
@@ -1933,14 +1982,60 @@ const Manager = {
     } catch(e) { alert('Intake failed: ' + e.message); }
   },
 
-  async stockIntakeBox(sid, boxSize) {
-    if (!boxSize || boxSize <= 0) return;
+  // Intake N whole boxes (default workflow for boxed items — adds boxSize * N units)
+  async stockIntakeBoxes(sid) {
+    const el = document.getElementById(`si-intake-box-${sid}`);
+    const numBoxes = parseInt(el?.value || '0');
+    if (!numBoxes || numBoxes <= 0) { alert(`Enter a number of boxes received.`); return; }
     const item = this.consumables.find(m => stockId(m) === sid);
+    if (!hasBoxTracking(item)) return;
+    const delta = numBoxes * item.boxSize;
     const s = Settings.get();
     const by = (s.managerName || 'Manager').trim() || 'Manager';
     try {
-      await DB.adjustStock(sid, item?.description || sid, boxSize, 'intake', by, genRef());
+      await DB.adjustStock(sid, item?.description || sid, delta, 'intake', by, genRef());
+      if (el) el.value = '';
     } catch(e) { alert('Intake failed: ' + e.message); }
+  },
+
+  // Stocktake-style correction: rounds the recorded qty down to the nearest whole box.
+  // Use when a box runs low/out and a fresh one is opened — corrects drift from
+  // not tracking every individual unit taken out day to day.
+  async stockOpenNewBox(sid) {
+    const item = this.consumables.find(m => stockId(m) === sid);
+    if (!hasBoxTracking(item)) return;
+    const rec = this._stockFor(sid);
+    const currentQty = rec?.qty || 0;
+    const roundedQty = Math.floor(currentQty / item.boxSize) * item.boxSize;
+    if (roundedQty === currentQty) { alert('Already at a whole number of boxes — nothing to round down.'); return; }
+    await new Promise(r => setTimeout(r, 0));
+    if (!confirm(`Round stock down from ${currentQty} to ${roundedQty} ${item.qtyType||'units'} (${roundedQty / item.boxSize} whole ${(item.boxUnit||'Box').toLowerCase()}(es))?`)) return;
+    const s = Settings.get();
+    const by = (s.managerName || 'Manager').trim() || 'Manager';
+    try {
+      await DB.setStock(sid, item?.description || sid, roundedQty, by, genRef());
+    } catch(e) { alert('Failed: ' + e.message); }
+  },
+
+  // Boxed-item override: whole boxes + optional loose units in an opened box
+  async stockSetAbsoluteBoxed(sid) {
+    const item = this.consumables.find(m => stockId(m) === sid);
+    if (!hasBoxTracking(item)) return;
+    const boxesEl = document.getElementById(`si-set-boxes-${sid}`);
+    const looseEl = document.getElementById(`si-set-loose-${sid}`);
+    const boxes = parseInt(boxesEl?.value || '0') || 0;
+    const loose = looseEl?.value ? (parseInt(looseEl.value) || 0) : 0;
+    if (!boxesEl?.value && !looseEl?.value) { alert('Enter a number of boxes (and loose units if applicable).'); return; }
+    const newQty = boxes * item.boxSize + loose;
+    await new Promise(r => setTimeout(r, 0));
+    if (!confirm(`Set stock to ${boxes} ${(item.boxUnit||'Box').toLowerCase()}(es)${loose?` + ${loose} loose`:''} = ${newQty} ${item.qtyType||'units'} total?`)) return;
+    const s = Settings.get();
+    const by = (s.managerName || 'Manager').trim() || 'Manager';
+    try {
+      await DB.setStock(sid, item?.description || sid, newQty, by, genRef());
+      if (boxesEl) boxesEl.value = '';
+      if (looseEl) looseEl.value = '';
+    } catch(e) { alert('Override failed: ' + e.message); }
   },
 
   async stockSetAbsolute(sid) {
