@@ -65,6 +65,8 @@ const ConsApp = {
     this.consumables = await Data.loadConsumables('./consumables.csv');
     this.renderShell();
     this.startStockListening();
+    this.startConnectionStatus();
+    this.startVersionCheck();
   },
 
   showSetup(err) {
@@ -100,6 +102,8 @@ const ConsApp = {
     this.consumables = await Data.loadConsumables('./consumables.csv');
     this.renderShell();
     this.startStockListening();
+    this.startConnectionStatus();
+    this.startVersionCheck();
   },
 
   renderShell() {
@@ -110,13 +114,15 @@ const ConsApp = {
           <div class="col"><div class="header-inner">
             <div class="header-left">
               <div class="header-title">Consumables Checkout</div>
-              <div class="header-ref"><span class="live-dot"></span>Live</div>
+              <div class="header-ref"><span class="live-dot" id="live-dot"></span><span id="live-label">Live</span> &nbsp;·&nbsp; <span id="app-version" style="opacity:0.6;font-family:var(--mono)"></span></div>
             </div>
             <div class="header-actions">
               ${deviceName ? `<span class="device-chip"><i class="ti ti-device-ipad" style="font-size:12px"></i> ${esc(deviceName)}</span>` : ''}
             </div>
           </div></div>
         </div>
+
+        <div id="update-banner-wrap"></div>
 
         <!-- CATEGORY TABS -->
         <div id="cons-tabs-wrap"></div>
@@ -194,6 +200,55 @@ const ConsApp = {
     this._cats = []; this._subs = [];
     this.renderTabs();
     this.renderList();
+
+    const verEl = document.getElementById('app-version');
+    if (verEl) verEl.textContent = APP_VERSION;
+  },
+
+  // ── LIVE STATUS DOT (3-state: Live / Update Available / Offline) ──
+  // Single source of truth so the dot and the update banner never disagree.
+  _connState: { connected: false, latestVersion: null },
+
+  _renderLiveStatus() {
+    const dot = document.getElementById('live-dot');
+    const lbl = document.getElementById('live-label');
+    const wrap = document.getElementById('update-banner-wrap');
+    const { connected, latestVersion } = this._connState;
+    const outdated = connected && latestVersion && isVersionNewer(latestVersion, APP_VERSION);
+
+    if (dot && lbl) {
+      dot.classList.remove('disconnected', 'update-available');
+      if (!connected)      { dot.classList.add('disconnected'); lbl.textContent = 'Offline'; }
+      else if (outdated)   { dot.classList.add('update-available'); lbl.textContent = 'Update Available'; }
+      else                 { lbl.textContent = 'Live'; }
+    }
+    if (wrap) {
+      wrap.innerHTML = outdated ? `<div class="update-banner">
+          <i class="ti ti-refresh"></i>
+          <span>A newer version (${esc(latestVersion)}) is available — you're on ${esc(APP_VERSION)}.</span>
+          <button id="btn-refresh-update">Refresh</button>
+        </div>` : '';
+      document.getElementById('btn-refresh-update')?.addEventListener('click', () => location.reload());
+    }
+  },
+
+  // Live connection indicator — reflects actual Firestore connection state.
+  startConnectionStatus() {
+    DB.listenConnectionStatus(connected => {
+      this._connState.connected = connected;
+      this._renderLiveStatus();
+    });
+  },
+
+  // Version staleness check — see firebase-sync.js announceVersionIfNewer
+  // for the rollback caveat (manually edit meta/version in Firebase
+  // console if you ever revert to an older build).
+  startVersionCheck() {
+    DB.announceVersionIfNewer(APP_VERSION, isVersionNewer);
+    DB.listenAppVersion(latest => {
+      this._connState.latestVersion = latest;
+      this._renderLiveStatus();
+    });
   },
 
   startStockListening() {

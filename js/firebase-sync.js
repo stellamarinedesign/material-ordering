@@ -1,4 +1,4 @@
-// firebase-sync.js — v0.32
+// firebase-sync.js — v0.33
 let _db = null, _configured = false;
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -59,6 +59,52 @@ const DB = {
     return _db.collection('orders').orderBy('submittedAt','desc')
       .onSnapshot(snap=>callback(snap.docs.map(d=>({_id:d.id,...d.data()}))),
         err=>console.error('Listen error:',err));
+  },
+
+  // ── CONNECTION STATUS & APP VERSION ─────────────────────────────────
+  // Live connection indicator: fires true/false as Firestore's connection
+  // state changes. Backed by the SDK's own online/offline detection via
+  // .onSnapshotsInSync (fires once the listener is healthy) combined with
+  // the error callback of a lightweight listener on the version doc itself.
+  listenConnectionStatus(callback) {
+    if (!this.isReady()) { callback(false); return ()=>{}; }
+    let gotFirstSnapshot = false;
+    const unsub = _db.collection('meta').doc('version').onSnapshot(
+      () => { gotFirstSnapshot = true; callback(true); },
+      ()  => { callback(false); }
+    );
+    // If we haven't heard back within 8s, treat as disconnected (covers
+    // the case where the listener neither resolves nor errors quickly,
+    // e.g. on a fully offline device).
+    setTimeout(() => { if (!gotFirstSnapshot) callback(false); }, 8000);
+    return unsub;
+  },
+
+  // Listens to the shared "latest known version" marker.
+  // Doc shape: { latest: "v0.32" } at meta/version.
+  listenAppVersion(callback) {
+    if (!this.isReady()) return ()=>{};
+    return _db.collection('meta').doc('version').onSnapshot(
+      doc => callback(doc.exists ? doc.data().latest : null),
+      err => console.warn('Version listen error:', err)
+    );
+  },
+
+  // Announces this client's version as the latest known one, but ONLY if
+  // it's numerically higher than what's currently stored — so an old
+  // cached tab reconnecting can't drag the marker backwards, and a
+  // deliberate rollback (manually editing the Firestore field down) won't
+  // immediately get overwritten by a stale client still re-announcing.
+  async announceVersionIfNewer(myVersion, isNewerFn) {
+    if (!this.isReady()) return;
+    const ref = _db.collection('meta').doc('version');
+    try {
+      const doc = await ref.get();
+      const current = doc.exists ? doc.data().latest : null;
+      if (!current || isNewerFn(myVersion, current)) {
+        await ref.set({ latest: myVersion }, { merge: true });
+      }
+    } catch(e) { console.warn('Version announce failed:', e); }
   },
 
   async updateStatus(id, status) {

@@ -1,6 +1,20 @@
-// shared.js — v0.32
+// shared.js — v0.33
 
-const APP_VERSION = 'v0.32';
+const APP_VERSION = 'v0.33';
+
+// Numeric version comparison (handles "v0.9" vs "v0.10" correctly, unlike
+// plain string comparison). Returns true if `a` is strictly newer than `b`.
+// Both inputs expected in the form "v0.32" or "v0.32.1".
+function isVersionNewer(a, b) {
+  const parse = v => String(v||'').replace(/^v/i,'').split('.').map(n => parseInt(n,10) || 0);
+  const pa = parse(a), pb = parse(b);
+  const len = Math.max(pa.length, pb.length);
+  for (let i=0; i<len; i++) {
+    const na = pa[i]||0, nb = pb[i]||0;
+    if (na !== nb) return na > nb;
+  }
+  return false; // equal
+}
 
 const DEFAULT_MATERIALS = [
   { id:1,  category:'Stainless Steel', subcategory:'Box Section', partCode:'SL0300', description:'100 x 50 x 3mm x 6m Box Section 316 S/S', qtyType:'Length' },
