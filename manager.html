@@ -1960,8 +1960,8 @@ const Manager = {
           <div class="stock-action-row">
             <span class="stock-action-label">Remove stock</span>
             <input class="stock-delta-input" type="number" min="1" step="1" placeholder="Qty" id="si-remove-${esc(sid)}">
+            <button class="btn-sm btn-sm-danger" data-stock-remove="${esc(sid)}" style="font-size:11px"><i class="ti ti-minus"></i> Remove</button>
             <span style="font-size:10px;color:var(--text3)">individual units</span>
-            <button class="btn-sm btn-sm-danger" data-stock-remove="${esc(sid)}" style="font-size:11px;margin-left:auto"><i class="ti ti-minus"></i> Remove</button>
           </div>
           <div class="stock-action-row">
             <button class="btn-sm" data-stock-open-box="${esc(sid)}" style="font-size:11px" title="Round down to whole boxes — use when a box runs low and you're opening a fresh one, or take away a full box if already at a whole number">
@@ -1987,7 +1987,7 @@ const Manager = {
           <div class="stock-action-row">
             <span class="stock-action-label">Remove stock</span>
             <input class="stock-delta-input" type="number" min="1" step="1" placeholder="Qty" id="si-remove-${esc(sid)}">
-            <button class="btn-sm btn-sm-danger" data-stock-remove="${esc(sid)}" style="font-size:11px;margin-left:auto"><i class="ti ti-minus"></i> Remove</button>
+            <button class="btn-sm btn-sm-danger" data-stock-remove="${esc(sid)}" style="font-size:11px"><i class="ti ti-minus"></i> Remove</button>
           </div>
           <div class="stock-action-row">
             <span class="stock-action-label">Set absolute</span>
@@ -2222,6 +2222,7 @@ const Manager = {
     this._updateCoBadge();
     this.renderCoList();
     this.openPanel('cons-order-panel');
+    this.coOpenReview();
   },
 
   // ══════════════════════════════════════════
@@ -2294,7 +2295,7 @@ const Manager = {
     }
 
     const rows = groups.map(group => {
-      if (group.length === 1 && !group[0].sessionId) {
+      if (group.length === 1) {
         return this._historyRowHtml(group[0]);
       }
       // Session group — show a summary row, expandable
