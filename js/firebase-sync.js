@@ -1,4 +1,4 @@
-// firebase-sync.js — v0.34.1
+// firebase-sync.js — v0.34.3
 let _db = null, _configured = false;
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -236,7 +236,7 @@ const DB = {
   // by: display string e.g. "John Smith" or "Workshop iPad — Tom"
   // sessionId: optional — groups multiple line items from one checkout/intake batch
   // Returns new qty, throws if checkout would go negative.
-  async adjustStock(stockId, itemName, delta, action, by, sessionId) {
+  async adjustStock(stockId, itemName, delta, action, by, sessionId, subtype) {
     if (!this.isReady()) throw new Error('Firebase not initialised');
     const ref = _db.collection('stock').doc(stockId);
     let newQty;
@@ -256,6 +256,7 @@ const DB = {
       delta,
       newQty,
       action,
+      subtype:    subtype || null,
       by:         by || '',
       sessionId:  sessionId || null,
       reverted:   false,
@@ -265,7 +266,7 @@ const DB = {
   },
 
   // Absolute set (for physical stocktake override).
-  async setStock(stockId, itemName, newQty, by, sessionId) {
+  async setStock(stockId, itemName, newQty, by, sessionId, subtype) {
     if (!this.isReady()) throw new Error('Firebase not initialised');
     const ref = _db.collection('stock').doc(stockId);
     const doc = await ref.get();
@@ -277,6 +278,7 @@ const DB = {
       delta:     newQty - oldQty,
       newQty,
       action:    'adjustment',
+      subtype:    subtype || 'override',
       by:         by || '',
       sessionId:  sessionId || null,
       reverted:   false,
