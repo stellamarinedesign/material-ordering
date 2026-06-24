@@ -152,12 +152,12 @@ const Worker = {
         </div>
 
         <div class="action-bar"><div class="action-bar-inner">
-          <button class="btn btn-primary" id="btn-review">
+          <button class="btn btn-danger" id="btn-clear-main">
+            <i class="ti ti-x"></i> Clear order
+          </button>
+          <button class="btn btn-primary" id="btn-review" style="margin-top:2px">
             <i class="ti ti-clipboard-list"></i>Review order
             <span class="sidebar-count zero" id="order-badge" style="margin-left:4px">0</span>
-          </button>
-          <button class="btn btn-danger" id="btn-clear-main" style="margin-top:2px">
-            <i class="ti ti-x"></i> Clear order
           </button>
         </div></div>
 
@@ -173,11 +173,11 @@ const Worker = {
             <div class="panel-col" id="review-contents"></div>
           </div>
           <div class="action-bar"><div class="action-bar-inner">
-            <button class="btn btn-orange" id="btn-submit">
-              <i class="ti ti-send"></i> Submit
-            </button>
             <button class="btn btn-danger" id="btn-clear">
               <i class="ti ti-x"></i> Clear order
+            </button>
+            <button class="btn btn-orange" id="btn-submit" style="margin-top:2px">
+              <i class="ti ti-send"></i> Submit
             </button>
           </div></div>
         </div>
