@@ -1,6 +1,6 @@
-// shared.js — v0.34.4
+// shared.js — v0.35
 
-const APP_VERSION = 'v0.34.4';
+const APP_VERSION = 'v0.35';
 
 // Numeric version comparison (handles "v0.9" vs "v0.10" correctly, unlike
 // plain string comparison). Returns true if `a` is strictly newer than `b`.
@@ -38,6 +38,9 @@ const DEFAULT_SETTINGS = {
   bulkConsumablesSubject: '{orderType} - {date}',
   emailSignature:       '',
   emailTemplate:        '{date}\r\n\r\n────────────────────────────────────────────────────\r\n{orderType} - {category}\r\n────────────────────────────────────────────────────\r\n\r\n{items}\r\n────────────────────────────────────────────────────\r\n{closingNote}',
+  naturalSort:          true,   // numeric-aware sort order, e.g. 8mm before 10mm
+  unitAwareSearch:      true,   // "1 inch" matches "25.4mm" etc. — exact value match, no rounding
+  fuzzySearch:          true,   // typo-tolerant text matching, exact matches always rank first
 };
 
 const CAT_ICONS = {
@@ -72,6 +75,131 @@ const Settings = {
     return m;
   },
 };
+
+// ═══════════════════════════════════════════════════════════════════
+// SEARCH & SORT ENGINE
+// ═══════════════════════════════════════════════════════════════════
+// Three independent, toggleable features feeding into Data.filter():
+//   1. Natural sort      — "10mm" sorts after "8mm", not before (default list order)
+//   2. Unit-aware search — "1 inch" / "25.4mm" / "1\"" all match the same value
+//   3. Fuzzy text search — tolerates typos in the catalogue or in what's typed
+//
+// Toggles live in Settings (naturalSort / unitAwareSearch / fuzzySearch,
+// see DEFAULT_SETTINGS above) so they're persisted and editable from the
+// Settings panel without touching code. Pass opts into Data.filter() to
+// override per-call if a specific page ever needs different behaviour,
+// e.g. Data.filter(list, cat, sub, q, {fuzzySearch:false}).
+
+// ── 1. NATURAL SORT ──────────────────────────────────────────────────
+// Splits a string into alternating text/number chunks and compares
+// numbers numerically rather than character-by-character. Handles
+// decimals (7.5) but not fractions — fraction handling lives in the
+// unit-aware layer below, since "1 1/2" as a sort key isn't well-defined
+// without knowing it's a measurement.
+function naturalSortChunks(str) {
+  return String(str||'').toLowerCase().match(/\d+\.?\d*|\D+/g) || [];
+}
+function naturalCompare(a, b) {
+  const ca = naturalSortChunks(a), cb = naturalSortChunks(b);
+  const len = Math.max(ca.length, cb.length);
+  for (let i = 0; i < len; i++) {
+    const xa = ca[i], xb = cb[i];
+    if (xa === undefined) return -1;
+    if (xb === undefined) return 1;
+    const na = parseFloat(xa), nb = parseFloat(xb);
+    const bothNumeric = !isNaN(na) && !isNaN(nb) && /^\d/.test(xa) && /^\d/.test(xb);
+    if (bothNumeric) {
+      if (na !== nb) return na - nb;
+    } else {
+      if (xa !== xb) return xa < xb ? -1 : 1;
+    }
+  }
+  return 0;
+}
+
+// ── 2. UNIT-AWARE MEASUREMENT EXTRACTION ─────────────────────────────
+// Recognises number+unit tokens in a string and converts each to a
+// canonical millimetre value. Supports decimals, whole-or-fractional
+// inches (1", 1 1/2", 1/2"), and common unit spellings/spacing variants.
+// Deliberately exact — no rounding tolerance, since the workshop genuinely
+// stocks both 25mm and 25.4mm as distinct items and conflating them would
+// be wrong, not helpful.
+const MM_PER_INCH = 25.4;
+
+function extractMeasurements(str) {
+  const s = String(str||'').toLowerCase();
+  const results = [];
+
+  // Fractional/mixed inches: "1 1/2"", "1/2 inch", "3/8in", etc.
+  // Mixed: optional whole number, optional fraction, then an inch unit.
+  // Note: \b doesn't work reliably after a quote character (" isn't a word
+  // character), so the unit alternation uses an explicit lookahead instead —
+  // (?![a-z]) for the word-based units (in/inch/inches) to avoid matching
+  // inside a longer word, and nothing extra needed after the quote symbols.
+  const inchUnit = `(?:"|''|in\\.?(?![a-z])|inch(?:es)?(?![a-z]))`;
+  const inchRe = new RegExp(
+    `(\\d+\\s+)?(\\d+)\\s*\\/\\s*(\\d+)\\s*${inchUnit}|(\\d+(?:\\.\\d+)?)\\s*${inchUnit}`, 'g'
+  );
+  let m;
+  while ((m = inchRe.exec(s))) {
+    let inches;
+    if (m[2] && m[3]) {
+      const whole = m[1] ? parseFloat(m[1]) : 0;
+      inches = whole + (parseFloat(m[2]) / parseFloat(m[3]));
+    } else {
+      inches = parseFloat(m[4]);
+    }
+    if (!isNaN(inches)) results.push({ mm: roundMm(inches * MM_PER_INCH), raw: m[0] });
+  }
+
+  // Plain millimetres: "25.4mm", "100 mm"
+  const mmRe = /(\d+(?:\.\d+)?)\s*mm(?![a-z])/g;
+  while ((m = mmRe.exec(s))) {
+    results.push({ mm: roundMm(parseFloat(m[1])), raw: m[0] });
+  }
+
+  return results;
+}
+// Round to a sane precision to absorb floating-point noise (e.g. 1/2" * 25.4
+// landing on 12.700000000000001) without introducing any real tolerance —
+// this is precision cleanup, not a fuzziness allowance.
+function roundMm(n) { return Math.round(n * 1000) / 1000; }
+
+// ── 3. FUZZY TEXT MATCH (Levenshtein-based) ─────────────────────────
+function levenshtein(a, b) {
+  if (a === b) return 0;
+  const al = a.length, bl = b.length;
+  if (al === 0) return bl;
+  if (bl === 0) return al;
+  let prev = Array.from({length: bl+1}, (_, i) => i);
+  for (let i = 1; i <= al; i++) {
+    const cur = [i];
+    for (let j = 1; j <= bl; j++) {
+      cur[j] = a[i-1] === b[j-1]
+        ? prev[j-1]
+        : 1 + Math.min(prev[j-1], prev[j], cur[j-1]);
+    }
+    prev = cur;
+  }
+  return prev[bl];
+}
+// Word-level fuzzy score: best (lowest-distance) match between the query
+// word and any word in the target text, normalised by word length so
+// short/long words are judged fairly. Returns 0 (best) to 1 (no relation).
+function fuzzyWordScore(queryWord, text) {
+  const words = String(text||'').toLowerCase().match(/[a-z]+/g) || [];
+  if (!queryWord || !words.length) return 1;
+  let best = Infinity;
+  for (const w of words) {
+    const d = levenshtein(queryWord, w);
+    best = Math.min(best, d / Math.max(queryWord.length, w.length));
+  }
+  return best === Infinity ? 1 : best;
+}
+// Only fuzzy-match on alphabetic tokens — numbers are excluded since edit
+// distance between digits doesn't mean "similar value" (e.g. "8" and "3"
+// are one edit apart but not remotely the same thing).
+const FUZZY_MAX_DISTANCE_RATIO = 0.34; // tolerates ~1-2 typos in a typical word
 
 const Data = {
   _list: null,
@@ -154,19 +282,77 @@ const Data = {
   },
   categories(list) {
     const seen = new Set();
-    return (list||this.get()).map(m=>m.category).filter(c=>{ if(seen.has(c)) return false; seen.add(c); return true; });
+    const cats = (list||this.get()).map(m=>m.category).filter(c=>{ if(seen.has(c)) return false; seen.add(c); return true; });
+    return Settings.get().naturalSort ? [...cats].sort(naturalCompare) : cats;
   },
   subcategories(list, category) {
     const seen = new Set();
-    return (list||this.get()).filter(m=>m.category===category).map(m=>m.subcategory)
+    const subs = (list||this.get()).filter(m=>m.category===category).map(m=>m.subcategory)
       .filter(s=>{ if(seen.has(s)) return false; seen.add(s); return true; });
+    return Settings.get().naturalSort ? [...subs].sort(naturalCompare) : subs;
   },
-  filter(list, category, subcategory, query) {
+
+  // opts can override Settings per-call, e.g. Data.filter(list, cat, sub, q, {fuzzySearch:false})
+  filter(list, category, subcategory, query, opts) {
+    const cfg = { ...Settings.get(), ...(opts||{}) };
     let out = list||this.get();
     if (category)    out = out.filter(m=>m.category===category);
     if (subcategory) out = out.filter(m=>m.subcategory===subcategory);
-    if (query) { const q=query.toLowerCase(); out=out.filter(m=>m.description.toLowerCase().includes(q)||m.partCode.toLowerCase().includes(q)); }
-    return out;
+
+    if (!query) {
+      return cfg.naturalSort
+        ? [...out].sort((a,b)=>naturalCompare(a.description, b.description))
+        : out;
+    }
+
+    const q = query.toLowerCase().trim();
+    const qMeasurements = cfg.unitAwareSearch ? extractMeasurements(q) : [];
+    // Strip out the raw text that was successfully parsed as a measurement
+    // (e.g. "1in", "25.4mm") before pulling out words for fuzzy matching —
+    // otherwise a bare unit token like "in" or "mm" can fuzzy-match as a
+    // normal English word and produce false positives (e.g. "in" matching
+    // any description containing the word "in"). Also drop standalone unit
+    // words and anything under 3 letters, since short fragments are too
+    // unreliable to fuzzy-match meaningfully.
+    let qForWords = q;
+    for (const meas of qMeasurements) qForWords = qForWords.replace(meas.raw, ' ');
+    const UNIT_WORDS = new Set(['mm','in','inch','inches']);
+    const qWords = (qForWords.match(/[a-z]+/g) || [])
+      .filter(w => w.length >= 3 && !UNIT_WORDS.has(w));
+
+    const scored = out.map(m => {
+      const desc = m.description.toLowerCase();
+      const code = m.partCode.toLowerCase();
+      let score = null; // null = no match, lower number = better match
+
+      // Tier 0: exact substring match on description or part code — always wins
+      if (desc.includes(q) || code.includes(q)) {
+        score = 0;
+      }
+
+      // Tier 1: unit-aware exact value match — query names a measurement that
+      // appears (in any written form) in this item's description. Exact
+      // canonical-mm equality only, no rounding tolerance.
+      if (score === null && qMeasurements.length) {
+        const itemMeasurements = extractMeasurements(desc);
+        const hit = qMeasurements.some(qm => itemMeasurements.some(im => im.mm === qm.mm));
+        if (hit) score = 1;
+      }
+
+      // Tier 2: fuzzy word match on remaining alphabetic query words —
+      // catches typos in either the catalogue or what was typed. Numbers
+      // and unit tokens are excluded (see above) since edit-distance on
+      // digits or short unit abbreviations doesn't mean "similar item".
+      if (score === null && cfg.fuzzySearch && qWords.length) {
+        const avgDist = qWords.reduce((s,w) => s + fuzzyWordScore(w, desc), 0) / qWords.length;
+        if (avgDist <= FUZZY_MAX_DISTANCE_RATIO) score = 2 + avgDist;
+      }
+
+      return score === null ? null : { m, score };
+    }).filter(Boolean);
+
+    scored.sort((a,b) => a.score - b.score || naturalCompare(a.m.description, b.m.description));
+    return scored.map(s => s.m);
   },
 };
 

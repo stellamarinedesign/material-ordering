@@ -2461,6 +2461,23 @@ const Manager = {
         </div>
       </div>
       <div class="settings-section">
+        <div class="settings-label">Search &amp; Sort</div>
+        <div class="settings-card">
+          <div class="settings-row">
+            <div><div class="settings-row-label">Numeric-aware sorting</div><div class="settings-row-sub">e.g. 8mm lists before 10mm, rather than alphabetically</div></div>
+            <input type="checkbox" id="s-natural-sort" ${s.naturalSort!==false?'checked':''} style="width:20px;height:20px">
+          </div>
+          <div class="settings-row">
+            <div><div class="settings-row-label">Unit-aware search</div><div class="settings-row-sub">"1 inch", "25.4mm", "1\"" etc. all find the same item</div></div>
+            <input type="checkbox" id="s-unit-search" ${s.unitAwareSearch!==false?'checked':''} style="width:20px;height:20px">
+          </div>
+          <div class="settings-row">
+            <div><div class="settings-row-label">Typo-tolerant search</div><div class="settings-row-sub">Finds close matches even with spelling mistakes</div></div>
+            <input type="checkbox" id="s-fuzzy-search" ${s.fuzzySearch!==false?'checked':''} style="width:20px;height:20px">
+          </div>
+        </div>
+      </div>
+      <div class="settings-section">
         <div class="settings-label">Email</div>
         <div class="settings-card">
           <div class="settings-row">
@@ -2558,6 +2575,9 @@ const Manager = {
   },
 
   saveSettings() {
+    const naturalSort     = document.getElementById('s-natural-sort')?.checked ?? true;
+    const unitAwareSearch = document.getElementById('s-unit-search')?.checked ?? true;
+    const fuzzySearch     = document.getElementById('s-fuzzy-search')?.checked ?? true;
     Settings.save({
       managerName:            document.getElementById('s-manager-name')?.value.trim(),
       supplierEmail:          document.getElementById('s-supplier')?.value.trim(),
@@ -2567,7 +2587,11 @@ const Manager = {
       deliveryNote:           document.getElementById('s-delivery')?.value.trim(),
       emailSignature:         document.getElementById('s-signature')?.value,
       emailTemplate:          document.getElementById('s-template')?.value,
+      naturalSort, unitAwareSearch, fuzzySearch,
     });
+    // Settings.get() is read live by Data.filter on every call, so list/search
+    // behaviour picks up the new toggles immediately — just need to re-render.
+    this.renderNoList(); this.renderCoList(); this.renderReceiveList(); this.renderStockList();
     const btn = document.getElementById('btn-save-settings');
     if (btn) { btn.textContent = '✓ Saved'; setTimeout(() => btn.textContent = 'Save', 1500); }
   },

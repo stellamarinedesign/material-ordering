@@ -130,6 +130,7 @@ const Worker = {
             </div>
             <div class="header-actions">
               <span class="device-chip">${esc(device)}</span>
+              <button class="icon-btn" id="btn-settings" title="Settings"><i class="ti ti-settings"></i></button>
             </div>
           </div></div>
         </div>
@@ -182,6 +183,15 @@ const Worker = {
           </div></div>
         </div>
 
+        <div class="panel" id="settings-panel">
+          <div class="panel-header">
+            <button class="back-btn" id="btn-close-settings"><i class="ti ti-chevron-left"></i>Back</button>
+            <div class="panel-title">Settings</div>
+            <button class="btn-sm btn-sm-save" id="btn-save-settings">Save</button>
+          </div>
+          <div class="panel-scroll"><div class="panel-col" style="gap:20px" id="settings-body"></div></div>
+        </div>
+
         <div class="panel" id="success-panel" style="background:var(--surface);z-index:30">
           <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;
               flex:1;padding:40px 24px;text-align:center">
@@ -206,6 +216,9 @@ const Worker = {
     document.getElementById('btn-close-review').addEventListener('click', () => this.closePanel('review-panel'));
     document.getElementById('btn-submit')      .addEventListener('click', () => this.confirmSubmit());
     document.getElementById('btn-clear')       .addEventListener('click', () => this.clearOrder());
+    document.getElementById('btn-settings')      .addEventListener('click', () => { this._populateSettings(); this.openPanel('settings-panel'); });
+    document.getElementById('btn-close-settings').addEventListener('click', () => this.closePanel('settings-panel'));
+    document.getElementById('btn-save-settings') .addEventListener('click', () => this.saveSettings());
     document.getElementById('btn-new-order')   .addEventListener('click', () => this.newOrder());
     document.getElementById('search')          .addEventListener('input', () => this.renderList());
 
@@ -367,6 +380,40 @@ const Worker = {
   },
   openPanel(id)  { document.getElementById(id)?.classList.add('open'); },
   closePanel(id) { document.getElementById(id)?.classList.remove('open'); },
+
+  _populateSettings() {
+    const s = Settings.get();
+    const el = document.getElementById('settings-body'); if (!el) return;
+    el.innerHTML = `
+      <div class="settings-section">
+        <div class="settings-label">Search &amp; Sort</div>
+        <div class="settings-card">
+          <div class="settings-row">
+            <div><div class="settings-row-label">Numeric-aware sorting</div><div class="settings-row-sub">e.g. 8mm lists before 10mm, rather than alphabetically</div></div>
+            <input type="checkbox" id="s-natural-sort" ${s.naturalSort!==false?'checked':''} style="width:20px;height:20px">
+          </div>
+          <div class="settings-row">
+            <div><div class="settings-row-label">Unit-aware search</div><div class="settings-row-sub">"1 inch", "25.4mm", "1\"" etc. all find the same item</div></div>
+            <input type="checkbox" id="s-unit-search" ${s.unitAwareSearch!==false?'checked':''} style="width:20px;height:20px">
+          </div>
+          <div class="settings-row">
+            <div><div class="settings-row-label">Typo-tolerant search</div><div class="settings-row-sub">Finds close matches even with spelling mistakes</div></div>
+            <input type="checkbox" id="s-fuzzy-search" ${s.fuzzySearch!==false?'checked':''} style="width:20px;height:20px">
+          </div>
+        </div>
+      </div>`;
+  },
+
+  saveSettings() {
+    Settings.save({
+      naturalSort:     document.getElementById('s-natural-sort')?.checked ?? true,
+      unitAwareSearch: document.getElementById('s-unit-search')?.checked ?? true,
+      fuzzySearch:     document.getElementById('s-fuzzy-search')?.checked ?? true,
+    });
+    this.renderList();
+    const btn = document.getElementById('btn-save-settings');
+    if (btn) { btn.textContent = '✓ Saved'; setTimeout(() => btn.textContent = 'Save', 1500); }
+  },
   openReview()   { this._renderReviewContents(); this.openPanel('review-panel'); },
 
   _renderReviewContents() {
