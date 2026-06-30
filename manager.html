@@ -643,8 +643,12 @@ const Manager = {
       if (inc)        { e.stopPropagation(); this.stepQty(inc.dataset.qinc, +inc.dataset.idx,  1); return; }
       if (catEmail)   { e.stopPropagation(); this.openCategoryEmail(catEmail.dataset.catEmail); return; }
       if (del)        { e.stopPropagation(); this.deleteOrder(del.dataset.delete); return; }
-      const rejectOrd = e.target.closest('[data-reject-order]');
-      if (rejectOrd)  { e.stopPropagation(); this.rejectOrder(rejectOrd.dataset.rejectOrder); return; }
+      const rejectOrd  = e.target.closest('[data-reject-order]');
+      if (rejectOrd)   { e.stopPropagation(); this.rejectOrder(rejectOrd.dataset.rejectOrder); return; }
+      const rejectItem = e.target.closest('[data-reject-item]');
+      if (rejectItem)  { e.stopPropagation(); this.rejectItem(rejectItem.dataset.rejectItem, rejectItem.dataset.partcode); return; }
+      const resetCat   = e.target.closest('[data-reset-cat]');
+      if (resetCat)    { e.stopPropagation(); this.resetCategoryEmailed(resetCat.dataset.resetCat, resetCat.dataset.category); return; }
       if (combHdr)    { e.stopPropagation(); this.toggleCombinedCat(combHdr.dataset.combCat); return; }
       if (combDel)    { e.stopPropagation(); this.excludeCombinedLine(combDel.dataset.combDel, combDel.dataset.orderId, combDel.dataset.partcode); return; }
       if (combMrg)    { e.stopPropagation(); this.localMergeLines(combMrg.dataset.combMerge, combMrg.dataset.partcode); return; }
@@ -817,24 +821,33 @@ const Manager = {
   // ══════════════════════════════════════════
   renderIntakeMat() {
     const el = document.getElementById('intake-list-mat'); if (!el) return;
-    el.innerHTML = Intake.renderList(this.orders, 'materials', this._intakeFilter.materials, this._intakeOpenOrders);
+    el.innerHTML = Intake.renderCategoryList(this.orders, 'materials', this._intakeFilter.materials, this._intakeOpenOrders);
   },
 
   renderIntakeCons() {
     const el = document.getElementById('intake-list-cons'); if (!el) return;
-    el.innerHTML = Intake.renderList(this.orders, 'consumables', this._intakeFilter.consumables, this._intakeOpenOrders);
+    el.innerHTML = Intake.renderCategoryList(this.orders, 'consumables', this._intakeFilter.consumables, this._intakeOpenOrders);
   },
 
-  intakeRerenderCard(orderId, type) {
-    if (this._intakeOpenOrders.has(orderId)) this._intakeOpenOrders.delete(orderId);
-    else this._intakeOpenOrders.add(orderId);
-    const order  = this.orders.find(o => o._id === orderId);
-    const cardEl = document.getElementById(`intake-card-${orderId}`);
-    if (cardEl && order) {
-      cardEl.outerHTML = Intake.renderCard(order, type, this._intakeOpenOrders);
+  intakeRerenderCard(cardKey, type) {
+    const sep = cardKey.indexOf('|||');
+    if (sep >= 0) {
+      const orderId  = cardKey.slice(0, sep);
+      const category = cardKey.slice(sep + 3);
+      if (this._intakeOpenOrders.has(cardKey)) this._intakeOpenOrders.delete(cardKey);
+      else this._intakeOpenOrders.add(cardKey);
+      const order = this.orders.find(o => o._id === orderId);
+      if (!order) { this.renderIntakeMat(); return; }
+      const isMat    = !order.type || order.type === 'materials';
+      const t        = type || (isMat ? 'materials' : 'consumables');
+      const catItems = (order.items || []).filter(i => i.category === category && (isMat ? !!i.emailed : true) && !i.rejected);
+      const safeId   = cardKey.replace(/[^a-zA-Z0-9]/g, '_');
+      const cardEl   = document.getElementById(`intake-card-${safeId}`);
+      if (cardEl) cardEl.outerHTML = Intake.renderCategoryCard(order, category, catItems, t, this._intakeOpenOrders);
+      else { if (isMat) this.renderIntakeMat(); else this.renderIntakeCons(); }
     } else {
-      if (type === 'materials')   this.renderIntakeMat();
-      else                        this.renderIntakeCons();
+      if (type === 'materials') this.renderIntakeMat();
+      else this.renderIntakeCons();
     }
   },
 
@@ -852,7 +865,8 @@ const Manager = {
     const curr = order.intake.items[key] || {};
     if (curr.status === action) delete order.intake.items[key];
     else order.intake.items[key] = { ...curr, status: action, qtyReceived: action === 'partial' ? (curr.qtyReceived ?? null) : null };
-    this._intakeSaveAndRerender(orderId, order);
+    const item = (order.items || []).find(i => String(i.id) === key);
+    this._intakeSaveAndRerender(orderId, order, item?.category);
   },
 
   intakeSetPartialQty(orderId, itemId, qty) {
@@ -871,18 +885,27 @@ const Manager = {
     this._intakeSave(orderId, order);
   },
 
-  _intakeSaveAndRerender(orderId, order) {
-    const type   = (!order.type || order.type === 'materials') ? 'materials' : 'consumables';
-    const cardEl = document.getElementById(`intake-card-${orderId}`);
-    if (cardEl) cardEl.outerHTML = Intake.renderCard(order, type, this._intakeOpenOrders);
-    else if (type === 'materials') this.renderIntakeMat();
+  _intakeSaveAndRerender(orderId, order, category) {
+    const type = (!order.type || order.type === 'materials') ? 'materials' : 'consumables';
+    if (category) {
+      const cardKey  = `${orderId}|||${category}`;
+      const safeId   = cardKey.replace(/[^a-zA-Z0-9]/g, '_');
+      const cardEl   = document.getElementById(`intake-card-${safeId}`);
+      const catItems = (order.items || []).filter(i => i.category === category && (type === 'materials' ? !!i.emailed : true) && !i.rejected);
+      if (cardEl) {
+        cardEl.outerHTML = Intake.renderCategoryCard(order, category, catItems, type, this._intakeOpenOrders);
+        this._intakeSave(orderId, order);
+        return;
+      }
+    }
+    if (type === 'materials') this.renderIntakeMat();
     else this.renderIntakeCons();
     this._intakeSave(orderId, order);
   },
 
   _intakeSave(orderId, order) {
     const isMat      = !order.type || order.type === 'materials';
-    const totalItems = (order.items || []).filter(i => isMat ? !!i.emailed : true).length;
+    const totalItems = (order.items || []).filter(i => (isMat ? !!i.emailed : true) && !i.rejected).length;
     const s          = Settings.get();
     const by         = (s.managerName || 'Manager').trim() || 'Manager';
     DB.updateIntake(orderId, order.intake.items, by, totalItems)
@@ -918,9 +941,19 @@ const Manager = {
     const wrap = document.getElementById('order-queue'); if (!wrap) return;
     // Preserve open card state
     wrap.querySelectorAll('.order-card-body.open').forEach(el => this._openCards.add(el.id.replace('body-', '')));
+
+    // Sent view: per-category email groups (not per-submission)
+    if (this.activeView === 'sent') {
+      wrap.innerHTML = this._renderSentGroups();
+      for (const id of this._openCards) {
+        document.getElementById(`body-${id}`)?.classList.add('open');
+        document.getElementById(`chev-${id}`)?.classList.add('open');
+      }
+      return;
+    }
+
     let list = this.orders;
     if (this.activeView === 'pending')  list = list.filter(o => o.status === 'pending');
-    if (this.activeView === 'sent')     list = list.filter(o => o.status === 'sent');
     if (this.activeView === 'rejected') list = list.filter(o => o.status === 'rejected');
     const listIds = new Set(list.map(o => o._id));
     for (const id of this._openCards) { if (!listIds.has(id)) this._openCards.delete(id); }
@@ -979,7 +1012,10 @@ const Manager = {
               ${excludedLines.map(line => `
                 <div class="combined-sub-row" style="opacity:0.35">
                   <div class="combined-sub-device"><i class="ti ti-device-ipad" style="font-size:11px"></i><span>${esc(line.deviceName||line.orderRef||'Unknown')}</span><span style="margin-left:4px;opacity:0.6;font-size:10px">${line.submittedAt?fmtTime(line.submittedAt):''}</span><span style="font-size:10px;color:var(--text3);margin-left:4px">(excluded)</span></div>
-                  <button class="btn-sm" data-unexclude="${esc(cat)}" data-order-id="${esc(line.orderId)}" data-partcode="${esc(pGroup.partCode)}" style="font-size:10px;padding:2px 6px">Restore</button>
+                  <div style="display:flex;gap:4px">
+                    <button class="btn-sm" data-unexclude="${esc(cat)}" data-order-id="${esc(line.orderId)}" data-partcode="${esc(pGroup.partCode)}" style="font-size:10px;padding:2px 6px">Restore</button>
+                    <button class="btn-sm btn-sm-danger" data-reject-item="${esc(line.orderId)}" data-partcode="${esc(pGroup.partCode)}" style="font-size:10px;padding:2px 6px" title="Reject item"><i class="ti ti-ban"></i></button>
+                  </div>
                 </div>`).join('')}`;
             }
 
@@ -1010,7 +1046,10 @@ const Manager = {
                   </div>
                 </div>
                 ${isExc
-                  ? `<button class="btn-sm" data-unexclude="${esc(cat)}" data-order-id="${esc(line.orderId)}" data-partcode="${esc(pGroup.partCode)}" style="font-size:10px;padding:2px 6px;flex-shrink:0">Restore</button>`
+                  ? `<div style="display:flex;gap:4px;flex-shrink:0">
+                      <button class="btn-sm" data-unexclude="${esc(cat)}" data-order-id="${esc(line.orderId)}" data-partcode="${esc(pGroup.partCode)}" style="font-size:10px;padding:2px 6px">Restore</button>
+                      <button class="btn-sm btn-sm-danger" data-reject-item="${esc(line.orderId)}" data-partcode="${esc(pGroup.partCode)}" style="font-size:10px;padding:2px 6px" title="Reject item"><i class="ti ti-ban"></i></button>
+                    </div>`
                   : `<div class="qty-row" style="flex-shrink:0">
                       <button class="qty-btn" data-cqdec="${esc(cat)}" data-order-id="${esc(line.orderId)}" data-partcode="${esc(pGroup.partCode)}">−</button>
                       <input class="qty-edit" type="number" min="0" step="1" value="${line.qty}"
@@ -1065,7 +1104,10 @@ const Manager = {
                     ${line.submittedAt ? `<span style="margin-left:4px;opacity:0.6;font-size:10px">${fmtTime(line.submittedAt)}</span>` : ''}
                     <span style="font-size:10px;color:var(--text3);margin-left:4px">(excluded)</span>
                   </div>
-                  <button class="btn-sm" data-unexclude="${esc(cat)}" data-order-id="${esc(line.orderId)}" data-partcode="${esc(pGroup.partCode)}" style="font-size:10px;padding:2px 6px">Restore</button>
+                  <div style="display:flex;gap:4px">
+                    <button class="btn-sm" data-unexclude="${esc(cat)}" data-order-id="${esc(line.orderId)}" data-partcode="${esc(pGroup.partCode)}" style="font-size:10px;padding:2px 6px">Restore</button>
+                    <button class="btn-sm btn-sm-danger" data-reject-item="${esc(line.orderId)}" data-partcode="${esc(pGroup.partCode)}" style="font-size:10px;padding:2px 6px" title="Reject item"><i class="ti ti-ban"></i></button>
+                  </div>
                 </div>`).join('');
               return mainRow + subRows + excludedRowsHtml;
             }
@@ -1108,12 +1150,73 @@ const Manager = {
     }
   },
 
+  // ── SENT VIEW: per-category email groups ────────────────────────────
+  // Each card = one category from one submission that has been fully emailed.
+  // A submission can appear across multiple cards if multiple categories were emailed.
+  _renderSentGroups() {
+    const sentGroups = [];
+    for (const order of this.orders) {
+      if (order.status === 'rejected') continue;
+      const items = (order.items || []);
+      const cats  = [...new Set(items.map(i => i.category))];
+      for (const cat of cats) {
+        const catItems    = items.filter(i => i.category === cat);
+        const nonRejected = catItems.filter(i => !i.rejected);
+        if (nonRejected.length > 0 && nonRejected.every(i => i.emailed)) {
+          sentGroups.push({ order, category: cat, catItems: nonRejected });
+        }
+      }
+    }
+    if (!sentGroups.length) {
+      return `<div class="empty-queue"><i class="ti ti-mail-check"></i><p>No sent orders yet.</p></div>`;
+    }
+    return sentGroups.map(g => this._sentGroupCard(g.order, g.category, g.catItems)).join('');
+  },
+
+  _sentGroupCard(order, category, catItems) {
+    const ts     = order.submittedAt?.toDate ? fmtTime(order.submittedAt.toDate()) : fmtTime(order.submittedAt);
+    const safeKey = `sent-${order._id.replace(/[^a-zA-Z0-9]/g,'_')}-${category.replace(/[^a-zA-Z0-9]/g,'_')}`;
+    const isOpen  = this._openCards.has(safeKey);
+    return `<div class="order-card" id="card-${esc(safeKey)}">
+      <div class="order-card-header" data-card-id="${esc(safeKey)}">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%">
+          <div>
+            <div class="order-ref-text">${esc(category)}</div>
+            <div class="order-meta">${ts}${order.deviceName ? ' · ' + esc(order.deviceName) : ''} · ${catItems.length} line${catItems.length!==1?'s':''}</div>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px">
+            <span class="status-pill status-sent">Sent</span>
+            <i class="ti ti-chevron-right chevron${isOpen?' open':''}" id="chev-${esc(safeKey)}"></i>
+          </div>
+        </div>
+      </div>
+      <div class="order-card-body${isOpen?' open':''}" id="body-${esc(safeKey)}">
+        ${catItems.map(item => `
+          <div class="order-line emailed">
+            <div class="order-line-info">
+              <div class="order-line-name">${esc(item.description)}</div>
+              <div class="order-line-code">${esc(item.partCode)}</div>
+            </div>
+            <div class="order-line-right">
+              <span class="emailed-badge"><i class="ti ti-mail-check"></i> Emailed</span>
+              <span style="font-size:11px;color:var(--text3);font-family:var(--mono);margin-left:4px">× ${item.qty}${item.qtyType ? ' ' + esc(item.qtyType) : ''}</span>
+            </div>
+          </div>`).join('')}
+        <div class="order-card-actions">
+          <button class="btn btn-outline" data-reset-cat="${esc(order._id)}" data-category="${esc(category)}" style="margin-bottom:4px">
+            <i class="ti ti-refresh"></i> Reset to pending
+          </button>
+        </div>
+      </div>
+    </div>`;
+  },
+
   // Group pending items by category, then by partCode, keeping separate sub-lines per order
   _groupByCatKeepSeparate(orders) {
     const groups = {};
     for (const order of orders) {
       for (const item of (order.items || [])) {
-        if (item.emailed) continue;
+        if (item.emailed || item.rejected) continue;
         const cat = item.category || 'Uncategorised';
         if (!groups[cat]) groups[cat] = { byPartCode: {} };
         const pc = item.partCode;
@@ -1213,6 +1316,20 @@ const Manager = {
     try { await DB.rejectOrder(id); } catch(e) { alert('Failed: ' + e.message); }
   },
 
+  async rejectItem(orderId, partCode) {
+    await new Promise(r => setTimeout(r, 0));
+    if (!confirm(`Reject ${partCode} from this order?`)) return;
+    // Remove from local exclusions
+    for (const key of [...this._combExcluded]) {
+      if (key.endsWith(`|${partCode}|${orderId}`)) this._combExcluded.delete(key);
+    }
+    try { await DB.rejectItem(orderId, partCode); } catch(e) { alert('Reject failed: ' + e.message); }
+  },
+
+  async resetCategoryEmailed(orderId, category) {
+    try { await DB.resetCategoryEmailed(orderId, category); } catch(e) { alert('Reset failed: ' + e.message); }
+  },
+
   async stepCombinedSubQty(cat, orderId, partCode, delta) {
     if (!partCode) return;
     const order = this.orders.find(o => o._id === orderId); if (!order) return;
@@ -1284,31 +1401,37 @@ const Manager = {
     const statusClass = isPending ? 'status-pending' : isSent ? 'status-sent' : isRejected ? 'status-rejected' : 'status-pending';
 
     const allRows = items.map((item, idx) => `
-      <div class="order-line ${item.emailed ? 'emailed' : ''}">
+      <div class="order-line ${item.emailed ? 'emailed' : ''} ${item.rejected ? 'rejected-line' : ''}">
         <div class="order-line-info">
           <div class="order-line-name">${esc(item.description)}</div>
           <div class="order-line-code">${esc(item.partCode)}</div>
         </div>
         <div class="order-line-right">
-          ${item.emailed
-            ? `<span class="emailed-badge"><i class="ti ti-mail-check"></i> Emailed</span>
-               <button class="btn-sm" data-reset-item="${o._id}" data-category="${esc(item.category)}" data-partcode="${esc(item.partCode)}"
-                 style="font-size:10px;padding:2px 6px;color:var(--amber-text);border-color:var(--amber-text);background:var(--amber-bg)" title="Reset to pending so it can be re-emailed">
-                 <i class="ti ti-refresh"></i>
-               </button>`
-            : isPending
-              ? `<div class="qty-row">
-                  <button class="qty-btn" data-qdec="${o._id}" data-idx="${idx}">−</button>
-                  <input class="qty-edit" type="number" min="0" step="1" value="${item.qty}"
-                    data-qchange="${o._id}" data-idx="${idx}" id="qinp-${o._id}-${idx}">
-                  <button class="qty-btn" data-qinc="${o._id}" data-idx="${idx}">+</button>
-                </div>`
-              : `<span class="order-line-qty">× ${item.qty}</span>`}
+          ${item.rejected
+            ? `<span class="status-pill status-rejected" style="font-size:10px;padding:2px 8px"><i class="ti ti-ban"></i> Rejected</span>`
+            : item.emailed
+              ? `<span class="emailed-badge"><i class="ti ti-mail-check"></i> Emailed</span>
+                 <button class="btn-sm" data-reset-item="${o._id}" data-category="${esc(item.category)}" data-partcode="${esc(item.partCode)}"
+                   style="font-size:10px;padding:2px 6px;color:var(--amber-text);border-color:var(--amber-text);background:var(--amber-bg)" title="Reset to pending so it can be re-emailed">
+                   <i class="ti ti-refresh"></i>
+                 </button>`
+              : isPending
+                ? `<div class="qty-row">
+                    <button class="qty-btn" data-qdec="${o._id}" data-idx="${idx}">−</button>
+                    <input class="qty-edit" type="number" min="0" step="1" value="${item.qty}"
+                      data-qchange="${o._id}" data-idx="${idx}" id="qinp-${o._id}-${idx}">
+                    <button class="qty-btn" data-qinc="${o._id}" data-idx="${idx}">+</button>
+                  </div>
+                  <button class="btn-sm btn-sm-danger" data-reject-item="${esc(o._id)}" data-partcode="${esc(item.partCode)}"
+                    style="font-size:11px;padding:3px 6px" title="Reject this item">
+                    <i class="ti ti-ban"></i>
+                  </button>`
+                : `<span class="order-line-qty">× ${item.qty}</span>`}
           <span style="font-size:11px;color:var(--text3);font-family:var(--mono);margin-left:6px">${esc(item.qtyType||'')}</span>
         </div>
       </div>`).join('');
 
-    const pendingItems = items.filter(i => !i.emailed);
+    const pendingItems = items.filter(i => !i.emailed && !i.rejected);
     const emailedItems = items.filter(i =>  i.emailed);
     const pendingCats  = [...new Set(pendingItems.map(i => i.category))];
     // Always show reject/delete for empty orders or rejected orders
@@ -1421,29 +1544,27 @@ const Manager = {
   // ══════════════════════════════════════════
   openCategoryEmail(category) {
     const pendingOrders = this.orders.filter(o => o.status === 'pending');
-    // Collect all non-emailed items for this category across all orders
-    // Merge items with same partCode into one line for the email
-    const mergedItems = {};
-    const orderIds = new Set();
+    const mergedItems   = {};
+    const orderIds      = new Set();
+    const excludedByOrder = {};  // orderId -> [partCode, ...] excluded from this send
     for (const order of pendingOrders) {
       for (const item of (order.items || [])) {
-        if (item.emailed || item.category !== category) continue;
-        // Respect local exclusions
-        if (this.isExcluded(category, order._id, item.partCode)) continue;
-        orderIds.add(order._id);
-        // Respect local merges — use merged qty if set
-        const mergeKey = `${category}|${item.partCode}`;
-        const localMerge = this._combMerged.get(mergeKey);
-        if (localMerge) {
-          // Only add once (first occurrence), use local merged qty
-          if (!mergedItems[item.partCode]) {
-            mergedItems[item.partCode] = { ...item, qty: localMerge.qty };
+        if (item.emailed || item.rejected || item.category !== category) continue;
+        if (this.isExcluded(category, order._id, item.partCode)) {
+          if (!excludedByOrder[order._id]) excludedByOrder[order._id] = [];
+          if (!excludedByOrder[order._id].includes(item.partCode)) {
+            excludedByOrder[order._id].push(item.partCode);
           }
           continue;
         }
-        if (!mergedItems[item.partCode]) {
-          mergedItems[item.partCode] = { ...item, qty: 0 };
+        orderIds.add(order._id);
+        const mergeKey   = `${category}|${item.partCode}`;
+        const localMerge = this._combMerged.get(mergeKey);
+        if (localMerge) {
+          if (!mergedItems[item.partCode]) mergedItems[item.partCode] = { ...item, qty: localMerge.qty };
+          continue;
         }
+        if (!mergedItems[item.partCode]) mergedItems[item.partCode] = { ...item, qty: 0 };
         mergedItems[item.partCode].qty += item.qty;
       }
     }
@@ -1456,7 +1577,7 @@ const Manager = {
     document.getElementById('email-cc').value      = s.ccEmail;
     document.getElementById('email-subject').value = subject;
     document.getElementById('email-body').value    = body;
-    this._pendingEmailMeta = { category, orderIds: [...orderIds] };
+    this._pendingEmailMeta = { category, orderIds: [...orderIds], excludedByOrder };
     this._noEmailCategory  = null;
     this.openPanel('email-panel');
   },
@@ -1468,9 +1589,14 @@ const Manager = {
     const body    = document.getElementById('email-body').value;
 
     if (this._pendingEmailMeta) {
-      const { category, orderIds } = this._pendingEmailMeta;
+      const { category, orderIds, excludedByOrder = {} } = this._pendingEmailMeta;
       for (const id of orderIds) {
-        try { await DB.markCategoryEmailed(id, category); } catch(e) { console.error(e); }
+        const excludePartCodes = excludedByOrder[id] || [];
+        try { await DB.markCategoryEmailed(id, category, excludePartCodes); } catch(e) { console.error(e); }
+      }
+      // Clear local exclusions for this category so skipped items are fresh for the next send
+      for (const key of [...this._combExcluded]) {
+        if (key.startsWith(`${category}|`)) this._combExcluded.delete(key);
       }
       this._pendingEmailMeta = null;
     }

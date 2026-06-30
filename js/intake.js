@@ -1,4 +1,4 @@
-// intake.js — v0.36
+// intake.js — v0.37
 // Shared intake rendering module used by warehouse.html and manager.html.
 
 const Intake = {
@@ -53,6 +53,94 @@ const Intake = {
       return relevant.filter(o => this.computeStatus(o) === 'backorder');
     }
     return relevant; // 'all'
+  },
+
+  // ── CATEGORY-BASED RENDERING (Deliveries page + Sent tab) ─────────────
+  // Each "unit" is one (order, category) pair where that category has been emailed.
+  // This maps better to real orders (one supplier email = one delivery to track).
+
+  computeCategoryStatus(order, catItems) {
+    if (!catItems.length) return 'pending';
+    const intakeItems = (order.intake && order.intake.items) || {};
+    const statuses = catItems.map(i => (intakeItems[String(i.id)] || {}).status || 'pending');
+    if (statuses.every(s => s === 'pending'))  return 'pending';
+    if (statuses.every(s => s === 'ok'))       return 'received';
+    const allResolved = statuses.every(s => s === 'ok' || s === 'backorder');
+    if (allResolved && statuses.some(s => s === 'backorder')) return 'backorder';
+    return 'in_progress';
+  },
+
+  buildCategoryGroups(orders, type) {
+    const isMat = type === 'materials';
+    const groups = [];
+    for (const order of orders) {
+      const orderIsMat = !order.type || order.type === 'materials';
+      if (orderIsMat !== isMat) continue;
+      if (order.status === 'rejected') continue;
+      const items = (order.items || []);
+      const eligible = isMat
+        ? items.filter(i => i.emailed && !i.rejected)
+        : items.filter(i => !i.rejected);
+      if (!eligible.length) continue;
+      const cats = [...new Set(eligible.map(i => i.category))];
+      for (const cat of cats) {
+        const catItems = eligible.filter(i => i.category === cat);
+        if (catItems.length) groups.push({ order, category: cat, catItems });
+      }
+    }
+    return groups;
+  },
+
+  filterCategoryGroups(groups, filter) {
+    if (filter === 'outstanding') {
+      return groups.filter(g => {
+        const s = this.computeCategoryStatus(g.order, g.catItems);
+        return s === 'pending' || s === 'in_progress';
+      });
+    }
+    if (filter === 'backorder') {
+      return groups.filter(g => this.computeCategoryStatus(g.order, g.catItems) === 'backorder');
+    }
+    return groups;
+  },
+
+  renderCategoryList(orders, type, filter, openCards) {
+    const groups   = this.buildCategoryGroups(orders, type);
+    const filtered = this.filterCategoryGroups(groups, filter);
+    if (!filtered.length) {
+      const label = filter === 'outstanding' ? 'outstanding' : filter === 'backorder' ? 'back order' : '';
+      return `<div class="empty-state"><i class="ti ti-inbox-off"></i><p>No${label ? ' ' + label : ''} ${type} orders.</p></div>`;
+    }
+    return filtered.map(g => this.renderCategoryCard(g.order, g.category, g.catItems, type, openCards)).join('');
+  },
+
+  // Card key = orderId|||category  (||| is the separator — won't appear in Firebase IDs or typical category names)
+  renderCategoryCard(order, category, catItems, type, openCards) {
+    const cardKey = `${order._id}|||${category}`;
+    const safeId  = cardKey.replace(/[^a-zA-Z0-9]/g, '_');
+    const isOpen  = openCards && openCards.has(cardKey);
+    const status  = this.computeCategoryStatus(order, catItems);
+    const suffix  = status === 'backorder' ? ' — Back Order' : '';
+    const ts      = order.submittedAt && order.submittedAt.toDate
+      ? order.submittedAt.toDate().toLocaleDateString('en-AU', { day:'2-digit', month:'short', year:'numeric' })
+      : '';
+
+    return `
+      <div class="intake-card${isOpen ? ' open' : ''}" id="intake-card-${esc(safeId)}">
+        <div class="intake-card-hdr" data-toggle-order="${esc(cardKey)}">
+          <div class="intake-card-title">
+            <div class="intake-card-ref">${esc(category)}${esc(suffix)}</div>
+            <div class="intake-card-meta">${esc(ts)}${order.deviceName ? ' &middot; ' + esc(order.deviceName) : ''} &middot; ${catItems.length} item${catItems.length !== 1 ? 's' : ''}</div>
+          </div>
+          <div class="intake-card-right">
+            ${this.statusBadge(status)}
+            <i class="ti ${isOpen ? 'ti-chevron-up' : 'ti-chevron-down'} intake-chevron"></i>
+          </div>
+        </div>
+        ${isOpen ? `<div class="intake-card-body">
+          ${catItems.map(i => this.renderItemRow(order, i)).join('')}
+        </div>` : ''}
+      </div>`;
   },
 
   // ── RENDERING ────────────────────────────────────────────────────────

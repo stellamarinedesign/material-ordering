@@ -288,21 +288,29 @@ const Warehouse = {
 
   renderList(type) {
     const el = document.getElementById(`intake-list-${type}`); if (!el) return;
-    el.innerHTML = Intake.renderList(this.orders, type, this._filters[type], this._openOrders);
+    el.innerHTML = Intake.renderCategoryList(this.orders, type, this._filters[type], this._openOrders);
   },
 
-  rerenderCard(orderId, type) {
-    // Toggle open state then re-render just this card
-    if (this._openOrders.has(orderId)) this._openOrders.delete(orderId);
-    else this._openOrders.add(orderId);
-    const cardEl = document.getElementById(`intake-card-${orderId}`);
-    const order  = this.orders.find(o => o._id === orderId);
-    if (cardEl && order) {
-      const t = type || ((!order.type || order.type === 'materials') ? 'materials' : 'consumables');
-      cardEl.outerHTML = Intake.renderCard(order, t, this._openOrders);
-      // Re-wire the newly inserted card (event delegation via container handles it automatically)
+  rerenderCard(cardKey, type) {
+    const sep = cardKey.indexOf('|||');
+    if (sep >= 0) {
+      const orderId  = cardKey.slice(0, sep);
+      const category = cardKey.slice(sep + 3);
+      if (this._openOrders.has(cardKey)) this._openOrders.delete(cardKey);
+      else this._openOrders.add(cardKey);
+      const order = this.orders.find(o => o._id === orderId);
+      if (!order) { this.renderList(type); return; }
+      const isMat    = !order.type || order.type === 'materials';
+      const t        = type || (isMat ? 'materials' : 'consumables');
+      const catItems = (order.items || []).filter(i => i.category === category && (isMat ? !!i.emailed : true) && !i.rejected);
+      const safeId   = cardKey.replace(/[^a-zA-Z0-9]/g, '_');
+      const cardEl   = document.getElementById(`intake-card-${safeId}`);
+      if (cardEl) cardEl.outerHTML = Intake.renderCategoryCard(order, category, catItems, t, this._openOrders);
+      else this.renderList(t);
     } else {
-      this.renderList(type || ((!order?.type || order?.type === 'materials') ? 'materials' : 'consumables'));
+      if (this._openOrders.has(cardKey)) this._openOrders.delete(cardKey);
+      else this._openOrders.add(cardKey);
+      this.renderList(type || 'materials');
     }
   },
 
@@ -318,19 +326,12 @@ const Warehouse = {
   setItemStatus(orderId, itemId, action) {
     const order = this._getOrCreateIntake(orderId);
     if (!order) return;
-    const key    = String(itemId);
-    const curr   = order.intake.items[key] || {};
-    // Toggle off if already active
-    if (curr.status === action) {
-      delete order.intake.items[key];
-    } else {
-      order.intake.items[key] = {
-        ...curr,
-        status:      action,
-        qtyReceived: action === 'partial' ? (curr.qtyReceived ?? null) : null,
-      };
-    }
-    this._saveAndRerender(orderId, order);
+    const key  = String(itemId);
+    const curr = order.intake.items[key] || {};
+    if (curr.status === action) delete order.intake.items[key];
+    else order.intake.items[key] = { ...curr, status: action, qtyReceived: action === 'partial' ? (curr.qtyReceived ?? null) : null };
+    const item = (order.items || []).find(i => String(i.id) === key);
+    this._saveAndRerender(orderId, order, item?.category);
   },
 
   setPartialQty(orderId, itemId, qty) {
@@ -352,22 +353,26 @@ const Warehouse = {
     this._save(orderId, order);
   },
 
-  _saveAndRerender(orderId, order) {
-    // Determine which tab owns this order
+  _saveAndRerender(orderId, order, category) {
     const type = (!order.type || order.type === 'materials') ? 'materials' : 'consumables';
-    // Re-render the card in-place (keep it open)
-    const cardEl = document.getElementById(`intake-card-${orderId}`);
-    if (cardEl) {
-      cardEl.outerHTML = Intake.renderCard(order, type, this._openOrders);
-    } else {
-      this.renderList(type);
+    if (category) {
+      const cardKey  = `${orderId}|||${category}`;
+      const safeId   = cardKey.replace(/[^a-zA-Z0-9]/g, '_');
+      const cardEl   = document.getElementById(`intake-card-${safeId}`);
+      const catItems = (order.items || []).filter(i => i.category === category && (type === 'materials' ? !!i.emailed : true) && !i.rejected);
+      if (cardEl) {
+        cardEl.outerHTML = Intake.renderCategoryCard(order, category, catItems, type, this._openOrders);
+        this._save(orderId, order);
+        return;
+      }
     }
+    this.renderList(type);
     this._save(orderId, order);
   },
 
   _save(orderId, order) {
     const isMat      = !order.type || order.type === 'materials';
-    const totalItems = (order.items || []).filter(i => isMat ? !!i.emailed : true).length;
+    const totalItems = (order.items || []).filter(i => (isMat ? !!i.emailed : true) && !i.rejected).length;
     DB.updateIntake(orderId, order.intake.items, WarehouseDeviceName.get(), totalItems)
       .catch(e => console.error('Intake save failed:', e));
   },

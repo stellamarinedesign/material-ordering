@@ -1,4 +1,4 @@
-// firebase-sync.js — v0.36
+// firebase-sync.js — v0.37
 let _db = null, _configured = false;
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -124,15 +124,19 @@ const DB = {
     });
   },
 
-  async markCategoryEmailed(orderId, category) {
+  async markCategoryEmailed(orderId, category, excludePartCodes = []) {
     if (!this.isReady()) throw new Error('Firebase not initialised');
     const doc   = await _db.collection('orders').doc(orderId).get();
     if (!doc.exists) return;
     const order = doc.data();
+    const excludeSet = new Set(excludePartCodes);
     const items = (order.items||[]).map(item =>
-      item.category === category ? { ...item, emailed: true } : item
+      item.category === category && !excludeSet.has(item.partCode)
+        ? { ...item, emailed: true }
+        : item
     );
-    const allEmailed = items.every(i => i.emailed);
+    const nonRejected = items.filter(i => !i.rejected);
+    const allEmailed  = nonRejected.length > 0 && nonRejected.every(i => i.emailed);
     await _db.collection('orders').doc(orderId).update({
       items,
       status:    allEmailed ? 'sent' : 'pending',
@@ -143,6 +147,38 @@ const DB = {
   async deleteOrder(id) {
     if (!this.isReady()) throw new Error('Firebase not initialised');
     await _db.collection('orders').doc(id).delete();
+  },
+
+  async rejectItem(orderId, partCode) {
+    if (!this.isReady()) throw new Error('Firebase not initialised');
+    const doc   = await _db.collection('orders').doc(orderId).get();
+    if (!doc.exists) return;
+    const order = doc.data();
+    const items = (order.items || []).map(item =>
+      item.partCode === partCode ? { ...item, rejected: true } : item
+    );
+    const nonRejected = items.filter(i => !i.rejected);
+    let newStatus = 'pending';
+    if (nonRejected.length === 0)               newStatus = 'rejected';
+    else if (nonRejected.every(i => i.emailed)) newStatus = 'sent';
+    else                                         newStatus = 'pending';
+    await _db.collection('orders').doc(orderId).update({
+      items, status: newStatus,
+      updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+    });
+  },
+
+  async resetCategoryEmailed(orderId, category) {
+    if (!this.isReady()) throw new Error('Firebase not initialised');
+    const doc = await _db.collection('orders').doc(orderId).get();
+    if (!doc.exists) return;
+    const items = (doc.data().items || []).map(item =>
+      item.category === category ? { ...item, emailed: false } : item
+    );
+    await _db.collection('orders').doc(orderId).update({
+      items, status: 'pending',
+      updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+    });
   },
 
   // Saves a consumables order to Firestore (mirroring materials orders so intake can track it).
@@ -164,10 +200,14 @@ const DB = {
     if (!this.isReady()) throw new Error('Firebase not initialised');
     const doc = await _db.collection('orders').doc(orderId).get();
     if (!doc.exists) return;
-    const items = (doc.data().items || []).map(item => ({ ...item, emailed: true }));
+    const items = (doc.data().items || []).map(item =>
+      item.rejected ? item : { ...item, emailed: true }
+    );
+    const nonRejected = items.filter(i => !i.rejected);
+    const allEmailed  = nonRejected.length > 0 && nonRejected.every(i => i.emailed);
     await _db.collection('orders').doc(orderId).update({
       items,
-      status: 'sent',
+      status: allEmailed ? 'sent' : 'pending',
       updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
     });
   },
@@ -223,7 +263,8 @@ const DB = {
         ? { ...item, emailed: false }
         : item
     );
-    const allEmailed = items.every(i => i.emailed);
+    const nonRejected = items.filter(i => !i.rejected);
+    const allEmailed  = nonRejected.length > 0 && nonRejected.every(i => i.emailed);
     await _db.collection('orders').doc(orderId).update({
       items,
       status: allEmailed ? 'sent' : 'pending',
