@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="mobile-web-app-capable" content="yes">
+  <title>Warehouse Intake</title>
+  <link rel="icon" type="image/png" href="favicon.png">
+  <link rel="stylesheet" href="fonts/tabler-icons.min.css">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div id="root"></div>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+<!-- APP CHECK: remove this line to disable App Check (also remove init block in firebase-sync.js) -->
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-check-compat.js"></script>
+<script src="js/shared.js"></script>
+<script src="js/firebase-sync.js"></script>
+<script src="js/intake.js"></script>
+<script>
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.getRegistrations().then(rs => rs.forEach(r => r.unregister()));
+}
+
+const Warehouse = {
+  orders:      [],
+  materials:   [],
+  consumables: [],
+  activeTab:   'materials',
+  _filters:    { materials: 'all', consumables: 'all' },
+  _openOrders: new Set(),
+  _unsubOrders: null,
+  _connState:  { connected: false, latestVersion: null },
+  _noteSaveTimers: {},
+
+  async init() {
+    const cfg  = FirebaseConfig.get();
+    const name = WarehouseDeviceName.get();
+    if (!cfg || !name) { this.showSetup(); return; }
+    const ok = await DB.init(cfg);
+    if (!ok) { this.showSetup('Could not connect. Check your Firebase config.'); return; }
+    this.materials   = await Data.load('./materials.csv');
+    this.consumables = await Data.loadConsumables('./consumables.csv');
+    this.renderShell();
+    this.startListening();
+    this.startConnectionStatus();
+    this.startVersionCheck();
+  },
+
+  // ── SETUP SCREEN ─────────────────────────────────────────────────────
+  showSetup(err) {
+    document.getElementById('root').innerHTML = `
+      <div class="setup-screen">
+        <div class="setup-card">
+          <h2><i class="ti ti-warehouse" style="color:#ea580c;vertical-align:-2px"></i> Warehouse Intake Setup</h2>
+          <p>Connect this device to Firebase and give it a name so intake records are attributed correctly.</p>
+          ${err ? `<div style="background:var(--red-bg);color:var(--red-text);border-radius:var(--radius);padding:10px 12px;font-size:13px;margin-bottom:12px">${esc(err)}</div>` : ''}
+
+          <div class="setup-field">
+            <label>Device name</label>
+            <input id="cfg-name" placeholder="Warehouse iPad" autocomplete="off"
+              value="${esc(WarehouseDeviceName.get())}">
+          </div>
+
+          <div class="setup-field" style="margin-top:6px">
+            <label>Paste Firebase config</label>
+            <textarea id="cfg-paste" class="setup-paste-area" placeholder="apiKey|projectId|appId"></textarea>
+          </div>
+          <div class="setup-divider">or enter manually</div>
+          <div class="setup-field"><label>API Key</label><input id="cfg-apiKey" autocomplete="off" placeholder="AIzaSy…"></div>
+          <div class="setup-field"><label>Project ID</label><input id="cfg-projectId" autocomplete="off" placeholder="my-project-id"></div>
+          <div class="setup-field"><label>App ID</label><input id="cfg-appId" autocomplete="off" placeholder="1:123456:web:abc…"></div>
+
+          <button id="btn-connect" class="btn btn-primary" style="margin-top:8px;width:100%">
+            <i class="ti ti-plug"></i> Connect
+          </button>
+          <div class="setup-note" style="margin-top:14px">Enter the config string provided by your administrator.</div>
+        </div>
+      </div>`;
+
+    // Auto-fill fields from paste
+    document.getElementById('cfg-paste').addEventListener('input', () => {
+      const raw    = document.getElementById('cfg-paste').value;
+      const parsed = parseFirebaseConfig(raw);
+      if (parsed.apiKey)    document.getElementById('cfg-apiKey').value    = parsed.apiKey;
+      if (parsed.projectId) document.getElementById('cfg-projectId').value = parsed.projectId;
+      if (parsed.appId)     document.getElementById('cfg-appId').value     = parsed.appId;
+    });
+    document.getElementById('btn-connect').addEventListener('click', () => this.saveSetup());
+  },
+
+  async saveSetup() {
+    const name = document.getElementById('cfg-name').value.trim();
+    if (!name) { alert('Please enter a device name.'); return; }
+
+    // Apply paste if present
+    const paste = document.getElementById('cfg-paste').value;
+    if (paste.trim()) {
+      const p = parseFirebaseConfig(paste);
+      if (p.apiKey)    document.getElementById('cfg-apiKey').value    = p.apiKey;
+      if (p.projectId) document.getElementById('cfg-projectId').value = p.projectId;
+      if (p.appId)     document.getElementById('cfg-appId').value     = p.appId;
+    }
+
+    const apiKey    = document.getElementById('cfg-apiKey').value.trim();
+    const projectId = document.getElementById('cfg-projectId').value.trim();
+    const appId     = document.getElementById('cfg-appId').value.trim();
+    if (!apiKey || !projectId || !appId) { alert('Please fill in all Firebase config fields.'); return; }
+
+    const cfg = {
+      apiKey, projectId, appId,
+      authDomain:        `${projectId}.firebaseapp.com`,
+      storageBucket:     `${projectId}.appspot.com`,
+      messagingSenderId: '000000000000',
+    };
+    const ok = await DB.init(cfg);
+    if (!ok) { this.showSetup('Connection failed. Check your config and try again.'); return; }
+
+    FirebaseConfig.save(cfg);
+    WarehouseDeviceName.save(name);
+    this.materials   = await Data.load('./materials.csv');
+    this.consumables = await Data.loadConsumables('./consumables.csv');
+    this.renderShell();
+    this.startListening();
+    this.startConnectionStatus();
+    this.startVersionCheck();
+  },
+
+  // ── SHELL ─────────────────────────────────────────────────────────────
+  renderShell() {
+    const name = WarehouseDeviceName.get();
+    document.getElementById('root').innerHTML = `
+      <div class="app-root" id="app-root">
+
+        <div class="header">
+          <div class="col"><div class="header-inner">
+            <div class="header-left">
+              <div class="header-title"><i class="ti ti-warehouse" style="opacity:.7;margin-right:6px"></i>Warehouse Intake</div>
+              <div class="header-ref">
+                <span class="live-dot" id="live-dot"></span><span id="live-label">Live</span>
+                &nbsp;·&nbsp; <span id="app-version" style="opacity:.6;font-family:var(--mono)"></span>
+              </div>
+            </div>
+            <div class="header-actions">
+              <span class="role-pill">${esc(name)}</span>
+              <button class="icon-btn" id="btn-setup" title="Setup"><i class="ti ti-settings"></i></button>
+            </div>
+          </div></div>
+        </div>
+
+        <div id="update-banner-wrap"></div>
+
+        <!-- TAB BAR -->
+        <div style="background:var(--surface);border-bottom:1px solid var(--border);flex-shrink:0">
+          <div class="col" style="padding:0">
+            <div style="display:flex;overflow-x:auto;scrollbar-width:none">
+              <button class="main-tab active" id="tab-materials">
+                <i class="ti ti-cube"></i>Materials
+              </button>
+              <button class="main-tab" id="tab-consumables">
+                <i class="ti ti-package"></i>Consumables
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- MATERIALS VIEW -->
+        <div id="view-materials" style="flex:1;display:flex;flex-direction:column;overflow:hidden;min-height:0">
+          <div class="col" style="padding-top:10px;padding-bottom:0;flex-shrink:0">
+            <div class="intake-filter-bar" id="filter-materials">
+              <div class="intake-filter-chip active" data-filter="all">All</div>
+              <div class="intake-filter-chip" data-filter="outstanding"><i class="ti ti-clock"></i> Outstanding</div>
+              <div class="intake-filter-chip" data-filter="backorder"><i class="ti ti-clock-pause"></i> Back Orders</div>
+            </div>
+          </div>
+          <div class="intake-scroll app-scroll">
+            <div class="col"><div class="intake-list" id="intake-list-materials"></div></div>
+          </div>
+        </div>
+
+        <!-- CONSUMABLES VIEW -->
+        <div id="view-consumables" style="display:none;flex:1;flex-direction:column;overflow:hidden;min-height:0">
+          <div class="col" style="padding-top:10px;padding-bottom:0;flex-shrink:0">
+            <div class="intake-filter-bar" id="filter-consumables">
+              <div class="intake-filter-chip active" data-filter="all">All</div>
+              <div class="intake-filter-chip" data-filter="outstanding"><i class="ti ti-clock"></i> Outstanding</div>
+              <div class="intake-filter-chip" data-filter="backorder"><i class="ti ti-clock-pause"></i> Back Orders</div>
+            </div>
+          </div>
+          <div class="intake-scroll app-scroll">
+            <div class="col"><div class="intake-list" id="intake-list-consumables"></div></div>
+          </div>
+        </div>
+
+      </div>`;
+
+    const verEl = document.getElementById('app-version');
+    if (verEl) verEl.textContent = APP_VERSION;
+
+    // Tab switching
+    document.getElementById('tab-materials').addEventListener('click',   () => this.setTab('materials'));
+    document.getElementById('tab-consumables').addEventListener('click', () => this.setTab('consumables'));
+
+    // Filter chips
+    document.getElementById('filter-materials').addEventListener('click', e => {
+      const chip = e.target.closest('[data-filter]'); if (!chip) return;
+      this._filters.materials = chip.dataset.filter;
+      document.querySelectorAll('#filter-materials .intake-filter-chip').forEach(c => c.classList.toggle('active', c === chip));
+      this.renderList('materials');
+    });
+    document.getElementById('filter-consumables').addEventListener('click', e => {
+      const chip = e.target.closest('[data-filter]'); if (!chip) return;
+      this._filters.consumables = chip.dataset.filter;
+      document.querySelectorAll('#filter-consumables .intake-filter-chip').forEach(c => c.classList.toggle('active', c === chip));
+      this.renderList('consumables');
+    });
+
+    // Setup button (re-enter device name / config)
+    document.getElementById('btn-setup').addEventListener('click', () => {
+      if (confirm('Re-open setup? This will let you change the device name or Firebase config.')) {
+        this.showSetup();
+      }
+    });
+
+    // Wire intake events for both lists
+    this._wireIntakeList('materials');
+    this._wireIntakeList('consumables');
+  },
+
+  _wireIntakeList(type) {
+    const container = document.getElementById(`intake-list-${type}`);
+    if (!container) return;
+    Intake.attachListeners(container, {
+      onAction:   (orderId, itemId, action) => this.setItemStatus(orderId, itemId, action),
+      onQtyChange:(orderId, itemId, qty)    => this.setPartialQty(orderId, itemId, qty),
+      onNoteChange:(orderId, itemId, text)  => this.setNote(orderId, itemId, text),
+      onRerender: (orderId)                 => this.rerenderCard(orderId, type),
+    });
+  },
+
+  setTab(tab) {
+    this.activeTab = tab;
+    document.getElementById('tab-materials').classList.toggle('active',   tab === 'materials');
+    document.getElementById('tab-consumables').classList.toggle('active', tab === 'consumables');
+    document.getElementById('view-materials').style.display   = tab === 'materials'   ? 'flex' : 'none';
+    document.getElementById('view-consumables').style.display = tab === 'consumables' ? 'flex' : 'none';
+  },
+
+  // ── LIVE STATUS ────────────────────────────────────────────────────────
+  _renderLiveStatus() {
+    const dot  = document.getElementById('live-dot');
+    const lbl  = document.getElementById('live-label');
+    const wrap = document.getElementById('update-banner-wrap');
+    const { connected, latestVersion } = this._connState;
+    const outdated = connected && latestVersion && isVersionNewer(latestVersion, APP_VERSION);
+    if (dot && lbl) {
+      dot.classList.remove('disconnected', 'update-available');
+      if (!connected)    { dot.classList.add('disconnected');    lbl.textContent = 'Offline'; }
+      else if (outdated) { dot.classList.add('update-available'); lbl.textContent = 'Update Available'; }
+      else               { lbl.textContent = 'Live'; }
+    }
+    if (wrap) {
+      wrap.innerHTML = outdated ? `<div class="update-banner">
+        <i class="ti ti-refresh"></i>
+        <span>A newer version (${esc(latestVersion)}) is available — you're on ${esc(APP_VERSION)}.</span>
+        <button id="btn-refresh-update">Refresh</button>
+      </div>` : '';
+      document.getElementById('btn-refresh-update')?.addEventListener('click', () => location.reload());
+    }
+  },
+  startConnectionStatus() {
+    DB.listenConnectionStatus(c => { this._connState.connected = c; this._renderLiveStatus(); });
+  },
+  startVersionCheck() {
+    DB.announceVersionIfNewer(APP_VERSION, isVersionNewer);
+    DB.listenAppVersion(v => { this._connState.latestVersion = v; this._renderLiveStatus(); });
+  },
+
+  // ── LIVE DATA ─────────────────────────────────────────────────────────
+  startListening() {
+    this._unsubOrders = DB.listenOrders(orders => {
+      this.orders = orders;
+      this.renderList('materials');
+      this.renderList('consumables');
+    });
+  },
+
+  renderList(type) {
+    const el = document.getElementById(`intake-list-${type}`); if (!el) return;
+    el.innerHTML = Intake.renderList(this.orders, type, this._filters[type], this._openOrders);
+  },
+
+  rerenderCard(orderId, type) {
+    // Toggle open state then re-render just this card
+    if (this._openOrders.has(orderId)) this._openOrders.delete(orderId);
+    else this._openOrders.add(orderId);
+    const cardEl = document.getElementById(`intake-card-${orderId}`);
+    const order  = this.orders.find(o => o._id === orderId);
+    if (cardEl && order) {
+      const t = type || ((!order.type || order.type === 'materials') ? 'materials' : 'consumables');
+      cardEl.outerHTML = Intake.renderCard(order, t, this._openOrders);
+      // Re-wire the newly inserted card (event delegation via container handles it automatically)
+    } else {
+      this.renderList(type || ((!order?.type || order?.type === 'materials') ? 'materials' : 'consumables'));
+    }
+  },
+
+  // ── INTAKE MUTATIONS ──────────────────────────────────────────────────
+  _getOrCreateIntake(orderId) {
+    const order = this.orders.find(o => o._id === orderId);
+    if (!order) return null;
+    if (!order.intake)       order.intake       = { items: {} };
+    if (!order.intake.items) order.intake.items = {};
+    return order;
+  },
+
+  setItemStatus(orderId, itemId, action) {
+    const order = this._getOrCreateIntake(orderId);
+    if (!order) return;
+    const key    = String(itemId);
+    const curr   = order.intake.items[key] || {};
+    // Toggle off if already active
+    if (curr.status === action) {
+      delete order.intake.items[key];
+    } else {
+      order.intake.items[key] = {
+        ...curr,
+        status:      action,
+        qtyReceived: action === 'partial' ? (curr.qtyReceived ?? null) : null,
+      };
+    }
+    this._saveAndRerender(orderId, order);
+  },
+
+  setPartialQty(orderId, itemId, qty) {
+    const order = this._getOrCreateIntake(orderId);
+    if (!order) return;
+    const key = String(itemId);
+    if (!order.intake.items[key]) order.intake.items[key] = { status: 'partial' };
+    order.intake.items[key].qtyReceived = qty;
+    this._save(orderId, order);
+  },
+
+  setNote(orderId, itemId, text) {
+    const order = this._getOrCreateIntake(orderId);
+    if (!order) return;
+    const key = String(itemId);
+    if (!order.intake.items[key]) order.intake.items[key] = {};
+    order.intake.items[key].notes = text;
+    // Debounced save (already debounced in Intake.attachListeners, but save directly)
+    this._save(orderId, order);
+  },
+
+  _saveAndRerender(orderId, order) {
+    // Determine which tab owns this order
+    const type = (!order.type || order.type === 'materials') ? 'materials' : 'consumables';
+    // Re-render the card in-place (keep it open)
+    const cardEl = document.getElementById(`intake-card-${orderId}`);
+    if (cardEl) {
+      cardEl.outerHTML = Intake.renderCard(order, type, this._openOrders);
+    } else {
+      this.renderList(type);
+    }
+    this._save(orderId, order);
+  },
+
+  _save(orderId, order) {
+    const isMat      = !order.type || order.type === 'materials';
+    const totalItems = (order.items || []).filter(i => isMat ? !!i.emailed : true).length;
+    DB.updateIntake(orderId, order.intake.items, WarehouseDeviceName.get(), totalItems)
+      .catch(e => console.error('Intake save failed:', e));
+  },
+};
+
+Warehouse.init();
+</script>
+</body>
+</html>

@@ -1,4 +1,4 @@
-// firebase-sync.js — v0.34.3
+// firebase-sync.js — v0.36
 let _db = null, _configured = false;
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -143,6 +143,59 @@ const DB = {
   async deleteOrder(id) {
     if (!this.isReady()) throw new Error('Firebase not initialised');
     await _db.collection('orders').doc(id).delete();
+  },
+
+  // Saves a consumables order to Firestore (mirroring materials orders so intake can track it).
+  // Called when the first category email is sent from the CO cart.
+  async submitConsumablesOrder(order) {
+    if (!this.isReady()) throw new Error('Firebase not initialised');
+    const ref = await _db.collection('orders').add({
+      ...order,
+      type: 'consumables',
+      status: 'pending',
+      submittedAt: firebase.firestore.FieldValue.serverTimestamp(),
+    });
+    return ref.id;
+  },
+
+  // Marks all items in an order as emailed and sets status to 'sent'.
+  // Used for consumables bulk-email ("Email all consumables at once").
+  async markAllEmailed(orderId) {
+    if (!this.isReady()) throw new Error('Firebase not initialised');
+    const doc = await _db.collection('orders').doc(orderId).get();
+    if (!doc.exists) return;
+    const items = (doc.data().items || []).map(item => ({ ...item, emailed: true }));
+    await _db.collection('orders').doc(orderId).update({
+      items,
+      status: 'sent',
+      updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+    });
+  },
+
+  // Records intake status for one or more items on an order.
+  // intakeItems: { [itemId]: { status: 'ok'|'partial'|'missing'|'backorder', qtyReceived, notes } }
+  // totalItems: total line-item count in the order (used to compute overall status).
+  async updateIntake(orderId, intakeItems, updatedBy, totalItems) {
+    if (!this.isReady()) throw new Error('Firebase not initialised');
+    const statuses = Object.values(intakeItems || {}).map(i => i.status);
+    let intakeStatus = 'pending';
+    if (statuses.length > 0) {
+      const allOk = statuses.every(s => s === 'ok');
+      const allResolved = statuses.every(s => s === 'ok' || s === 'backorder');
+      const hasBackorder = statuses.some(s => s === 'backorder');
+      const allActioned = statuses.length >= (totalItems || 1);
+      if (allOk && allActioned)                          intakeStatus = 'received';
+      else if (allResolved && hasBackorder && allActioned) intakeStatus = 'backorder';
+      else                                                intakeStatus = 'in_progress';
+    }
+    await _db.collection('orders').doc(orderId).update({
+      'intake.items':     intakeItems || {},
+      'intake.status':    intakeStatus,
+      'intake.updatedBy': updatedBy || '',
+      'intake.updatedAt': firebase.firestore.FieldValue.serverTimestamp(),
+      updatedAt:          firebase.firestore.FieldValue.serverTimestamp(),
+    });
+    return intakeStatus;
   },
 
   async rejectOrder(id) {

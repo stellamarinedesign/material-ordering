@@ -81,22 +81,37 @@ const Worker = {
 
           <div style="font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:0.06em;
             color:var(--text3);font-family:var(--mono);margin-bottom:10px">Firebase Connection</div>
+          <div class="setup-field">
+            <label>Paste Firebase config</label>
+            <textarea id="cfg-paste" class="setup-paste-area" placeholder="apiKey|projectId|appId"></textarea>
+          </div>
+          <div class="setup-divider">or enter manually</div>
           <div class="setup-field"><label>API Key</label><input id="cfg-apiKey" autocomplete="off" placeholder="AIzaSy..."></div>
           <div class="setup-field"><label>Project ID</label><input id="cfg-projectId" autocomplete="off" placeholder="my-project-id"></div>
           <div class="setup-field"><label>App ID</label><input id="cfg-appId" autocomplete="off" placeholder="1:123456:web:abc..."></div>
           <button id="btn-connect" class="btn btn-primary" style="margin-top:8px">
             <i class="ti ti-plug"></i> Connect
           </button>
-          <div class="setup-note" style="margin-top:14px">
-            Get Firebase config from <a href="https://console.firebase.google.com" target="_blank">console.firebase.google.com</a>
-            → Project settings → Web app.
-          </div>
+          <div class="setup-note" style="margin-top:14px">Enter the config string provided by your administrator.</div>
         </div>
       </div>`;
+    document.getElementById('cfg-paste').addEventListener('input', () => {
+      const p = parseFirebaseConfig(document.getElementById('cfg-paste').value);
+      if (p.apiKey)    document.getElementById('cfg-apiKey').value    = p.apiKey;
+      if (p.projectId) document.getElementById('cfg-projectId').value = p.projectId;
+      if (p.appId)     document.getElementById('cfg-appId').value     = p.appId;
+    });
     document.getElementById('btn-connect').addEventListener('click', () => this.saveConfig());
   },
 
   async saveConfig() {
+    const paste = document.getElementById('cfg-paste')?.value || '';
+    if (paste.trim()) {
+      const p = parseFirebaseConfig(paste);
+      if (p.apiKey)    document.getElementById('cfg-apiKey').value    = p.apiKey;
+      if (p.projectId) document.getElementById('cfg-projectId').value = p.projectId;
+      if (p.appId)     document.getElementById('cfg-appId').value     = p.appId;
+    }
     const deviceName = document.getElementById('cfg-device').value.trim();
     const apiKey     = document.getElementById('cfg-apiKey').value.trim();
     const projectId  = document.getElementById('cfg-projectId').value.trim();

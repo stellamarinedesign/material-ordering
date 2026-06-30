@@ -17,6 +17,7 @@
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-check-compat.js"></script>
 <script src="js/shared.js"></script>
 <script src="js/firebase-sync.js"></script>
+<script src="js/intake.js"></script>
 <script>
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.getRegistrations().then(rs => rs.forEach(r => r.unregister()));
@@ -47,12 +48,20 @@ const Manager = {
   _noEmailCategory:  null,
 
   // Consumables Order panel state (launched from Stock tab)
-  _co:           { _items: {} },
-  _coActiveCat:  null,
-  _coActiveSub:  null,
-  _coCats:       [],
-  _coSubs:       [],
+  _co:              { _items: {} },
+  _coActiveCat:     null,
+  _coActiveSub:     null,
+  _coCats:          [],
+  _coSubs:          [],
   _coEmailCategory: null,
+  // Tracks the Firestore order doc created when the first CO category email is sent.
+  // Cleared when the cart is fully emptied after the last email.
+  _coOrderId:   null,
+  _coOrderRef:  null,
+
+  // Intake tab state
+  _intakeFilter:      { materials: 'all', consumables: 'all' },
+  _intakeOpenOrders:  new Set(),
 
   // Receive Stock panel state
   _receive:           { _items: {} },
@@ -153,17 +162,35 @@ const Manager = {
           <h2><i class="ti ti-flame" style="color:#ea580c;vertical-align:-2px"></i> Connect to Firebase</h2>
           <p>Enter your Firebase project config to receive orders from the iPad.</p>
           ${err?`<div style="background:var(--red-bg);color:var(--red-text);border-radius:var(--radius);padding:10px 12px;font-size:13px;margin-bottom:12px">${esc(err)}</div>`:''}
+          <div class="setup-field">
+            <label>Paste Firebase config</label>
+            <textarea id="cfg-paste" class="setup-paste-area" placeholder="apiKey|projectId|appId"></textarea>
+          </div>
+          <div class="setup-divider">or enter manually</div>
           <div class="setup-field"><label>API Key</label><input id="cfg-apiKey" autocomplete="off" placeholder="AIzaSy..."></div>
           <div class="setup-field"><label>Project ID</label><input id="cfg-projectId" autocomplete="off" placeholder="my-project-id"></div>
           <div class="setup-field"><label>App ID</label><input id="cfg-appId" autocomplete="off" placeholder="1:123456:web:abc..."></div>
           <button id="btn-connect" class="btn btn-primary" style="margin-top:8px"><i class="ti ti-plug"></i> Connect</button>
-          <div class="setup-note" style="margin-top:14px">Same config as the iPad. See README.md.</div>
+          <div class="setup-note" style="margin-top:14px">Enter the config string provided by your administrator.</div>
         </div>
       </div>`;
+    document.getElementById('cfg-paste').addEventListener('input', () => {
+      const p = parseFirebaseConfig(document.getElementById('cfg-paste').value);
+      if (p.apiKey)    document.getElementById('cfg-apiKey').value    = p.apiKey;
+      if (p.projectId) document.getElementById('cfg-projectId').value = p.projectId;
+      if (p.appId)     document.getElementById('cfg-appId').value     = p.appId;
+    });
     document.getElementById('btn-connect').addEventListener('click', () => this.saveConfig());
   },
 
   async saveConfig() {
+    const paste = document.getElementById('cfg-paste')?.value || '';
+    if (paste.trim()) {
+      const p = parseFirebaseConfig(paste);
+      if (p.apiKey)    document.getElementById('cfg-apiKey').value    = p.apiKey;
+      if (p.projectId) document.getElementById('cfg-projectId').value = p.projectId;
+      if (p.appId)     document.getElementById('cfg-appId').value     = p.appId;
+    }
     const apiKey=document.getElementById('cfg-apiKey').value.trim();
     const projectId=document.getElementById('cfg-projectId').value.trim();
     const appId=document.getElementById('cfg-appId').value.trim();
@@ -220,6 +247,9 @@ const Manager = {
                     <i class="ti ti-plus"></i>New Order
                     <span class="sidebar-count zero" id="new-order-badge">0</span>
                   </button>
+                  <button class="main-tab" id="main-tab-intake-mat">
+                    <i class="ti ti-truck-delivery"></i>Deliveries
+                  </button>
                 </div>
               </div>
               <div class="main-tab-divider"></div>
@@ -232,6 +262,9 @@ const Manager = {
                   </button>
                   <button class="main-tab" id="main-tab-history">
                     <i class="ti ti-history"></i>History
+                  </button>
+                  <button class="main-tab" id="main-tab-intake-cons">
+                    <i class="ti ti-truck-delivery"></i>Deliveries
                   </button>
                 </div>
               </div>
@@ -318,6 +351,34 @@ const Manager = {
           </div>
           <div class="app-scroll" id="history-scroll">
             <div id="history-list" class="history-list"></div>
+          </div>
+        </div>
+
+        <!-- MATERIALS DELIVERIES VIEW -->
+        <div id="view-intake-mat" style="display:none;flex:1;flex-direction:column;overflow:hidden;min-height:0">
+          <div class="col" style="padding-top:10px;padding-bottom:0;flex-shrink:0">
+            <div class="intake-filter-bar" id="intake-filter-mat">
+              <div class="intake-filter-chip active" data-filter="all">All</div>
+              <div class="intake-filter-chip" data-filter="outstanding"><i class="ti ti-clock"></i> Outstanding</div>
+              <div class="intake-filter-chip" data-filter="backorder"><i class="ti ti-clock-pause"></i> Back Orders</div>
+            </div>
+          </div>
+          <div class="intake-scroll app-scroll">
+            <div class="col"><div class="intake-list" id="intake-list-mat"></div></div>
+          </div>
+        </div>
+
+        <!-- CONSUMABLES DELIVERIES VIEW -->
+        <div id="view-intake-cons" style="display:none;flex:1;flex-direction:column;overflow:hidden;min-height:0">
+          <div class="col" style="padding-top:10px;padding-bottom:0;flex-shrink:0">
+            <div class="intake-filter-bar" id="intake-filter-cons">
+              <div class="intake-filter-chip active" data-filter="all">All</div>
+              <div class="intake-filter-chip" data-filter="outstanding"><i class="ti ti-clock"></i> Outstanding</div>
+              <div class="intake-filter-chip" data-filter="backorder"><i class="ti ti-clock-pause"></i> Back Orders</div>
+            </div>
+          </div>
+          <div class="intake-scroll app-scroll">
+            <div class="col"><div class="intake-list" id="intake-list-cons"></div></div>
           </div>
         </div>
 
@@ -435,10 +496,40 @@ const Manager = {
     document.getElementById('btn-save-settings')  .addEventListener('click', () => this.saveSettings());
     document.getElementById('btn-close-email')    .addEventListener('click', () => this.closePanel('email-panel'));
     document.getElementById('btn-send-email')     .addEventListener('click', () => this.sendEmail());
-    document.getElementById('main-tab-queue')  .addEventListener('click', () => this.setMainTab('queue'));
-    document.getElementById('main-tab-new')    .addEventListener('click', () => this.setMainTab('new-order'));
-    document.getElementById('main-tab-stock')  .addEventListener('click', () => this.setMainTab('stock'));
-    document.getElementById('main-tab-history').addEventListener('click', () => this.setMainTab('history'));
+    document.getElementById('main-tab-queue')     .addEventListener('click', () => this.setMainTab('queue'));
+    document.getElementById('main-tab-new')       .addEventListener('click', () => this.setMainTab('new-order'));
+    document.getElementById('main-tab-stock')     .addEventListener('click', () => this.setMainTab('stock'));
+    document.getElementById('main-tab-history')   .addEventListener('click', () => this.setMainTab('history'));
+    document.getElementById('main-tab-intake-mat').addEventListener('click', () => this.setMainTab('intake-mat'));
+    document.getElementById('main-tab-intake-cons').addEventListener('click', () => this.setMainTab('intake-cons'));
+
+    // Filter chips for intake views
+    document.getElementById('intake-filter-mat').addEventListener('click', e => {
+      const chip = e.target.closest('[data-filter]'); if (!chip) return;
+      this._intakeFilter.materials = chip.dataset.filter;
+      document.querySelectorAll('#intake-filter-mat .intake-filter-chip').forEach(c => c.classList.toggle('active', c === chip));
+      this.renderIntakeMat();
+    });
+    document.getElementById('intake-filter-cons').addEventListener('click', e => {
+      const chip = e.target.closest('[data-filter]'); if (!chip) return;
+      this._intakeFilter.consumables = chip.dataset.filter;
+      document.querySelectorAll('#intake-filter-cons .intake-filter-chip').forEach(c => c.classList.toggle('active', c === chip));
+      this.renderIntakeCons();
+    });
+
+    // Intake event delegation for both views
+    Intake.attachListeners(document.getElementById('intake-list-mat'), {
+      onAction:    (orderId, itemId, action) => this.intakeSetStatus(orderId, itemId, action),
+      onQtyChange: (orderId, itemId, qty)    => this.intakeSetPartialQty(orderId, itemId, qty),
+      onNoteChange:(orderId, itemId, text)   => this.intakeSetNote(orderId, itemId, text),
+      onRerender:  (orderId)                 => this.intakeRerenderCard(orderId, 'materials'),
+    });
+    Intake.attachListeners(document.getElementById('intake-list-cons'), {
+      onAction:    (orderId, itemId, action) => this.intakeSetStatus(orderId, itemId, action),
+      onQtyChange: (orderId, itemId, qty)    => this.intakeSetPartialQty(orderId, itemId, qty),
+      onNoteChange:(orderId, itemId, text)   => this.intakeSetNote(orderId, itemId, text),
+      onRerender:  (orderId)                 => this.intakeRerenderCard(orderId, 'consumables'),
+    });
     document.getElementById('btn-no-review')      .addEventListener('click', () => this.noOpenReview());
     document.getElementById('btn-close-no-review').addEventListener('click', () => this.closePanel('no-review-panel'));
     document.getElementById('btn-no-add-to-orders').addEventListener('click', () => this.noAddToOrders());
@@ -476,7 +567,7 @@ const Manager = {
     document.getElementById('btn-co-review').addEventListener('click', () => this.coOpenReview());
     document.getElementById('btn-co-clear-main').addEventListener('click', () => {
       if (!confirm('Clear all items?')) return;
-      this._co._items = {};
+      this._co._items = {}; this._coOrderId = null; this._coOrderRef = null;
       this._updateCoBadge(); this.renderCoList(); this.closePanel('co-review-panel');
     });
     document.getElementById('btn-close-co-review').addEventListener('click', () => this.closePanel('co-review-panel'));
@@ -497,7 +588,7 @@ const Manager = {
       else if (cat) this.coOpenCategoryEmail(cat.dataset.coCat);
       else if (clr) {
         if (!confirm('Clear all items?')) return;
-        this._co._items = {};
+        this._co._items = {}; this._coOrderId = null; this._coOrderRef = null;
         this._updateCoBadge(); this.renderCoList(); this.closePanel('co-review-panel');
       }
     });
@@ -699,8 +790,18 @@ const Manager = {
 
   setMainTab(tab) {
     this.mainTab = tab;
-    const views = { queue: 'view-queue', 'new-order': 'view-new-order', stock: 'view-stock', history: 'view-history' };
-    const tabs  = { queue: 'main-tab-queue', 'new-order': 'main-tab-new', stock: 'main-tab-stock', history: 'main-tab-history' };
+    const views = {
+      queue: 'view-queue', 'new-order': 'view-new-order',
+      stock: 'view-stock', history: 'view-history',
+      'intake-mat': 'view-intake-mat', 'intake-cons': 'view-intake-cons',
+    };
+    const tabs  = {
+      queue: 'main-tab-queue', 'new-order': 'main-tab-new',
+      stock: 'main-tab-stock', history: 'main-tab-history',
+      'intake-mat': 'main-tab-intake-mat', 'intake-cons': 'main-tab-intake-cons',
+    };
+    if (tab === 'intake-mat')  this.renderIntakeMat();
+    if (tab === 'intake-cons') this.renderIntakeCons();
     Object.entries(views).forEach(([key, id]) => {
       const el = document.getElementById(id); if (!el) return;
       el.style.display = key === tab ? 'flex' : 'none';
@@ -709,6 +810,83 @@ const Manager = {
       document.getElementById(id)?.classList.toggle('active', key === tab);
     });
     if (tab === 'history') this._loadHistory();
+  },
+
+  // ══════════════════════════════════════════
+  // INTAKE TABS (Deliveries)
+  // ══════════════════════════════════════════
+  renderIntakeMat() {
+    const el = document.getElementById('intake-list-mat'); if (!el) return;
+    el.innerHTML = Intake.renderList(this.orders, 'materials', this._intakeFilter.materials, this._intakeOpenOrders);
+  },
+
+  renderIntakeCons() {
+    const el = document.getElementById('intake-list-cons'); if (!el) return;
+    el.innerHTML = Intake.renderList(this.orders, 'consumables', this._intakeFilter.consumables, this._intakeOpenOrders);
+  },
+
+  intakeRerenderCard(orderId, type) {
+    if (this._intakeOpenOrders.has(orderId)) this._intakeOpenOrders.delete(orderId);
+    else this._intakeOpenOrders.add(orderId);
+    const order  = this.orders.find(o => o._id === orderId);
+    const cardEl = document.getElementById(`intake-card-${orderId}`);
+    if (cardEl && order) {
+      cardEl.outerHTML = Intake.renderCard(order, type, this._intakeOpenOrders);
+    } else {
+      if (type === 'materials')   this.renderIntakeMat();
+      else                        this.renderIntakeCons();
+    }
+  },
+
+  _intakeGetOrCreate(orderId) {
+    const order = this.orders.find(o => o._id === orderId);
+    if (!order) return null;
+    if (!order.intake)       order.intake       = { items: {} };
+    if (!order.intake.items) order.intake.items = {};
+    return order;
+  },
+
+  intakeSetStatus(orderId, itemId, action) {
+    const order = this._intakeGetOrCreate(orderId); if (!order) return;
+    const key  = String(itemId);
+    const curr = order.intake.items[key] || {};
+    if (curr.status === action) delete order.intake.items[key];
+    else order.intake.items[key] = { ...curr, status: action, qtyReceived: action === 'partial' ? (curr.qtyReceived ?? null) : null };
+    this._intakeSaveAndRerender(orderId, order);
+  },
+
+  intakeSetPartialQty(orderId, itemId, qty) {
+    const order = this._intakeGetOrCreate(orderId); if (!order) return;
+    const key = String(itemId);
+    if (!order.intake.items[key]) order.intake.items[key] = { status: 'partial' };
+    order.intake.items[key].qtyReceived = qty;
+    this._intakeSave(orderId, order);
+  },
+
+  intakeSetNote(orderId, itemId, text) {
+    const order = this._intakeGetOrCreate(orderId); if (!order) return;
+    const key = String(itemId);
+    if (!order.intake.items[key]) order.intake.items[key] = {};
+    order.intake.items[key].notes = text;
+    this._intakeSave(orderId, order);
+  },
+
+  _intakeSaveAndRerender(orderId, order) {
+    const type   = (!order.type || order.type === 'materials') ? 'materials' : 'consumables';
+    const cardEl = document.getElementById(`intake-card-${orderId}`);
+    if (cardEl) cardEl.outerHTML = Intake.renderCard(order, type, this._intakeOpenOrders);
+    else if (type === 'materials') this.renderIntakeMat();
+    else this.renderIntakeCons();
+    this._intakeSave(orderId, order);
+  },
+
+  _intakeSave(orderId, order) {
+    const isMat      = !order.type || order.type === 'materials';
+    const totalItems = (order.items || []).filter(i => isMat ? !!i.emailed : true).length;
+    const s          = Settings.get();
+    const by         = (s.managerName || 'Manager').trim() || 'Manager';
+    DB.updateIntake(orderId, order.intake.items, by, totalItems)
+      .catch(e => console.error('Intake save failed:', e));
   },
 
   // ══════════════════════════════════════════
@@ -731,6 +909,8 @@ const Manager = {
         if (el) { el.textContent = n; el.classList.toggle('zero', n === 0); }
       });
       this.renderQueue();
+      if (this.mainTab === 'intake-mat')  this.renderIntakeMat();
+      if (this.mainTab === 'intake-cons') this.renderIntakeCons();
     });
   },
 
@@ -1311,6 +1491,29 @@ const Manager = {
     // Clear Consumables Order cart items for this category (or all) if applicable
     const cocat = this._coEmailCategory;
     if (cocat) {
+      // Save the full cart to Firestore on first email from this cart session
+      if (!this._coOrderId) {
+        const s          = Settings.get();
+        const deviceName = (s.managerName || 'Manager').trim() || 'Manager';
+        const ref        = this._coOrderRef || genRef();
+        this._coOrderRef = ref;
+        const allItems   = this.coItems().map(i => ({
+          id: i.id, partCode: i.partCode, description: i.description,
+          category: i.category, subcategory: i.subcategory,
+          qtyType: i.qtyType || '', qty: i.qty,
+        }));
+        try {
+          this._coOrderId = await DB.submitConsumablesOrder({ ref, deviceName, items: allItems });
+        } catch(e) { console.error('CO order save failed:', e); }
+      }
+      // Mark this category (or all) as emailed in the Firestore doc
+      if (this._coOrderId) {
+        try {
+          if (cocat === '__all__') await DB.markAllEmailed(this._coOrderId);
+          else await DB.markCategoryEmailed(this._coOrderId, cocat);
+        } catch(e) { console.warn('CO markEmailed failed:', e); }
+      }
+
       if (cocat === '__all__') {
         this._co._items = {};
       } else {
@@ -1322,6 +1525,7 @@ const Manager = {
       this._coEmailCategory = null;
       this._updateCoBadge();
       this.renderCoList();
+      if (this.coCount() === 0) { this._coOrderId = null; this._coOrderRef = null; }
     }
 
     this.closePanel('email-panel');

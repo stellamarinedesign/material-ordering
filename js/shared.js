@@ -1,6 +1,6 @@
-// shared.js — v0.35
+// shared.js — v0.36
 
-const APP_VERSION = 'v0.35';
+const APP_VERSION = 'v0.36';
 
 // Numeric version comparison (handles "v0.9" vs "v0.10" correctly, unlike
 // plain string comparison). Returns true if `a` is strictly newer than `b`.
@@ -404,6 +404,13 @@ const ConsumablesDeviceName = {
   isSet()    { return !!this.get(); },
 };
 
+const WarehouseDeviceName = {
+  _key: 'warehouse_device_name',
+  get()      { return localStorage.getItem(this._key) || ''; },
+  save(name) { localStorage.setItem(this._key, name.trim()); },
+  isSet()    { return !!this.get(); },
+};
+
 const FirebaseConfig = {
   _key: 'mo_firebase_config',
   get()     { try { const s=localStorage.getItem(this._key); return s?JSON.parse(s):null; } catch { return null; } },
@@ -414,6 +421,25 @@ const FirebaseConfig = {
 function esc(str) {
   return String(str||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
     .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
+// Parses a Firebase config string into { apiKey, projectId, appId }.
+// Accepts either:
+//   1. Pipe-separated:  "apiKey|projectId|appId"  (preferred — easy to store and copy)
+//   2. JS/JSON blob:    the firebaseConfig snippet pasted from the Firebase console
+function parseFirebaseConfig(raw) {
+  const s = String(raw || '').trim();
+  // Pipe-separated format: three segments, no spaces around pipes
+  const parts = s.split('|');
+  if (parts.length === 3 && parts.every(p => p.trim())) {
+    return { apiKey: parts[0].trim(), projectId: parts[1].trim(), appId: parts[2].trim() };
+  }
+  // Fall back to key-value extraction for JS/JSON blobs
+  const get = key => {
+    const m = s.match(new RegExp('"?' + key + '"?\\s*[:=]\\s*["\']([^"\']+)["\']'));
+    return m ? m[1].trim() : '';
+  };
+  return { apiKey: get('apiKey'), projectId: get('projectId'), appId: get('appId') };
 }
 function genRef() {
   const d=new Date();
