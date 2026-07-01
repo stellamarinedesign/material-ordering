@@ -461,6 +461,25 @@ const Warehouse = {
     if (!Intake.canConfirmEntries(group.entries, draft)) return;
 
     const merged = Intake.mergeDraftEntries(group.entries, draft);
+
+    // Flat display: for entries sharing the same item.id the UI shows one row keyed to the
+    // first entry's order. Propagate that representative's status to all other same-item entries.
+    const byItemId = new Map();
+    for (const e of group.entries) {
+      const k = String(e.item.id);
+      if (!byItemId.has(k)) byItemId.set(k, []);
+      byItemId.get(k).push(e);
+    }
+    for (const itemEntries of byItemId.values()) {
+      if (itemEntries.length < 2) continue;
+      const repStatus = merged[`${itemEntries[0].order._id}::${itemEntries[0].item.id}`];
+      if (!repStatus) continue;
+      for (const { order, item } of itemEntries.slice(1)) {
+        const ck = `${order._id}::${item.id}`;
+        if (!merged[ck]) merged[ck] = { ...repStatus };
+      }
+    }
+
     const byOrder = new Map(); // orderId -> { order, fullMap }
     for (const { order, item } of group.entries) {
       if (!byOrder.has(order._id)) {

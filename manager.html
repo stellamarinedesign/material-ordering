@@ -115,6 +115,9 @@ const Manager = {
     this.startStockListening();
     this.startConnectionStatus();
     this.startVersionCheck();
+    if ('Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission();
+    }
   },
 
   // ── LIVE STATUS DOT (3-state: Live / Update Available / Offline) ──
@@ -225,6 +228,9 @@ const Manager = {
     this.startStockListening();
     this.startConnectionStatus();
     this.startVersionCheck();
+    if ('Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission();
+    }
   },
 
   // ══════════════════════════════════════════
@@ -1031,6 +1037,25 @@ const Manager = {
     if (!Intake.canConfirmEntries(group.entries, draft)) return;
 
     const merged = Intake.mergeDraftEntries(group.entries, draft);
+
+    // Flat display: for entries sharing the same item.id the UI shows one row keyed to the
+    // first entry's order. Propagate that representative's status to all other same-item entries.
+    const byItemId = new Map();
+    for (const e of group.entries) {
+      const k = String(e.item.id);
+      if (!byItemId.has(k)) byItemId.set(k, []);
+      byItemId.get(k).push(e);
+    }
+    for (const itemEntries of byItemId.values()) {
+      if (itemEntries.length < 2) continue;
+      const repStatus = merged[`${itemEntries[0].order._id}::${itemEntries[0].item.id}`];
+      if (!repStatus) continue;
+      for (const { order, item } of itemEntries.slice(1)) {
+        const ck = `${order._id}::${item.id}`;
+        if (!merged[ck]) merged[ck] = { ...repStatus };
+      }
+    }
+
     const byOrder = new Map(); // orderId -> { order, fullMap }
     for (const { order, item } of group.entries) {
       if (!byOrder.has(order._id)) {
@@ -1226,11 +1251,18 @@ const Manager = {
       if (this._seenOrderIds === null) {
         this._seenOrderIds = new Set(orders.map(o => o._id));
       } else {
+        let newInBatch = 0;
         for (const order of orders) {
           if (!this._seenOrderIds.has(order._id) && !this._myOrderIds.has(order._id)) {
-            if (this.mainTab !== 'queue') this._newOrderCount++;
+            if (this.mainTab !== 'queue') { this._newOrderCount++; newInBatch++; }
           }
           this._seenOrderIds.add(order._id);
+        }
+        if (newInBatch > 0 && 'Notification' in window && Notification.permission === 'granted') {
+          new Notification(newInBatch === 1 ? 'New order received' : `${newInBatch} new orders received`, {
+            body: 'Open the queue to review.',
+            icon: './icons/icon-192.png',
+          });
         }
         this._updateNewOrderDot();
       }
@@ -1367,8 +1399,8 @@ const Manager = {
               const displayDevice = mergedDev === '__merged__'
                 ? '<span style="font-size:10px;color:var(--green-text);font-family:var(--mono);background:var(--green-bg);padding:1px 6px;border-radius:20px">Merged</span>'
                 : line.deviceName
-                  ? `<span style="font-size:11px;color:var(--text3);font-family:var(--mono)">${esc(line.deviceName)}</span>${line.submittedAt ? `<span style="opacity:0.6;margin-left:4px;font-size:11px;font-family:var(--mono)">${fmtTime(line.submittedAt)}</span>` : ''}`
-                  : '';
+                  ? `<span style="font-size:11px;color:var(--text3);font-family:var(--mono)">${esc(line.deviceName)}</span>${line.submittedAt ? `<span style="opacity:0.6;margin-left:4px;font-size:11px;font-family:var(--mono);white-space:nowrap;flex-shrink:0">${fmtTime(line.submittedAt)}</span>` : ''}`
+                  : line.submittedAt ? `<span style="opacity:0.6;font-size:11px;font-family:var(--mono);white-space:nowrap">${fmtTime(line.submittedAt)}</span>` : '';
               return `<div class="combined-main-row"${isExc ? ' style="opacity:0.35"' : ''}>
                 <div class="combined-main-info">
                   <div class="combined-main-name">${esc(pGroup.description)}</div>
@@ -1412,9 +1444,9 @@ const Manager = {
               const subRows = visibleLines.map(line => `
                 <div class="combined-sub-row">
                   <div class="combined-sub-device">
-                    <i class="ti ti-device-ipad" style="font-size:11px;color:var(--text3)"></i>
+                    <i class="ti ti-device-ipad" style="font-size:11px;color:var(--text3);flex-shrink:0"></i>
                     <span>${esc(line.deviceName || 'Unknown')}</span>
-                    ${line.submittedAt ? `<span style="opacity:0.6;margin-left:4px">${fmtTime(line.submittedAt)}</span>` : ''}
+                    ${line.submittedAt ? `<span style="opacity:0.6;margin-left:4px;white-space:nowrap;flex-shrink:0">${fmtTime(line.submittedAt)}</span>` : ''}
                   </div>
                   <div class="qty-row" style="flex-shrink:0">
                     <button class="qty-btn" data-cqdec="${esc(cat)}" data-order-id="${esc(line.orderId)}" data-partcode="${esc(pGroup.partCode)}">−</button>
@@ -1423,7 +1455,7 @@ const Manager = {
                       data-cqchange="${esc(cat)}" data-order-id="${esc(line.orderId)}" data-partcode="${esc(pGroup.partCode)}">
                     <button class="qty-btn" data-cqinc="${esc(cat)}" data-order-id="${esc(line.orderId)}" data-partcode="${esc(pGroup.partCode)}">+</button>
                   </div>
-                  <span style="font-size:11px;color:var(--text3);font-family:var(--mono);margin-left:4px;min-width:40px">${esc(line.qtyType||'')}</span>
+                  <span style="font-size:11px;color:var(--text3);font-family:var(--mono);margin-left:4px;min-width:40px;flex-shrink:0">${esc(line.qtyType||'')}</span>
                   <button class="btn-sm btn-sm-danger" data-comb-del="${esc(cat)}" data-order-id="${esc(line.orderId)}" data-partcode="${esc(pGroup.partCode)}" style="font-size:11px;padding:3px 6px" title="Exclude from email">
                     <i class="ti ti-eye-off"></i>
                   </button>
