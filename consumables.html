@@ -84,11 +84,13 @@ const ConsApp = {
   },
 
   showSetup(err) {
+    const isTest = FirebaseConfig.isTestMode();
     document.getElementById('root').innerHTML = `
       <div class="setup-screen">
         <div class="setup-card">
-          <h2><i class="ti ti-package" style="color:#6b7280;vertical-align:-2px"></i> Consumables — Setup</h2>
-          <p>Give this device a name, then connect to Firebase.</p>
+          <h2><i class="ti ti-package" style="color:#6b7280;vertical-align:-2px"></i> ${isTest ? 'Consumables — Test Setup' : 'Consumables — Setup'}</h2>
+          <p>${isTest ? 'Enter the <strong>test</strong> Firebase config. Saved separately — production config is unchanged.' : 'Give this device a name, then connect to Firebase.'}</p>
+          ${isTest ? `<div style="background:var(--amber-bg);color:var(--amber-text);border-radius:var(--radius);padding:10px 12px;font-size:13px;margin-bottom:12px"><i class="ti ti-flask"></i> Test mode is active</div>` : ''}
           ${err ? `<div style="background:var(--red-bg);color:var(--red-text);border-radius:var(--radius);padding:10px 12px;font-size:13px;margin-bottom:12px">${esc(err)}</div>` : ''}
           <div class="setup-field"><label>Device Name</label><input id="cfg-device" autocomplete="off" placeholder="e.g. Consumables Store iPad" value="${esc(ConsumablesDeviceName.get())}"></div>
           <div class="setup-field">
@@ -100,6 +102,7 @@ const ConsApp = {
           <div class="setup-field"><label>Project ID</label><input id="cfg-projectId" autocomplete="off" placeholder="my-project-id"></div>
           <div class="setup-field"><label>App ID</label><input id="cfg-appId" autocomplete="off" placeholder="1:123456:web:abc..."></div>
           <button id="btn-connect" class="btn btn-primary" style="margin-top:8px"><i class="ti ti-plug"></i> Connect</button>
+          ${isTest ? `<button id="btn-cancel-test" class="btn btn-outline" style="margin-top:8px"><i class="ti ti-arrow-left"></i> Cancel — back to production</button>` : ''}
           <div class="setup-note" style="margin-top:14px">Enter the config string provided by your administrator.</div>
         </div>
       </div>`;
@@ -110,6 +113,7 @@ const ConsApp = {
       if (p.appId)     document.getElementById('cfg-appId').value     = p.appId;
     });
     document.getElementById('btn-connect').addEventListener('click', () => this.saveConfig());
+    document.getElementById('btn-cancel-test')?.addEventListener('click', () => { FirebaseConfig.setTestMode(false); location.reload(); });
   },
 
   async saveConfig() {
@@ -156,6 +160,7 @@ const ConsApp = {
         </div>
 
         <div id="update-banner-wrap"></div>
+        ${FirebaseConfig.isTestMode() ? '<div class="test-mode-banner"><i class="ti ti-flask"></i> Test mode — connected to test database</div>' : ''}
 
         <!-- CATEGORY TABS -->
         <div id="cons-tabs-wrap"></div>
@@ -406,6 +411,7 @@ const ConsApp = {
   _populateSettings() {
     const s = Settings.get();
     const el = document.getElementById('settings-body'); if (!el) return;
+    const isTest = FirebaseConfig.isTestMode();
     el.innerHTML = `
       <div class="settings-section">
         <div class="settings-label">Search &amp; Sort</div>
@@ -423,7 +429,20 @@ const ConsApp = {
             <input type="checkbox" id="s-fuzzy-search" ${s.fuzzySearch!==false?'checked':''} style="width:20px;height:20px">
           </div>
         </div>
+      </div>
+      <div class="settings-section">
+        <div class="settings-label">Database</div>
+        <div class="settings-card">
+          <div class="settings-row">
+            <div><div class="settings-row-label">Test mode</div><div class="settings-row-sub">Use a separate test Firebase database — shared across all pages on this server</div></div>
+            <button class="btn-sm ${isTest?'btn-sm-danger':''}" id="btn-toggle-test-mode">${isTest?'On — tap to exit':'Off'}</button>
+          </div>
+        </div>
       </div>`;
+    document.getElementById('btn-toggle-test-mode').addEventListener('click', () => {
+      FirebaseConfig.setTestMode(!FirebaseConfig.isTestMode());
+      location.reload();
+    });
   },
 
   saveSettings() {

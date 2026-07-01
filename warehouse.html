@@ -28,7 +28,7 @@ const Warehouse = {
   materials:   [],
   consumables: [],
   activeTab:   'materials',
-  _filters:    { materials: 'all', consumables: 'all' },
+  _filters:    { materials: 'outstanding', consumables: 'outstanding' },
   _openOrders: new Set(),
   _drafts:     new Map(), // cardKey ("orderId|||category") -> { [itemId]: {status, qtyReceived, notes} }
   _unsubOrders: null,
@@ -51,11 +51,13 @@ const Warehouse = {
 
   // ── SETUP SCREEN ─────────────────────────────────────────────────────
   showSetup(err) {
+    const isTest = FirebaseConfig.isTestMode();
     document.getElementById('root').innerHTML = `
       <div class="setup-screen">
         <div class="setup-card">
-          <h2><i class="ti ti-warehouse" style="color:#ea580c;vertical-align:-2px"></i> Warehouse Intake Setup</h2>
-          <p>Connect this device to Firebase and give it a name so intake records are attributed correctly.</p>
+          <h2><i class="ti ti-warehouse" style="color:#ea580c;vertical-align:-2px"></i> ${isTest ? 'Warehouse — Test Setup' : 'Warehouse Intake Setup'}</h2>
+          <p>${isTest ? 'Enter the <strong>test</strong> Firebase config. Saved separately — production config is unchanged.' : 'Connect this device to Firebase and give it a name so intake records are attributed correctly.'}</p>
+          ${isTest ? `<div style="background:var(--amber-bg);color:var(--amber-text);border-radius:var(--radius);padding:10px 12px;font-size:13px;margin-bottom:12px"><i class="ti ti-flask"></i> Test mode is active</div>` : ''}
           ${err ? `<div style="background:var(--red-bg);color:var(--red-text);border-radius:var(--radius);padding:10px 12px;font-size:13px;margin-bottom:12px">${esc(err)}</div>` : ''}
 
           <div class="setup-field">
@@ -76,6 +78,7 @@ const Warehouse = {
           <button id="btn-connect" class="btn btn-primary" style="margin-top:8px;width:100%">
             <i class="ti ti-plug"></i> Connect
           </button>
+          ${isTest ? `<button id="btn-cancel-test" class="btn btn-outline" style="margin-top:8px;width:100%"><i class="ti ti-arrow-left"></i> Cancel — back to production</button>` : ''}
           <div class="setup-note" style="margin-top:14px">Enter the config string provided by your administrator.</div>
         </div>
       </div>`;
@@ -89,6 +92,7 @@ const Warehouse = {
       if (parsed.appId)     document.getElementById('cfg-appId').value     = parsed.appId;
     });
     document.getElementById('btn-connect').addEventListener('click', () => this.saveSetup());
+    document.getElementById('btn-cancel-test')?.addEventListener('click', () => { FirebaseConfig.setTestMode(false); location.reload(); });
   },
 
   async saveSetup() {
@@ -151,6 +155,7 @@ const Warehouse = {
         </div>
 
         <div id="update-banner-wrap"></div>
+        ${FirebaseConfig.isTestMode() ? '<div class="test-mode-banner"><i class="ti ti-flask"></i> Test mode — connected to test database</div>' : ''}
 
         <!-- TAB BAR -->
         <div style="background:var(--surface);border-bottom:1px solid var(--border);flex-shrink:0">
@@ -170,8 +175,8 @@ const Warehouse = {
         <div id="view-materials" style="flex:1;display:flex;flex-direction:column;overflow:hidden;min-height:0">
           <div class="col" style="padding-top:10px;padding-bottom:0;flex-shrink:0">
             <div class="intake-filter-bar" id="filter-materials">
-              <div class="intake-filter-chip active" data-filter="all">All</div>
-              <div class="intake-filter-chip" data-filter="outstanding"><i class="ti ti-clock"></i> Outstanding</div>
+              <div class="intake-filter-chip" data-filter="all">All</div>
+              <div class="intake-filter-chip active" data-filter="outstanding"><i class="ti ti-clock"></i> Outstanding</div>
               <div class="intake-filter-chip" data-filter="backorder"><i class="ti ti-clock-pause"></i> Back Orders</div>
               <div class="intake-filter-chip" data-filter="completed"><i class="ti ti-circle-check"></i> Completed</div>
               <div class="intake-filter-chip" data-filter="cancelled"><i class="ti ti-ban"></i> Cancelled</div>
@@ -186,8 +191,8 @@ const Warehouse = {
         <div id="view-consumables" style="display:none;flex:1;flex-direction:column;overflow:hidden;min-height:0">
           <div class="col" style="padding-top:10px;padding-bottom:0;flex-shrink:0">
             <div class="intake-filter-bar" id="filter-consumables">
-              <div class="intake-filter-chip active" data-filter="all">All</div>
-              <div class="intake-filter-chip" data-filter="outstanding"><i class="ti ti-clock"></i> Outstanding</div>
+              <div class="intake-filter-chip" data-filter="all">All</div>
+              <div class="intake-filter-chip active" data-filter="outstanding"><i class="ti ti-clock"></i> Outstanding</div>
               <div class="intake-filter-chip" data-filter="backorder"><i class="ti ti-clock-pause"></i> Back Orders</div>
               <div class="intake-filter-chip" data-filter="completed"><i class="ti ti-circle-check"></i> Completed</div>
               <div class="intake-filter-chip" data-filter="cancelled"><i class="ti ti-ban"></i> Cancelled</div>
@@ -196,6 +201,34 @@ const Warehouse = {
           <div class="intake-scroll app-scroll">
             <div class="col"><div class="intake-list" id="intake-list-consumables"></div></div>
           </div>
+        </div>
+
+        <!-- SETTINGS PANEL -->
+        <div class="panel" id="wh-settings-panel">
+          <div class="panel-header">
+            <button class="back-btn" id="btn-close-wh-settings"><i class="ti ti-chevron-left"></i>Back</button>
+            <div class="panel-title">Settings</div>
+          </div>
+          <div class="panel-scroll"><div class="panel-col" style="gap:20px">
+            <div class="settings-section">
+              <div class="settings-label">Database</div>
+              <div class="settings-card">
+                <div class="settings-row">
+                  <div><div class="settings-row-label">Test mode</div><div class="settings-row-sub">Use a separate test Firebase database — shared across all pages on this server</div></div>
+                  <button class="btn-sm ${FirebaseConfig.isTestMode()?'btn-sm-danger':''}" id="btn-wh-toggle-test">${FirebaseConfig.isTestMode()?'On — tap to exit':'Off'}</button>
+                </div>
+              </div>
+            </div>
+            <div class="settings-section">
+              <div class="settings-label">Connection</div>
+              <div class="settings-card">
+                <div class="settings-row">
+                  <div><div class="settings-row-label">Reset connection</div><div class="settings-row-sub">Re-enter device name or Firebase config</div></div>
+                  <button class="btn-sm btn-sm-danger" id="btn-wh-reconnect">Reconnect</button>
+                </div>
+              </div>
+            </div>
+          </div></div>
         </div>
 
       </div>`;
@@ -221,8 +254,14 @@ const Warehouse = {
       this.renderList('consumables');
     });
 
-    // Setup button (re-enter device name / config)
-    document.getElementById('btn-setup').addEventListener('click', () => {
+    // Settings button — opens settings panel (test mode toggle + reconnect option)
+    document.getElementById('btn-setup').addEventListener('click', () => this.openPanel('wh-settings-panel'));
+    document.getElementById('btn-close-wh-settings').addEventListener('click', () => this.closePanel('wh-settings-panel'));
+    document.getElementById('btn-wh-toggle-test').addEventListener('click', () => {
+      FirebaseConfig.setTestMode(!FirebaseConfig.isTestMode());
+      location.reload();
+    });
+    document.getElementById('btn-wh-reconnect').addEventListener('click', () => {
       if (confirm('Re-open setup? This will let you change the device name or Firebase config.')) {
         this.showSetup();
       }
@@ -244,6 +283,9 @@ const Warehouse = {
       onConfirm:  (cardKey)                 => this.onConfirm(cardKey),
     });
   },
+
+  openPanel(id)  { document.getElementById(id)?.classList.add('open'); },
+  closePanel(id) { document.getElementById(id)?.classList.remove('open'); },
 
   setTab(tab) {
     this.activeTab = tab;

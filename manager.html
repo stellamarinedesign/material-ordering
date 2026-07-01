@@ -29,6 +29,10 @@ const Manager = {
   unsubscribe:       null,
   _openCards:        new Set(),
   _openCombinedCats: new Set(),
+  _queueSortMode:    localStorage.getItem('mo_queue_sort') || 'delivery',
+  _seenOrderIds:     null,   // null = not yet seeded; Set once first listener fires
+  _myOrderIds:       new Set(),
+  _newOrderCount:    0,
   // Local-only exclusions: Set of "category|partCode|orderId" strings
   _combExcluded: new Set(),
   // Local-only merges: Map of "category|partCode" -> {qty, deviceNames, orderId}
@@ -63,7 +67,7 @@ const Manager = {
   _coOrderRef:  null,
 
   // Intake tab state
-  _intakeFilter:      { materials: 'all', consumables: 'all' },
+  _intakeFilter:      { materials: 'outstanding', consumables: 'outstanding' },
   _intakeOpenOrders:  new Set(),
   // cardKey ("orderId|||category") -> { [itemId]: {status, qtyReceived, notes} } —
   // staged intake edits not yet saved to Firestore (see intakeConfirm).
@@ -165,11 +169,13 @@ const Manager = {
   },
 
   showSetup(err) {
+    const isTest = FirebaseConfig.isTestMode();
     document.getElementById('root').innerHTML = `
       <div class="setup-screen">
         <div class="setup-card">
-          <h2><i class="ti ti-flame" style="color:#ea580c;vertical-align:-2px"></i> Connect to Firebase</h2>
-          <p>Enter your Firebase project config to receive orders from the iPad.</p>
+          <h2><i class="ti ti-flame" style="color:#ea580c;vertical-align:-2px"></i> ${isTest ? 'Test Mode Setup' : 'Connect to Firebase'}</h2>
+          <p>${isTest ? 'Enter the <strong>test</strong> Firebase config. Saved separately — production config is unchanged.' : 'Enter your Firebase project config to receive orders from the iPad.'}</p>
+          ${isTest ? `<div style="background:var(--amber-bg);color:var(--amber-text);border-radius:var(--radius);padding:10px 12px;font-size:13px;margin-bottom:12px"><i class="ti ti-flask"></i> Test mode is active</div>` : ''}
           ${err?`<div style="background:var(--red-bg);color:var(--red-text);border-radius:var(--radius);padding:10px 12px;font-size:13px;margin-bottom:12px">${esc(err)}</div>`:''}
           <div class="setup-field">
             <label>Paste Firebase config</label>
@@ -180,6 +186,7 @@ const Manager = {
           <div class="setup-field"><label>Project ID</label><input id="cfg-projectId" autocomplete="off" placeholder="my-project-id"></div>
           <div class="setup-field"><label>App ID</label><input id="cfg-appId" autocomplete="off" placeholder="1:123456:web:abc..."></div>
           <button id="btn-connect" class="btn btn-primary" style="margin-top:8px"><i class="ti ti-plug"></i> Connect</button>
+          ${isTest ? `<button id="btn-cancel-test" class="btn btn-outline" style="margin-top:8px"><i class="ti ti-arrow-left"></i> Cancel — back to production</button>` : ''}
           <div class="setup-note" style="margin-top:14px">Enter the config string provided by your administrator.</div>
         </div>
       </div>`;
@@ -190,6 +197,7 @@ const Manager = {
       if (p.appId)     document.getElementById('cfg-appId').value     = p.appId;
     });
     document.getElementById('btn-connect').addEventListener('click', () => this.saveConfig());
+    document.getElementById('btn-cancel-test')?.addEventListener('click', () => { FirebaseConfig.setTestMode(false); location.reload(); });
   },
 
   async saveConfig() {
@@ -240,6 +248,7 @@ const Manager = {
         </div>
 
         <div id="update-banner-wrap"></div>
+        ${FirebaseConfig.isTestMode() ? '<div class="test-mode-banner"><i class="ti ti-flask"></i> Test mode — connected to test database</div>' : ''}
 
         <!-- MAIN TABS -->
         <div style="background:var(--surface);border-bottom:1px solid var(--border);flex-shrink:0">
@@ -251,6 +260,7 @@ const Manager = {
                   <button class="main-tab active" id="main-tab-queue">
                     <i class="ti ti-inbox"></i>Order Queue
                     <span class="sidebar-count zero" id="queue-pending-badge">0</span>
+                    <span class="new-order-dot" id="new-order-dot"></span>
                   </button>
                   <button class="main-tab" id="main-tab-new">
                     <i class="ti ti-plus"></i>New Order
@@ -258,6 +268,7 @@ const Manager = {
                   </button>
                   <button class="main-tab" id="main-tab-intake-mat">
                     <i class="ti ti-truck-delivery"></i>Deliveries
+                    <span class="sidebar-count zero" id="deliveries-mat-badge">0</span>
                   </button>
                 </div>
               </div>
@@ -274,6 +285,7 @@ const Manager = {
                   </button>
                   <button class="main-tab" id="main-tab-intake-cons">
                     <i class="ti ti-truck-delivery"></i>Deliveries
+                    <span class="sidebar-count zero" id="deliveries-cons-badge">0</span>
                   </button>
                 </div>
               </div>
@@ -368,8 +380,8 @@ const Manager = {
           <div class="col" style="padding-top:10px;padding-bottom:0;flex-shrink:0">
             <div style="display:flex;align-items:center;gap:8px">
               <div class="intake-filter-bar" id="intake-filter-mat" style="flex:1">
-                <div class="intake-filter-chip active" data-filter="all">All</div>
-                <div class="intake-filter-chip" data-filter="outstanding"><i class="ti ti-clock"></i> Outstanding</div>
+                <div class="intake-filter-chip" data-filter="all">All</div>
+                <div class="intake-filter-chip active" data-filter="outstanding"><i class="ti ti-clock"></i> Outstanding</div>
                 <div class="intake-filter-chip" data-filter="backorder"><i class="ti ti-clock-pause"></i> Back Orders</div>
                 <div class="intake-filter-chip" data-filter="completed"><i class="ti ti-circle-check"></i> Completed</div>
                 <div class="intake-filter-chip" data-filter="cancelled"><i class="ti ti-ban"></i> Cancelled</div>
@@ -397,8 +409,8 @@ const Manager = {
           <div class="col" style="padding-top:10px;padding-bottom:0;flex-shrink:0">
             <div style="display:flex;align-items:center;gap:8px">
               <div class="intake-filter-bar" id="intake-filter-cons" style="flex:1">
-                <div class="intake-filter-chip active" data-filter="all">All</div>
-                <div class="intake-filter-chip" data-filter="outstanding"><i class="ti ti-clock"></i> Outstanding</div>
+                <div class="intake-filter-chip" data-filter="all">All</div>
+                <div class="intake-filter-chip active" data-filter="outstanding"><i class="ti ti-clock"></i> Outstanding</div>
                 <div class="intake-filter-chip" data-filter="backorder"><i class="ti ti-clock-pause"></i> Back Orders</div>
                 <div class="intake-filter-chip" data-filter="completed"><i class="ti ti-circle-check"></i> Completed</div>
                 <div class="intake-filter-chip" data-filter="cancelled"><i class="ti ti-ban"></i> Cancelled</div>
@@ -700,6 +712,8 @@ const Manager = {
       const header  = e.target.closest('.order-card-header');
       const resetItem  = e.target.closest('[data-reset-item]');
       const resetOrder = e.target.closest('[data-reset-order]');
+      const queueSort  = e.target.closest('[data-queue-sort]');
+      if (queueSort)  { e.stopPropagation(); this._queueSortMode = this._queueSortMode === 'delivery' ? 'order' : 'delivery'; localStorage.setItem('mo_queue_sort', this._queueSortMode); this.renderQueue(); return; }
       if (dec)        { e.stopPropagation(); this.stepQty(dec.dataset.qdec, +dec.dataset.idx, -1); return; }
       if (inc)        { e.stopPropagation(); this.stepQty(inc.dataset.qinc, +inc.dataset.idx,  1); return; }
       if (catEmail)   { e.stopPropagation(); this.openCategoryEmail(catEmail.dataset.catEmail); return; }
@@ -867,6 +881,7 @@ const Manager = {
       stock: 'main-tab-stock', history: 'main-tab-history',
       'intake-mat': 'main-tab-intake-mat', 'intake-cons': 'main-tab-intake-cons',
     };
+    if (tab === 'queue') { this._newOrderCount = 0; this._updateNewOrderDot(); }
     if (tab === 'intake-mat')  this.renderIntakeMat();
     if (tab === 'intake-cons') this.renderIntakeCons();
     Object.entries(views).forEach(([key, id]) => {
@@ -1206,10 +1221,52 @@ const Manager = {
         const el = document.getElementById(id);
         if (el) { el.textContent = n; el.classList.toggle('zero', n === 0); }
       });
+
+      // New order notification — seed on first call, then detect arrivals
+      if (this._seenOrderIds === null) {
+        this._seenOrderIds = new Set(orders.map(o => o._id));
+      } else {
+        for (const order of orders) {
+          if (!this._seenOrderIds.has(order._id) && !this._myOrderIds.has(order._id)) {
+            if (this.mainTab !== 'queue') this._newOrderCount++;
+          }
+          this._seenOrderIds.add(order._id);
+        }
+        this._updateNewOrderDot();
+      }
+
+      this._updateDeliveryBadges();
       this.renderQueue();
       if (this.mainTab === 'intake-mat')  this.renderIntakeMat();
       if (this.mainTab === 'intake-cons') this.renderIntakeCons();
     });
+  },
+
+  _updateNewOrderDot() {
+    const dot = document.getElementById('new-order-dot');
+    const tab = document.getElementById('main-tab-queue');
+    if (dot) dot.style.display = this._newOrderCount > 0 ? 'block' : 'none';
+    if (tab) tab.classList.toggle('has-new-order', this._newOrderCount > 0);
+  },
+
+  _updateDeliveryBadges() {
+    const countOutstanding = type => {
+      const groups = Intake.buildCategoryGroups(this.orders, type);
+      let count = 0;
+      for (const g of groups) {
+        const status = Intake.computeCategoryStatusEntries(g.entries);
+        if (!Intake.TAB_RESOLVED.has(status)) { count++; continue; }
+        const hasBO = g.entries.some(({ order, item }) => Intake._itemStatus(order, item) === 'backorder');
+        if (hasBO) count++;
+      }
+      return count;
+    };
+    const matN = countOutstanding('materials');
+    const consN = countOutstanding('consumables');
+    const mb = document.getElementById('deliveries-mat-badge');
+    const cb = document.getElementById('deliveries-cons-badge');
+    if (mb) { mb.textContent = matN;  mb.classList.toggle('zero', matN  === 0); }
+    if (cb) { cb.textContent = consN; cb.classList.toggle('zero', consN === 0); }
   },
 
   renderQueue() {
@@ -1231,7 +1288,7 @@ const Manager = {
     if (this.activeView === 'pending')  list = list.filter(o => this._orderHasPendingItems(o));
     if (this.activeView === 'rejected') list = list.filter(o => o.status === 'rejected');
     const listIds = new Set(list.map(o => o._id));
-    for (const id of this._openCards) { if (!listIds.has(id)) this._openCards.delete(id); }
+    for (const id of this._openCards) { if (!id.startsWith('pdg-') && !listIds.has(id)) this._openCards.delete(id); }
 
     if (!list.length) {
       const msgs = { pending:['ti-clock','No pending orders yet.'], sent:['ti-mail-check','No sent orders yet.'], rejected:['ti-ban','No rejected orders.'], all:['ti-inbox','No orders yet.'] };
@@ -1418,7 +1475,22 @@ const Manager = {
       }
     }
 
-    wrap.innerHTML = combinedHtml + list.map(o => this._orderCard(o)).join('');
+    if (this.activeView === 'pending') {
+      const sortMode = this._queueSortMode;
+      const sortBar = `<div style="display:flex;align-items:center;padding:6px 14px;gap:8px;background:var(--bg);border-bottom:1px solid var(--border)"><span style="font-size:11px;color:var(--text3)">Sort:</span><button data-queue-sort="1" class="btn-sm" style="font-size:11px;margin-left:4px"><i class="ti ti-${sortMode==='delivery'?'truck-delivery':'list'}"></i> ${sortMode==='delivery'?'By delivery':'By order'}</button></div>`;
+      let deliveryGroupsHtml = '', inDeliveryGroup = null;
+      if (sortMode === 'delivery') {
+        const dGroups = this._buildPendingDeliveryGroups(list);
+        if (dGroups.length) {
+          inDeliveryGroup = new Set();
+          for (const g of dGroups) for (const { order, item } of g.entries) inDeliveryGroup.add(`${order._id}:::${String(item.id)}`);
+          deliveryGroupsHtml = dGroups.map(g => this._pendingDeliveryGroupCard(g)).join('');
+        }
+      }
+      wrap.innerHTML = combinedHtml + sortBar + deliveryGroupsHtml + list.map(o => this._orderCard(o, inDeliveryGroup)).join('');
+    } else {
+      wrap.innerHTML = combinedHtml + list.map(o => this._orderCard(o)).join('');
+    }
     for (const id of this._openCards) {
       document.getElementById(`body-${id}`)?.classList.add('open');
       document.getElementById(`chev-${id}`)?.classList.add('open');
@@ -1468,17 +1540,25 @@ const Manager = {
         </div>
       </div>
       <div class="order-card-body${isOpen?' open':''}" id="body-${esc(safeKey)}">
-        ${entries.map(({ item, order }) => `
+        ${(() => {
+          const byItemId = new Map();
+          for (const { item, order } of entries) {
+            const key = String(item.id);
+            if (!byItemId.has(key)) byItemId.set(key, { item, totalQty: 0, orders: [] });
+            const b = byItemId.get(key); b.totalQty += (item.qty || 0); b.orders.push({ item, order });
+          }
+          return [...byItemId.values()].map(({ item, totalQty, orders }) => `
           <div class="order-line emailed">
             <div class="order-line-info">
               <div class="order-line-name">${esc(item.description)}</div>
-              <div class="order-line-code">${esc(item.partCode)}${distinctOrderIds.length > 1 ? ' &middot; ' + esc(order.deviceName || order.ref || order._id) : ''}</div>
+              <div class="order-line-code">${esc(item.partCode)}${orders.length > 1 ? ` &middot; ${orders.length} orders` : distinctOrderIds.length > 1 ? ' &middot; ' + esc(orders[0].order.deviceName || orders[0].order.ref || orders[0].order._id) : ''}</div>
             </div>
             <div class="order-line-right">
               <span class="emailed-badge"><i class="ti ti-mail-check"></i> Emailed</span>
-              <span style="font-size:11px;color:var(--text3);font-family:var(--mono);margin-left:4px">× ${item.qty}${item.qtyType ? ' ' + esc(item.qtyType) : ''}</span>
+              <span style="font-size:11px;color:var(--text3);font-family:var(--mono);margin-left:4px">× ${totalQty}${item.qtyType ? ' ' + esc(item.qtyType) : ''}</span>
             </div>
-          </div>`).join('')}
+          </div>`).join('');
+        })()}
         <div class="order-card-actions">
           <button class="btn btn-outline" data-reset-group="${esc(groupKey)}" data-category="${esc(category)}" style="margin-bottom:4px">
             <i class="ti ti-refresh"></i> Reset entire delivery to pending
@@ -1683,16 +1763,22 @@ const Manager = {
     }
   },
 
-  _orderCard(o) {
+  _orderCard(o, inDeliveryGroup) {
+    const items     = o.items || [];
+    if (inDeliveryGroup) {
+      const hasPendingOutside = items.some(i => !i.emailed && !i.rejected && !inDeliveryGroup.has(`${o._id}:::${String(i.id)}`));
+      if (!hasPendingOutside && this._orderHasPendingItems(o)) return '';
+    }
     const ts = o.submittedAt?.toDate ? fmtTime(o.submittedAt.toDate()) : fmtTime(o.submittedAt);
     const isPending = this._orderHasPendingItems(o);
     const isSent    = this._orderIsFullySent(o);
-    const items     = o.items || [];
     const isRejected = o.status === 'rejected';
     const statusLabel = isPending ? 'Pending review' : isSent ? 'Sent' : isRejected ? 'Rejected' : o.status;
     const statusClass = isPending ? 'status-pending' : isSent ? 'status-sent' : isRejected ? 'status-rejected' : 'status-pending';
 
-    const allRows = items.map((item, idx) => `
+    const allRows = items.map((item, idx) => {
+      if (inDeliveryGroup && !item.emailed && !item.rejected && inDeliveryGroup.has(`${o._id}:::${String(item.id)}`)) return '';
+      return `
       <div class="order-line ${item.emailed ? 'emailed' : ''} ${item.rejected ? 'rejected-line' : ''}">
         <div class="order-line-info">
           <div class="order-line-name">${esc(item.description)}</div>
@@ -1721,9 +1807,10 @@ const Manager = {
                 : `<span class="order-line-qty">× ${item.qty}</span>`}
           <span style="font-size:11px;color:var(--text3);font-family:var(--mono);margin-left:6px">${esc(item.qtyType||'')}</span>
         </div>
-      </div>`).join('');
+      </div>`;
+    }).join('');
 
-    const pendingItems = items.filter(i => !i.emailed && !i.rejected);
+    const pendingItems = items.filter(i => !i.emailed && !i.rejected && !(inDeliveryGroup && inDeliveryGroup.has(`${o._id}:::${String(i.id)}`)));
     const emailedItems = items.filter(i =>  i.emailed);
     const pendingCats  = [...new Set(pendingItems.map(i => i.category))];
     // Always show reject/delete for empty orders or rejected orders
@@ -1785,6 +1872,106 @@ const Manager = {
         ${isPending ? '<div class="edit-note">Edit quantities before sending.</div>' : ''}
         ${allRows}
         <div class="order-card-actions">${catEmailBtns}</div>
+      </div>
+    </div>`;
+  },
+
+  // Groups pending items that have a deliveryId by delivery+category — these are
+  // items previously emailed (and hence assigned a deliveryId) but then reset to
+  // pending, which kept their deliveryId. In "by delivery" sort mode these show
+  // as grouped cards so the manager can see which items belong to the same delivery.
+  _buildPendingDeliveryGroups(pendingOrders) {
+    const byKey = new Map();
+    for (const order of pendingOrders) {
+      for (const item of (order.items || [])) {
+        if (item.emailed || item.rejected || !item.deliveryId) continue;
+        const key = `${item.deliveryId}|||${item.category}`;
+        if (!byKey.has(key)) byKey.set(key, { deliveryId: item.deliveryId, category: item.category, entries: [] });
+        byKey.get(key).entries.push({ item, order });
+      }
+    }
+    return [...byKey.values()];
+  },
+
+  _pendingDeliveryGroupCard(group) {
+    const { deliveryId, category, entries } = group;
+    const safeKey = `pdg-${(deliveryId + category).replace(/[^a-zA-Z0-9]/g, '_')}`;
+    const isOpen  = this._openCards.has(safeKey);
+    const deviceNames = [...new Set(entries.map(e => e.order.deviceName || '').filter(Boolean))];
+    const deviceLabel = deviceNames.length === 0 ? '' : deviceNames.length === 1 ? deviceNames[0] : 'Multiple devices';
+    const submittedDates = entries
+      .map(e => e.order.submittedAt?.toDate ? e.order.submittedAt.toDate() : (e.order.submittedAt || null))
+      .filter(Boolean);
+    const ts = submittedDates.length
+      ? fmtTime(new Date(Math.min(...submittedDates.map(d => d instanceof Date ? d.getTime() : new Date(d).getTime()))))
+      : '';
+
+    const byItemId = new Map();
+    for (const { item, order } of entries) {
+      const key = String(item.id);
+      if (!byItemId.has(key)) byItemId.set(key, { item, totalQty: 0, subEntries: [] });
+      const b = byItemId.get(key); b.totalQty += (item.qty || 0); b.subEntries.push({ item, order });
+    }
+
+    const itemRows = [...byItemId.values()].map(({ item, totalQty, subEntries }) => {
+      if (subEntries.length === 1) {
+        const { item: i, order } = subEntries[0];
+        const idx = (order.items || []).indexOf(i);
+        return `<div class="order-line">
+          <div class="order-line-info">
+            <div class="order-line-name">${esc(i.description)}</div>
+            <div class="order-line-code">${esc(i.partCode)}</div>
+          </div>
+          <div class="order-line-right">
+            <div class="qty-row">
+              <button class="qty-btn" data-qdec="${order._id}" data-idx="${idx}">−</button>
+              <input class="qty-edit" type="number" min="0" step="1" value="${i.qty}" data-qchange="${order._id}" data-idx="${idx}" id="qinp-${order._id}-${idx}">
+              <button class="qty-btn" data-qinc="${order._id}" data-idx="${idx}">+</button>
+            </div>
+            <span style="font-size:11px;color:var(--text3);font-family:var(--mono);margin-left:6px">${esc(i.qtyType||'')}</span>
+          </div>
+        </div>`;
+      }
+      const showCode = item.partCode && !Data.isDummyCode(item.partCode);
+      return `<div class="intake-merged-block">
+        <div class="intake-merged-header">
+          <div class="intake-item-name">${esc(item.description)}</div>
+          ${showCode ? `<div class="intake-item-code">${esc(item.partCode)}</div>` : ''}
+          <div class="intake-item-ordered">Total: <strong>${totalQty}</strong>${item.qtyType ? ' ' + esc(item.qtyType) : ''}</div>
+        </div>
+        ${subEntries.map(({ item: i, order }) => {
+          const idx = (order.items || []).indexOf(i);
+          return `<div class="order-line">
+            <div class="order-line-info"><div class="order-line-code">${esc(order.deviceName || order.ref || order._id)}</div></div>
+            <div class="order-line-right">
+              <div class="qty-row">
+                <button class="qty-btn" data-qdec="${order._id}" data-idx="${idx}">−</button>
+                <input class="qty-edit" type="number" min="0" step="1" value="${i.qty}" data-qchange="${order._id}" data-idx="${idx}" id="qinp-${order._id}-${idx}">
+                <button class="qty-btn" data-qinc="${order._id}" data-idx="${idx}">+</button>
+              </div>
+              <span style="font-size:11px;color:var(--text3);font-family:var(--mono);margin-left:6px">${esc(i.qtyType||'')}</span>
+            </div>
+          </div>`;
+        }).join('')}
+      </div>`;
+    }).join('');
+
+    return `<div class="order-card pending-delivery-group" id="card-${safeKey}">
+      <div class="order-card-header" data-card-id="${safeKey}">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%">
+          <div>
+            <div class="order-ref-text">${esc(category)}</div>
+            <div class="order-meta">${ts}${deviceLabel ? ' · ' + esc(deviceLabel) : ''} · ${entries.length} line${entries.length!==1?'s':''} · from delivery</div>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px">
+            <span class="status-pill status-pending">Pending</span>
+            <i class="ti ti-chevron-right chevron${isOpen?' open':''}" id="chev-${safeKey}"></i>
+          </div>
+        </div>
+      </div>
+      <div class="order-card-body${isOpen?' open':''}" id="body-${safeKey}">
+        <div class="edit-note">Items reset from a previous delivery — edit quantities before re-sending.</div>
+        ${itemRows}
       </div>
     </div>`;
   },
@@ -1913,6 +2100,7 @@ const Manager = {
         }));
         try {
           this._noOrderId = await DB.submitOrder({ ref: this.orderRef, deviceName, items: allItems });
+          this._myOrderIds.add(this._noOrderId);
         } catch(e) { console.error('New Order save failed:', e); }
       }
       if (this._noOrderId) {
@@ -2139,10 +2327,12 @@ const Manager = {
       if (this._noOrderId) {
         // Some categories from this cart session were already emailed and saved —
         // append the remaining items to that same doc instead of creating a duplicate.
+        this._myOrderIds.add(this._noOrderId);
         await DB.appendItems(this._noOrderId, items);
         this._noOrderId = null;
       } else {
-        await DB.submitOrder({ ref: this.orderRef, deviceName, items });
+        const submittedId = await DB.submitOrder({ ref: this.orderRef, deviceName, items });
+        this._myOrderIds.add(submittedId);
       }
       this._no._items = {};
       this.orderRef = genRef();
@@ -3209,6 +3399,15 @@ const Manager = {
         </div>
       </div>
       <div class="settings-section">
+        <div class="settings-label">Database</div>
+        <div class="settings-card">
+          <div class="settings-row">
+            <div><div class="settings-row-label">Test mode</div><div class="settings-row-sub">${FirebaseConfig.isTestMode() ? 'Connected to test database — click to return to production.' : 'Switch to a separate test Firebase project.'}</div></div>
+            <button class="btn-sm ${FirebaseConfig.isTestMode() ? 'btn-sm-danger' : ''}" id="btn-mgr-toggle-test">${FirebaseConfig.isTestMode() ? 'Exit test mode' : 'Enter test mode'}</button>
+          </div>
+        </div>
+      </div>
+      <div class="settings-section">
         <div class="settings-label">Testing</div>
         <div class="settings-card">
           <div class="settings-row">
@@ -3219,6 +3418,7 @@ const Manager = {
       </div>`;
 
     document.getElementById('btn-clear-firebase').addEventListener('click', () => this.clearFirebase());
+    document.getElementById('btn-mgr-toggle-test').addEventListener('click', () => { FirebaseConfig.setTestMode(!FirebaseConfig.isTestMode()); location.reload(); });
     document.getElementById('btn-reset-template').addEventListener('click', () => {
       const ta = document.getElementById('s-template'); if (ta) ta.value = DEFAULT_SETTINGS.emailTemplate;
     });

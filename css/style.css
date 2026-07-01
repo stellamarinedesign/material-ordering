@@ -782,3 +782,42 @@ button { cursor: pointer; }
 .setup-divider::before, .setup-divider::after {
   content: ''; flex: 1; height: 1px; background: var(--border);
 }
+
+/* ── Test mode banner ── */
+.test-mode-banner {
+  background: var(--amber-bg); color: var(--amber-text);
+  border-bottom: 1px solid #fbbf24;
+  padding: 6px 16px; font-size: 12px; font-weight: 500;
+  display: flex; align-items: center; gap: 6px; flex-shrink: 0;
+}
+
+/* ── New order notification dot on Queue tab ── */
+.new-order-dot {
+  position: absolute; top: 6px; right: 6px;
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--red); display: none; flex-shrink: 0;
+}
+.main-tab { position: relative; }
+.main-tab.has-new-order .new-order-dot { display: block; }
+
+/* ── Merged entries block in delivery cards ── */
+.intake-merged-block {
+  border: 1px solid var(--border); border-radius: var(--radius);
+  margin-bottom: 6px; overflow: hidden;
+}
+.intake-merged-header {
+  background: var(--bg2); padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.intake-merged-block .intake-item {
+  border: none; border-bottom: 1px solid var(--border); border-radius: 0; margin-bottom: 0;
+}
+.intake-merged-block .intake-item:last-child { border-bottom: none; }
+
+/* ── Pending delivery group card (queue sort by delivery) ── */
+.pending-delivery-group { border-left: 3px solid var(--amber-text); }
+
+/* ── Partial qty input error state ── */
+.intake-partial-input.error {
+  border-color: var(--red); background: var(--red-bg);
+}

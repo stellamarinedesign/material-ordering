@@ -1,6 +1,6 @@
-// shared.js — v0.37.2
+// shared.js — v0.37.3
 
-const APP_VERSION = 'v0.37.2';
+const APP_VERSION = 'v0.37.3';
 
 // Numeric version comparison (handles "v0.9" vs "v0.10" correctly, unlike
 // plain string comparison). Returns true if `a` is strictly newer than `b`.
@@ -412,10 +412,16 @@ const WarehouseDeviceName = {
 };
 
 const FirebaseConfig = {
-  _key: 'mo_firebase_config',
-  get()     { try { const s=localStorage.getItem(this._key); return s?JSON.parse(s):null; } catch { return null; } },
-  save(cfg) { localStorage.setItem(this._key, JSON.stringify(cfg)); },
-  clear()   { localStorage.removeItem(this._key); },
+  _key:         'mo_firebase_config',
+  _testKey:     'mo_firebase_config_test',
+  _testModeKey: 'mo_test_mode',
+  isTestMode()  { return localStorage.getItem(this._testModeKey) === 'true'; },
+  setTestMode(v){ if (v) localStorage.setItem(this._testModeKey, 'true'); else localStorage.removeItem(this._testModeKey); },
+  get()         { try { const s=localStorage.getItem(this.isTestMode()?this._testKey:this._key); return s?JSON.parse(s):null; } catch { return null; } },
+  save(cfg)     { localStorage.setItem(this.isTestMode()?this._testKey:this._key, JSON.stringify(cfg)); },
+  hasTestConfig(){ return !!localStorage.getItem(this._testKey); },
+  clear()       { localStorage.removeItem(this._key); },
+  clearTest()   { localStorage.removeItem(this._testKey); },
 };
 
 function esc(str) {

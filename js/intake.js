@@ -1,4 +1,4 @@
-// intake.js — v0.37.2
+// intake.js — v0.37.3
 // Shared intake rendering module used by warehouse.html and manager.html.
 
 const Intake = {
@@ -132,8 +132,11 @@ const Intake = {
   canConfirmEntries(entries, draftForCard) {
     const merged = this.mergeDraftEntries(entries, draftForCard);
     return entries.every(({ order, item }) => {
-      const s = (merged[`${order._id}::${item.id}`] || {}).status;
-      return !!s && s !== 'pending';
+      const entry = merged[`${order._id}::${item.id}`] || {};
+      const s = entry.status;
+      if (!s || s === 'pending') return false;
+      if (s === 'partial' && !entry.qtyReceived) return false;
+      return true;
     });
   },
 
@@ -195,6 +198,7 @@ const Intake = {
 
         if (filter === 'all') {
           cards.push(g);
+          if (resolved && boEntries.length) cards.push({ groupKey: g.groupKey, category: g.category, entries: boEntries, isDerived: true });
         } else if (filter === 'completed') {
           if (resolved) cards.push(g);
         } else if (filter === 'outstanding') {
@@ -259,13 +263,13 @@ const Intake = {
           </div>
           <div class="intake-card-right">
             ${readOnly && showRestore ? `<button class="intake-restore-btn" data-restore="${esc(distinctOrderIds[0])}" title="Restore to active tracking"><i class="ti ti-arrow-back-up"></i> Restore</button>` : ''}
-            ${isOpen && hasDraft ? `<button class="intake-confirm-btn" data-confirm="${esc(cardKey)}" ${!canConfirm ? 'disabled' : ''} title="${canConfirm ? 'Confirm and save changes' : 'Set a status for every item first'}"><i class="ti ti-check"></i> Confirm</button>` : ''}
+            ${isOpen && hasDraft ? `<button class="intake-confirm-btn" data-confirm="${esc(cardKey)}" ${!canConfirm ? 'disabled' : ''} title="${canConfirm ? 'Confirm and save changes' : 'Set a status for every item, and enter a quantity for any partial items'}"><i class="ti ti-check"></i> Confirm</button>` : ''}
             ${this.statusBadge(badgeStatus)}
             <i class="ti ${isOpen ? 'ti-chevron-up' : 'ti-chevron-down'} intake-chevron"></i>
           </div>
         </div>
         ${isOpen ? `<div class="intake-card-body">
-          ${entries.map(({ item, order }) => this.renderItemRow(order, item, { draftForCard, readOnly, showOrderLabel: spansMultipleOrders })).join('')}
+          ${this._renderMergedEntries(entries, { draftForCard, readOnly, spansMultipleOrders })}
         </div>` : ''}
       </div>`;
   },
@@ -407,6 +411,35 @@ const Intake = {
             placeholder="Back order, wrong sizes, delivery notes…">${esc(notes)}</textarea>
         </div>` : ''}
       </div>`;
+  },
+
+  // Groups entries with the same item.id into merged visual blocks.
+  // When multiple orders contributed the same catalog item to a delivery, they collapse
+  // into one block (with a total-ordered header) rather than showing as separate rows.
+  _renderMergedEntries(entries, { draftForCard, readOnly, spansMultipleOrders }) {
+    const byItemId = new Map();
+    for (const entry of entries) {
+      const key = String(entry.item.id);
+      if (!byItemId.has(key)) byItemId.set(key, []);
+      byItemId.get(key).push(entry);
+    }
+    return [...byItemId.values()].map(group => {
+      if (group.length === 1) {
+        const { item, order } = group[0];
+        return this.renderItemRow(order, item, { draftForCard, readOnly, showOrderLabel: spansMultipleOrders });
+      }
+      const item = group[0].item;
+      const totalQty = group.reduce((s, e) => s + (e.item.qty || 0), 0);
+      const showCode = item.partCode && !Data.isDummyCode(item.partCode);
+      return `<div class="intake-merged-block">
+        <div class="intake-merged-header">
+          <div class="intake-item-name">${esc(item.description)}</div>
+          ${showCode ? `<div class="intake-item-code">${esc(item.partCode)}</div>` : ''}
+          <div class="intake-item-ordered">Total ordered: <strong>${totalQty}</strong>${item.qtyType ? ' ' + esc(item.qtyType) : ''}</div>
+        </div>
+        ${group.map(({ item: i, order }) => this.renderItemRow(order, i, { draftForCard, readOnly, showOrderLabel: true })).join('')}
+      </div>`;
+    }).join('');
   },
 
   // ── EVENT WIRING ─────────────────────────────────────────────────────

@@ -1,4 +1,4 @@
-// firebase-sync.js — v0.37.2
+// firebase-sync.js — v0.37.3
 let _db = null, _configured = false;
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -202,7 +202,7 @@ const DB = {
     const doc = await _db.collection('orders').doc(orderId).get();
     if (!doc.exists) return;
     const items = (doc.data().items || []).map(item =>
-      item.category === category ? { ...item, emailed: false, deliveryId: null } : item
+      item.category === category ? { ...item, emailed: false } : item
     );
     await _db.collection('orders').doc(orderId).update({
       items, status: 'pending',
@@ -361,7 +361,7 @@ const DB = {
     if (!doc.exists) return;
     const items = (doc.data().items || []).map(item =>
       (item.category === category && item.partCode === partCode)
-        ? { ...item, emailed: false, deliveryId: null }
+        ? { ...item, emailed: false }
         : item
     );
     const nonRejected = items.filter(i => !i.rejected);
@@ -377,7 +377,7 @@ const DB = {
     if (!this.isReady()) throw new Error('Firebase not initialised');
     const doc = await _db.collection('orders').doc(orderId).get();
     if (!doc.exists) return;
-    const items = (doc.data().items || []).map(item => ({ ...item, emailed: false, deliveryId: null }));
+    const items = (doc.data().items || []).map(item => ({ ...item, emailed: false }));
     await _db.collection('orders').doc(orderId).update({
       items,
       status: 'pending',
