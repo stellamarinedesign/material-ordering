@@ -1,6 +1,6 @@
-// shared.js — v0.37.1
+// shared.js — v0.37.2
 
-const APP_VERSION = 'v0.37.1';
+const APP_VERSION = 'v0.37.2';
 
 // Numeric version comparison (handles "v0.9" vs "v0.10" correctly, unlike
 // plain string comparison). Returns true if `a` is strictly newer than `b`.
@@ -444,6 +444,11 @@ function parseFirebaseConfig(raw) {
 function genRef() {
   const d=new Date();
   return `ORD-${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}-${Math.floor(Math.random()*900+100)}`;
+}
+// Groups items across orders that were part of the same real email send into one
+// "delivery" — never displayed, so uniqueness matters more than readability.
+function genDeliveryId() {
+  return `DLV-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,8)}`;
 }
 function fmtTime(ts) {
   if (!ts) return '';

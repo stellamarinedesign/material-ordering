@@ -1,4 +1,4 @@
-// firebase-sync.js — v0.37.1
+// firebase-sync.js — v0.37.2
 let _db = null, _configured = false;
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -124,15 +124,44 @@ const DB = {
     });
   },
 
-  async markCategoryEmailed(orderId, category, excludePartCodes = []) {
+  // Fresh read-modify-write append — used when a cart session's items need to land on
+  // an order doc that may have just been created/updated by a different action moments
+  // ago (e.g. New Order tab: email one category, then add the rest to the queue). Reads
+  // the doc directly rather than trusting the client's local snapshot cache, which could
+  // still be a beat behind the write that just happened. Also skips any item whose id is
+  // already present — the New Order/CO cart-saving pattern persists the WHOLE cart on
+  // the first email from a session (not just the emailed category), so by the time a
+  // later "add remaining to queue" runs, those items are usually already saved; without
+  // this dedupe they'd be appended a second time.
+  async appendItems(orderId, newItems) {
+    if (!this.isReady()) throw new Error('Firebase not initialised');
+    const ref = _db.collection('orders').doc(orderId);
+    const doc = await ref.get();
+    if (!doc.exists) throw new Error('Order not found');
+    const existing = doc.data().items || [];
+    const existingIds = new Set(existing.map(i => String(i.id)));
+    const toAdd = newItems.filter(i => !existingIds.has(String(i.id)));
+    if (!toAdd.length) return;
+    await ref.update({
+      items: [...existing, ...toAdd],
+      updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+    });
+  },
+
+  // deliveryId: shared across every order contributing to the same real email send, so
+  // the Deliveries/Sent pages can group them as one delivery instead of one per order.
+  // Only items newly transitioning to emailed get stamped — an already-emailed sibling
+  // (from an earlier, separate send) must keep its own deliveryId untouched, or a later
+  // partial send of the same category would silently merge two unrelated deliveries.
+  async markCategoryEmailed(orderId, category, excludePartCodes = [], deliveryId = null) {
     if (!this.isReady()) throw new Error('Firebase not initialised');
     const doc   = await _db.collection('orders').doc(orderId).get();
     if (!doc.exists) return;
     const order = doc.data();
     const excludeSet = new Set(excludePartCodes);
     const items = (order.items||[]).map(item =>
-      item.category === category && !excludeSet.has(item.partCode)
-        ? { ...item, emailed: true }
+      item.category === category && !excludeSet.has(item.partCode) && !item.emailed
+        ? { ...item, emailed: true, deliveryId }
         : item
     );
     const nonRejected = items.filter(i => !i.rejected);
@@ -173,7 +202,7 @@ const DB = {
     const doc = await _db.collection('orders').doc(orderId).get();
     if (!doc.exists) return;
     const items = (doc.data().items || []).map(item =>
-      item.category === category ? { ...item, emailed: false } : item
+      item.category === category ? { ...item, emailed: false, deliveryId: null } : item
     );
     await _db.collection('orders').doc(orderId).update({
       items, status: 'pending',
@@ -195,14 +224,20 @@ const DB = {
   },
 
   // Marks all items in an order as emailed and sets status to 'sent'.
-  // Used for consumables bulk-email ("Email all consumables at once").
+  // Used for consumables bulk-email ("Email all consumables at once"). Generates a
+  // separate deliveryId per category present (not one shared across categories) so
+  // every delivery card stays single-category — and, like markCategoryEmailed, only
+  // stamps items that are newly transitioning to emailed in this call.
   async markAllEmailed(orderId) {
     if (!this.isReady()) throw new Error('Firebase not initialised');
     const doc = await _db.collection('orders').doc(orderId).get();
     if (!doc.exists) return;
-    const items = (doc.data().items || []).map(item =>
-      item.rejected ? item : { ...item, emailed: true }
-    );
+    const catIdMap = {};
+    const items = (doc.data().items || []).map(item => {
+      if (item.rejected || item.emailed) return item;
+      if (!catIdMap[item.category]) catIdMap[item.category] = genDeliveryId();
+      return { ...item, emailed: true, deliveryId: catIdMap[item.category] };
+    });
     const nonRejected = items.filter(i => !i.rejected);
     const allEmailed  = nonRejected.length > 0 && nonRejected.every(i => i.emailed);
     await _db.collection('orders').doc(orderId).update({
@@ -286,6 +321,12 @@ const DB = {
       }
     }
 
+    // Merged items fall back to the legacy (orderId+category) grouping key rather than
+    // keep whatever deliveryId they carried before — Combine is specifically the tool for
+    // pre-deliveryId legacy data, and a stale id here would misleadingly split the newly
+    // merged order back into separate delivery cards.
+    items.forEach(i => { i.deliveryId = null; });
+
     const batch = _db.batch();
     batch.update(targetRef, {
       items,
@@ -320,7 +361,7 @@ const DB = {
     if (!doc.exists) return;
     const items = (doc.data().items || []).map(item =>
       (item.category === category && item.partCode === partCode)
-        ? { ...item, emailed: false }
+        ? { ...item, emailed: false, deliveryId: null }
         : item
     );
     const nonRejected = items.filter(i => !i.rejected);
@@ -336,7 +377,7 @@ const DB = {
     if (!this.isReady()) throw new Error('Firebase not initialised');
     const doc = await _db.collection('orders').doc(orderId).get();
     if (!doc.exists) return;
-    const items = (doc.data().items || []).map(item => ({ ...item, emailed: false }));
+    const items = (doc.data().items || []).map(item => ({ ...item, emailed: false, deliveryId: null }));
     await _db.collection('orders').doc(orderId).update({
       items,
       status: 'pending',

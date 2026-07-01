@@ -46,6 +46,9 @@ const Manager = {
   _no:       { _items: {} },  // materials cart (New Order tab)
   _pendingEmailMeta: null,
   _noEmailCategory:  null,
+  // Tracks the Firestore order doc created when the first New Order category email is
+  // sent (mirrors _coOrderId below). Cleared when the cart is fully emptied.
+  _noOrderId: null,
 
   // Consumables Order panel state (launched from Stock tab)
   _co:              { _items: {} },
@@ -707,6 +710,8 @@ const Manager = {
       if (rejectItem)  { e.stopPropagation(); this.rejectItem(rejectItem.dataset.rejectItem, rejectItem.dataset.partcode); return; }
       const resetCat   = e.target.closest('[data-reset-cat]');
       if (resetCat)    { e.stopPropagation(); this.resetCategoryEmailed(resetCat.dataset.resetCat, resetCat.dataset.category); return; }
+      const resetGroup = e.target.closest('[data-reset-group]');
+      if (resetGroup)  { e.stopPropagation(); this.resetDeliveryGroup(resetGroup.dataset.resetGroup, resetGroup.dataset.category); return; }
       if (combHdr)    { e.stopPropagation(); this.toggleCombinedCat(combHdr.dataset.combCat); return; }
       if (combDel)    { e.stopPropagation(); this.excludeCombinedLine(combDel.dataset.combDel, combDel.dataset.orderId, combDel.dataset.partcode); return; }
       if (combMrg)    { e.stopPropagation(); this.localMergeLines(combMrg.dataset.combMerge, combMrg.dataset.partcode); return; }
@@ -889,50 +894,55 @@ const Manager = {
     el.innerHTML = Intake.renderCategoryList(this.orders, 'consumables', this._intakeFilter.consumables, this._intakeOpenOrders, this._intakeDrafts, true);
   },
 
+  // Looks up a delivery group by groupKey across both types (a card doesn't know its own
+  // type ahead of time from the key alone).
+  _intakeFindGroup(groupKey) {
+    const matGroups  = Intake.buildCategoryGroups(this.orders, 'materials');
+    const consGroups = Intake.buildCategoryGroups(this.orders, 'consumables');
+    return [...matGroups, ...consGroups].find(g => g.groupKey === groupKey);
+  },
+
   // Toggles a card's open/closed state and re-renders it in place. cardKey may be a
   // plain orderId (notes-toggle path — falls back to a full list re-render) or a
-  // category card key ("orderId|||category", optionally suffixed "|||bo" for the
-  // derived back-order-only card).
+  // delivery groupKey (optionally suffixed "|||bo" for the derived back-order-only
+  // card) — groupKeys are always DLV-... or legacy:orderId:category, never a bare doc
+  // id, which is what lets a bare orderId fall through to the full-rerender branch below.
   intakeRerenderCard(cardKey, type) {
     if (this._intakeOpenOrders.has(cardKey)) this._intakeOpenOrders.delete(cardKey);
     else this._intakeOpenOrders.add(cardKey);
 
-    const sep = cardKey.indexOf('|||');
-    if (sep < 0) { if (type === 'materials') this.renderIntakeMat(); else this.renderIntakeCons(); return; }
+    let isDerived = false, groupKey = cardKey;
+    if (groupKey.endsWith('|||bo')) { isDerived = true; groupKey = groupKey.slice(0, -5); }
 
-    const orderId = cardKey.slice(0, sep);
-    let rest      = cardKey.slice(sep + 3);
-    let isDerived = false;
-    if (rest.endsWith('|||bo')) { isDerived = true; rest = rest.slice(0, -5); }
-    const category = rest;
+    const group = this._intakeFindGroup(groupKey);
+    if (!group) { if (type === 'materials') this.renderIntakeMat(); else this.renderIntakeCons(); return; }
 
-    const order = this.orders.find(o => o._id === orderId);
-    if (!order) { this.renderIntakeMat(); return; }
-    const isMat = !order.type || order.type === 'materials';
+    const isMat = !group.entries[0].order.type || group.entries[0].order.type === 'materials';
     const t     = type || (isMat ? 'materials' : 'consumables');
-    const isCancelled = !!order.intakeCancelled;
-
-    let catItems = (order.items || []).filter(i => i.category === category && (isMat ? !!i.emailed : true) && !i.rejected);
-    if (isDerived) catItems = catItems.filter(i => Intake._itemStatus(order, i) === 'backorder');
+    let entries = group.entries;
+    if (isDerived) entries = entries.filter(({ order, item }) => Intake._itemStatus(order, item) === 'backorder');
 
     const safeId = cardKey.replace(/[^a-zA-Z0-9]/g, '_');
     const cardEl = document.getElementById(`intake-card-${safeId}`);
-    const draftForCard = this._intakeDrafts.get(`${orderId}|||${category}`);
+    const draftForCard = this._intakeDrafts.get(groupKey);
+    const isCancelled = entries.every(({ order }) => !!order.intakeCancelled);
     const opts = { isDerived, readOnly: isCancelled, isCancelledCard: isCancelled, showRestore: isCancelled, draftForCard };
-    if (cardEl) cardEl.outerHTML = Intake.renderCategoryCard(order, category, catItems, t, this._intakeOpenOrders, opts);
+    if (cardEl) cardEl.outerHTML = Intake.renderCategoryCard(groupKey, group.category, entries, t, this._intakeOpenOrders, opts);
     else { if (isMat) this.renderIntakeMat(); else this.renderIntakeCons(); }
   },
 
   // ── INTAKE MUTATIONS (staged in _intakeDrafts — nothing is saved until Confirm) ──
+  // _intakeDrafts is keyed by groupKey; each draft's own entries use composite
+  // "orderId::itemId" keys since a delivery can span multiple orders (see intake.js).
 
   intakeSetStatus(orderId, itemId, action) {
     const order = this.orders.find(o => o._id === orderId); if (!order) return;
     const item = (order.items || []).find(i => String(i.id) === String(itemId)); if (!item) return;
-    const cardKey = `${orderId}|||${item.category}`;
-    if (!this._intakeDrafts.has(cardKey)) this._intakeDrafts.set(cardKey, {});
-    const draft = this._intakeDrafts.get(cardKey);
-    const key = String(itemId);
-    const saved = ((order.intake && order.intake.items) || {})[key] || {};
+    const groupKey = item.deliveryId || `legacy:${orderId}:${item.category}`;
+    if (!this._intakeDrafts.has(groupKey)) this._intakeDrafts.set(groupKey, {});
+    const draft = this._intakeDrafts.get(groupKey);
+    const key = `${orderId}::${itemId}`;
+    const saved = ((order.intake && order.intake.items) || {})[String(itemId)] || {};
     const draftItem = draft[key] || {};
     const currentStatus = draftItem.status !== undefined ? draftItem.status : (saved.status || null);
     if (currentStatus === action) {
@@ -940,84 +950,93 @@ const Manager = {
     } else {
       draft[key] = { ...draftItem, status: action, qtyReceived: action === 'partial' ? (draftItem.qtyReceived ?? saved.qtyReceived ?? null) : null };
     }
-    this._intakeRerenderCardOnly(orderId, item.category);
+    this._intakeRerenderCardOnly(orderId, item.category, groupKey);
   },
 
   intakeSetPartialQty(orderId, itemId, qty) {
     const order = this.orders.find(o => o._id === orderId); if (!order) return;
     const item = (order.items || []).find(i => String(i.id) === String(itemId)); if (!item) return;
-    const cardKey = `${orderId}|||${item.category}`;
-    if (!this._intakeDrafts.has(cardKey)) this._intakeDrafts.set(cardKey, {});
-    const draft = this._intakeDrafts.get(cardKey);
-    const key = String(itemId);
+    const groupKey = item.deliveryId || `legacy:${orderId}:${item.category}`;
+    if (!this._intakeDrafts.has(groupKey)) this._intakeDrafts.set(groupKey, {});
+    const draft = this._intakeDrafts.get(groupKey);
+    const key = `${orderId}::${itemId}`;
     draft[key] = { ...(draft[key] || {}), qtyReceived: qty };
-    this._intakeRerenderCardOnly(orderId, item.category);
+    this._intakeRerenderCardOnly(orderId, item.category, groupKey);
   },
 
   intakeSetNote(orderId, itemId, text) {
     const order = this.orders.find(o => o._id === orderId); if (!order) return;
     const item = (order.items || []).find(i => String(i.id) === String(itemId)); if (!item) return;
-    const cardKey = `${orderId}|||${item.category}`;
-    if (!this._intakeDrafts.has(cardKey)) this._intakeDrafts.set(cardKey, {});
-    const draft = this._intakeDrafts.get(cardKey);
-    const key = String(itemId);
+    const groupKey = item.deliveryId || `legacy:${orderId}:${item.category}`;
+    if (!this._intakeDrafts.has(groupKey)) this._intakeDrafts.set(groupKey, {});
+    const draft = this._intakeDrafts.get(groupKey);
+    const key = `${orderId}::${itemId}`;
     draft[key] = { ...(draft[key] || {}), notes: text };
-    this._intakeRerenderCardOnly(orderId, item.category);
+    this._intakeRerenderCardOnly(orderId, item.category, groupKey);
   },
 
   // Re-renders just the open card showing staged draft edits — no Firestore write,
   // so tab placement never changes until the user hits Confirm.
-  _intakeRerenderCardOnly(orderId, category) {
+  _intakeRerenderCardOnly(orderId, category, groupKey) {
     const order = this.orders.find(o => o._id === orderId); if (!order) return;
     const isMat = !order.type || order.type === 'materials';
     const type  = isMat ? 'materials' : 'consumables';
-    const draftForCard = this._intakeDrafts.get(`${orderId}|||${category}`);
-    const fullCatItems = (order.items || []).filter(i => i.category === category && (isMat ? !!i.emailed : true) && !i.rejected);
+    const group = this._intakeFindGroup(groupKey);
+    if (!group) return;
+    const draftForCard = this._intakeDrafts.get(groupKey);
 
-    const fullKey  = `${orderId}|||${category}`;
-    const fullSafe = fullKey.replace(/[^a-zA-Z0-9]/g, '_');
+    const fullSafe = groupKey.replace(/[^a-zA-Z0-9]/g, '_');
     const fullEl   = document.getElementById(`intake-card-${fullSafe}`);
     if (fullEl) {
-      fullEl.outerHTML = Intake.renderCategoryCard(order, category, fullCatItems, type, this._intakeOpenOrders, { draftForCard });
+      fullEl.outerHTML = Intake.renderCategoryCard(groupKey, category, group.entries, type, this._intakeOpenOrders, { draftForCard });
       return;
     }
 
-    const boItems = fullCatItems.filter(i => Intake._itemStatus(order, i) === 'backorder');
-    const boSafe  = `${fullKey}|||bo`.replace(/[^a-zA-Z0-9]/g, '_');
+    const boEntries = group.entries.filter(({ order: o, item }) => Intake._itemStatus(o, item) === 'backorder');
+    const boSafe  = `${groupKey}|||bo`.replace(/[^a-zA-Z0-9]/g, '_');
     const boEl    = document.getElementById(`intake-card-${boSafe}`);
     if (boEl) {
-      boEl.outerHTML = Intake.renderCategoryCard(order, category, boItems, type, this._intakeOpenOrders, { isDerived: true, draftForCard });
+      boEl.outerHTML = Intake.renderCategoryCard(groupKey, category, boEntries, type, this._intakeOpenOrders, { isDerived: true, draftForCard });
     }
   },
 
-  // Validates and saves a card's staged draft to Firestore, then clears it.
+  // Validates and saves a card's staged draft to Firestore, then clears it. A delivery
+  // can span multiple orders, so this splits the merged draft by which order each item
+  // belongs to and writes each order's own intake.items patch separately.
   async intakeConfirm(cardKey) {
-    const sep = cardKey.indexOf('|||');
-    if (sep < 0) return;
-    const orderId = cardKey.slice(0, sep);
-    let category  = cardKey.slice(sep + 3);
-    if (category.endsWith('|||bo')) category = category.slice(0, -5);
-    const realKey = `${orderId}|||${category}`;
+    let groupKey = cardKey;
+    if (groupKey.endsWith('|||bo')) groupKey = groupKey.slice(0, -5);
 
-    const order = this.orders.find(o => o._id === orderId); if (!order) return;
-    const draft = this._intakeDrafts.get(realKey); if (!draft) return;
+    const group = this._intakeFindGroup(groupKey); if (!group) return;
+    const draft = this._intakeDrafts.get(groupKey); if (!draft) return;
 
-    const isMat = !order.type || order.type === 'materials';
-    const catItems = (order.items || []).filter(i => i.category === category && (isMat ? !!i.emailed : true) && !i.rejected);
-    if (!Intake.canConfirm(order, catItems, draft)) return;
+    // The derived back-order-only card's draft is shared with the full card (same
+    // underlying items, just a filtered view) — always validate/save against the FULL
+    // set of entries, not just the backorder-filtered subset.
+    if (!Intake.canConfirmEntries(group.entries, draft)) return;
 
-    const merged = Intake.mergeDraft(order, draft);
-    const fullMap = { ...((order.intake && order.intake.items) || {}) };
-    for (const i of catItems) {
-      const key = String(i.id);
-      if (merged[key]) fullMap[key] = merged[key]; else delete fullMap[key];
+    const merged = Intake.mergeDraftEntries(group.entries, draft);
+    const byOrder = new Map(); // orderId -> { order, fullMap }
+    for (const { order, item } of group.entries) {
+      if (!byOrder.has(order._id)) {
+        byOrder.set(order._id, { order, fullMap: { ...((order.intake && order.intake.items) || {}) } });
+      }
+      const bucket = byOrder.get(order._id);
+      const compositeKey = `${order._id}::${item.id}`;
+      const bareKey = String(item.id);
+      if (merged[compositeKey]) bucket.fullMap[bareKey] = merged[compositeKey]; else delete bucket.fullMap[bareKey];
     }
-    const totalItems = (order.items || []).filter(i => (isMat ? !!i.emailed : true) && !i.rejected).length;
+
     const s  = Settings.get();
     const by = (s.managerName || 'Manager').trim() || 'Manager';
     try {
-      await DB.updateIntake(orderId, fullMap, by, totalItems);
-      this._intakeDrafts.delete(realKey);
+      await Promise.all([...byOrder.values()].map(({ order, fullMap }) => {
+        const isMat = !order.type || order.type === 'materials';
+        const totalItems = (order.items || []).filter(i => (isMat ? !!i.emailed : true) && !i.rejected).length;
+        return DB.updateIntake(order._id, fullMap, by, totalItems);
+      }));
+      this._intakeDrafts.delete(groupKey);
+      const isMat = !group.entries[0].order.type || group.entries[0].order.type === 'materials';
       if (isMat) this.renderIntakeMat(); else this.renderIntakeCons();
     } catch (e) {
       console.error('Confirm save failed:', e);
@@ -1050,12 +1069,13 @@ const Manager = {
     else { if (type === 'materials') this.renderIntakeMat(); else this.renderIntakeCons(); }
   },
 
-  // Edit mode lists DELIVERIES (one row per order+category, same grouping as the
-  // normal Deliveries cards), not raw orders — that's what the manager actually
-  // looks at and wants to fix. Combine/Cancel still act on the underlying order
-  // document(s) (a delivery has no separate existence in Firestore, it's just a
-  // view over an order's items), so a selection is keyed by "orderId|||category"
-  // for checkbox bookkeeping and resolved down to distinct order ids on action.
+  // Edit mode lists DELIVERIES (grouped the same way as the normal Deliveries cards —
+  // now by deliveryId, so a delivery spanning multiple orders shows as ONE row here
+  // too), not raw orders — that's what the manager actually looks at and wants to fix.
+  // Combine/Cancel still act on the underlying order document(s) (a delivery has no
+  // separate existence in Firestore, it's just a view over items across one or more
+  // orders), so a selection is keyed by groupKey and resolved down to distinct order ids
+  // on action via _editSelectedOrderIds.
   renderEditList(type) {
     const id = type === 'materials' ? 'mat' : 'cons';
     const el = document.getElementById(`intake-edit-list-${id}`); if (!el) return;
@@ -1065,31 +1085,48 @@ const Manager = {
       return;
     }
     el.innerHTML = groups.map(g => {
-      const cardKey = `${g.order._id}|||${g.category}`;
-      const ts = g.order.submittedAt && g.order.submittedAt.toDate
-        ? g.order.submittedAt.toDate().toLocaleDateString('en-AU', { day:'2-digit', month:'short', year:'numeric' })
+      const distinctOrderIds = [...new Set(g.entries.map(e => e.order._id))];
+      const submittedDates = g.entries
+        .map(e => e.order.submittedAt && e.order.submittedAt.toDate ? e.order.submittedAt.toDate() : null)
+        .filter(Boolean);
+      const ts = submittedDates.length
+        ? new Date(Math.min(...submittedDates.map(d => d.getTime()))).toLocaleDateString('en-AU', { day:'2-digit', month:'short', year:'numeric' })
         : '';
-      const checked = this._editSelected[type].has(cardKey);
+      const refLabel = distinctOrderIds.length === 1
+        ? (g.entries[0].order.ref || g.entries[0].order._id)
+        : `${distinctOrderIds.length} orders`;
+      const checked = this._editSelected[type].has(g.groupKey);
       return `
         <label class="edit-delivery-row">
-          <input type="checkbox" data-edit-order="${esc(cardKey)}" ${checked ? 'checked' : ''}>
+          <input type="checkbox" data-edit-order="${esc(g.groupKey)}" ${checked ? 'checked' : ''}>
           <div class="edit-delivery-info">
             <div class="edit-delivery-ref">${esc(g.category)}</div>
-            <div class="edit-delivery-meta">${esc(ts)}${g.order.deviceName ? ' &middot; ' + esc(g.order.deviceName) : ''} &middot; ${g.catItems.length} item${g.catItems.length !== 1 ? 's' : ''} &middot; from order ${esc(g.order.ref || g.order._id)}</div>
+            <div class="edit-delivery-meta">${esc(ts)} &middot; ${g.entries.length} item${g.entries.length !== 1 ? 's' : ''} &middot; from ${esc(refLabel)}</div>
           </div>
         </label>`;
     }).join('');
   },
 
-  toggleEditSelect(type, cardKey) {
+  toggleEditSelect(type, groupKey) {
     const s = this._editSelected[type];
-    if (s.has(cardKey)) s.delete(cardKey); else s.add(cardKey);
+    if (s.has(groupKey)) s.delete(groupKey); else s.add(groupKey);
     this._updateEditActionBar(type);
   },
 
   // Resolves the current delivery selection down to the distinct underlying order ids.
+  // groupKey is either a DLV-... deliveryId or a legacy:orderId:category fallback —
+  // neither has the shape a string-slice could reliably parse, so resolve via a fresh
+  // lookup against the current groups instead.
   _editSelectedOrderIds(type) {
-    return [...new Set([...this._editSelected[type]].map(k => k.slice(0, k.indexOf('|||'))))];
+    const groups = Intake.buildCategoryGroups(this.orders, type);
+    const selectedKeys = this._editSelected[type];
+    const orderIds = new Set();
+    for (const g of groups) {
+      if (selectedKeys.has(g.groupKey)) {
+        for (const { order } of g.entries) orderIds.add(order._id);
+      }
+    }
+    return [...orderIds];
   },
 
   _updateEditActionBar(type) {
@@ -1388,39 +1425,41 @@ const Manager = {
     }
   },
 
-  // ── SENT VIEW: per-category email groups ────────────────────────────
-  // Each card = one category from one submission that has been fully emailed.
-  // A submission can appear across multiple cards if multiple categories were emailed.
+  // ── SENT VIEW: per-delivery groups ───────────────────────────────────
+  // Each card = one delivery — everything emailed together in one real send, which may
+  // span multiple orders (see Intake.buildCategoryGroups). Uses the same grouping as the
+  // Deliveries page so "what's been sent" reads the same way in both places.
   _renderSentGroups() {
-    const sentGroups = [];
-    for (const order of this.orders) {
-      if (order.status === 'rejected') continue;
-      const items = (order.items || []);
-      const cats  = [...new Set(items.map(i => i.category))];
-      for (const cat of cats) {
-        const catItems    = items.filter(i => i.category === cat);
-        const nonRejected = catItems.filter(i => !i.rejected);
-        if (nonRejected.length > 0 && nonRejected.every(i => i.emailed)) {
-          sentGroups.push({ order, category: cat, catItems: nonRejected });
-        }
-      }
-    }
+    const matGroups  = Intake.buildCategoryGroups(this.orders, 'materials');
+    const consGroups = Intake.buildCategoryGroups(this.orders, 'consumables');
+    // Materials groups are already emailed-only by construction; consumables' eligibility
+    // filter isn't (it includes not-yet-emailed items too), so filter explicitly here —
+    // mirrors the original check that every non-rejected item in the group is emailed.
+    const sentGroups = [...matGroups, ...consGroups].filter(g => g.entries.every(({ item }) => !!item.emailed));
     if (!sentGroups.length) {
       return `<div class="empty-queue"><i class="ti ti-mail-check"></i><p>No sent orders yet.</p></div>`;
     }
-    return sentGroups.map(g => this._sentGroupCard(g.order, g.category, g.catItems)).join('');
+    return sentGroups.map(g => this._sentGroupCard(g.groupKey, g.category, g.entries)).join('');
   },
 
-  _sentGroupCard(order, category, catItems) {
-    const ts     = order.submittedAt?.toDate ? fmtTime(order.submittedAt.toDate()) : fmtTime(order.submittedAt);
-    const safeKey = `sent-${order._id.replace(/[^a-zA-Z0-9]/g,'_')}-${category.replace(/[^a-zA-Z0-9]/g,'_')}`;
+  _sentGroupCard(groupKey, category, entries) {
+    const distinctOrderIds = [...new Set(entries.map(e => e.order._id))];
+    const submittedDates = entries
+      .map(e => e.order.submittedAt?.toDate ? e.order.submittedAt.toDate() : (e.order.submittedAt || null))
+      .filter(Boolean);
+    const ts = submittedDates.length
+      ? fmtTime(new Date(Math.min(...submittedDates.map(d => d instanceof Date ? d.getTime() : new Date(d).getTime()))))
+      : '';
+    const deviceNames = [...new Set(entries.map(e => e.order.deviceName || ''))].filter(Boolean);
+    const deviceLabel = deviceNames.length === 0 ? '' : (deviceNames.length === 1 ? deviceNames[0] : 'Multiple devices');
+    const safeKey = `sent-${groupKey.replace(/[^a-zA-Z0-9]/g,'_')}`;
     const isOpen  = this._openCards.has(safeKey);
     return `<div class="order-card" id="card-${esc(safeKey)}">
       <div class="order-card-header" data-card-id="${esc(safeKey)}">
         <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%">
           <div>
             <div class="order-ref-text">${esc(category)}</div>
-            <div class="order-meta">${ts}${order.deviceName ? ' · ' + esc(order.deviceName) : ''} · ${catItems.length} line${catItems.length!==1?'s':''}</div>
+            <div class="order-meta">${ts}${deviceLabel ? ' · ' + esc(deviceLabel) : ''} · ${entries.length} line${entries.length!==1?'s':''}</div>
           </div>
           <div style="display:flex;align-items:center;gap:8px">
             <span class="status-pill status-sent">Sent</span>
@@ -1429,11 +1468,11 @@ const Manager = {
         </div>
       </div>
       <div class="order-card-body${isOpen?' open':''}" id="body-${esc(safeKey)}">
-        ${catItems.map(item => `
+        ${entries.map(({ item, order }) => `
           <div class="order-line emailed">
             <div class="order-line-info">
               <div class="order-line-name">${esc(item.description)}</div>
-              <div class="order-line-code">${esc(item.partCode)}</div>
+              <div class="order-line-code">${esc(item.partCode)}${distinctOrderIds.length > 1 ? ' &middot; ' + esc(order.deviceName || order.ref || order._id) : ''}</div>
             </div>
             <div class="order-line-right">
               <span class="emailed-badge"><i class="ti ti-mail-check"></i> Emailed</span>
@@ -1441,8 +1480,8 @@ const Manager = {
             </div>
           </div>`).join('')}
         <div class="order-card-actions">
-          <button class="btn btn-outline" data-reset-cat="${esc(order._id)}" data-category="${esc(category)}" style="margin-bottom:4px">
-            <i class="ti ti-refresh"></i> Reset to pending
+          <button class="btn btn-outline" data-reset-group="${esc(groupKey)}" data-category="${esc(category)}" style="margin-bottom:4px">
+            <i class="ti ti-refresh"></i> Reset entire delivery to pending
           </button>
         </div>
       </div>
@@ -1566,6 +1605,21 @@ const Manager = {
 
   async resetCategoryEmailed(orderId, category) {
     try { await DB.resetCategoryEmailed(orderId, category); } catch(e) { alert('Reset failed: ' + e.message); }
+  },
+
+  // Resets an entire delivery (which may span multiple orders) back to pending in one
+  // action — resolves the groupKey back to its distinct contributing orders and resets
+  // each one's copy of the category.
+  async resetDeliveryGroup(groupKey, category) {
+    const matGroups  = Intake.buildCategoryGroups(this.orders, 'materials');
+    const consGroups = Intake.buildCategoryGroups(this.orders, 'consumables');
+    const group = [...matGroups, ...consGroups].find(g => g.groupKey === groupKey);
+    if (!group) return;
+    const orderIds = [...new Set(group.entries.map(e => e.order._id))];
+    if (!confirm(`Reset this entire delivery (${orderIds.length} order${orderIds.length !== 1 ? 's' : ''}) back to pending?`)) return;
+    try {
+      await Promise.all(orderIds.map(id => DB.resetCategoryEmailed(id, category)));
+    } catch(e) { alert('Reset failed: ' + e.message); }
   },
 
   async stepCombinedSubQty(cat, orderId, partCode, delta) {
@@ -1815,7 +1869,10 @@ const Manager = {
     document.getElementById('email-cc').value      = s.ccEmail;
     document.getElementById('email-subject').value = subject;
     document.getElementById('email-body').value    = body;
-    this._pendingEmailMeta = { category, orderIds: [...orderIds], excludedByOrder };
+    // One deliveryId shared across every contributing order — this is what lets the
+    // Deliveries page and Sent tab collapse a multi-order send into one card instead of
+    // one per order.
+    this._pendingEmailMeta = { category, orderIds: [...orderIds], excludedByOrder, deliveryId: genDeliveryId() };
     this._noEmailCategory  = null;
     this.openPanel('email-panel');
   },
@@ -1827,10 +1884,10 @@ const Manager = {
     const body    = document.getElementById('email-body').value;
 
     if (this._pendingEmailMeta) {
-      const { category, orderIds, excludedByOrder = {} } = this._pendingEmailMeta;
+      const { category, orderIds, excludedByOrder = {}, deliveryId } = this._pendingEmailMeta;
       for (const id of orderIds) {
         const excludePartCodes = excludedByOrder[id] || [];
-        try { await DB.markCategoryEmailed(id, category, excludePartCodes); } catch(e) { console.error(e); }
+        try { await DB.markCategoryEmailed(id, category, excludePartCodes, deliveryId); } catch(e) { console.error(e); }
       }
       // Clear local exclusions for this category so skipped items are fresh for the next send
       for (const key of [...this._combExcluded]) {
@@ -1839,9 +1896,29 @@ const Manager = {
       this._pendingEmailMeta = null;
     }
 
-    // Clear New Order (materials) cart items for this category if applicable
+    // New Order (materials) tab — save this cart session to Firestore on first email
+    // (mirrors the Consumables Order panel's already-correct pattern below), so the
+    // order actually shows up in Sent and becomes a trackable delivery instead of just
+    // opening a mailto and vanishing. Reuses the same doc for any further categories
+    // emailed from this cart before it's fully drained.
     const nocat = this._noEmailCategory;
     if (nocat) {
+      if (!this._noOrderId) {
+        const s          = Settings.get();
+        const deviceName = (s.managerName || 'Manager').trim() || 'Manager';
+        const allItems   = this.noItems().map(i => ({
+          id: i.id, partCode: i.partCode, description: i.description,
+          category: i.category, subcategory: i.subcategory,
+          qtyType: i.qtyType || '', qty: i.qty,
+        }));
+        try {
+          this._noOrderId = await DB.submitOrder({ ref: this.orderRef, deviceName, items: allItems });
+        } catch(e) { console.error('New Order save failed:', e); }
+      }
+      if (this._noOrderId) {
+        try { await DB.markCategoryEmailed(this._noOrderId, nocat, [], genDeliveryId()); }
+        catch(e) { console.warn('New Order markEmailed failed:', e); }
+      }
       Object.keys(this._no._items).forEach(id => {
         const m = this.materials.find(x => x.id == id);
         if (m && m.category === nocat) delete this._no._items[id];
@@ -1849,7 +1926,9 @@ const Manager = {
       this._noEmailCategory = null;
       this._updateNoBadge();
       this.renderNoList();
-      this.orderRef = genRef();
+      // Only reset once the cart is fully drained — categories still left un-emailed
+      // must stay associated with the same order doc for a later "Add to order queue".
+      if (this.noCount() === 0) { this._noOrderId = null; this.orderRef = genRef(); }
     }
 
     // Clear Consumables Order cart items for this category (or all) if applicable
@@ -1874,7 +1953,7 @@ const Manager = {
       if (this._coOrderId) {
         try {
           if (cocat === '__all__') await DB.markAllEmailed(this._coOrderId);
-          else await DB.markCategoryEmailed(this._coOrderId, cocat);
+          else await DB.markCategoryEmailed(this._coOrderId, cocat, [], genDeliveryId());
         } catch(e) { console.warn('CO markEmailed failed:', e); }
       }
 
@@ -2057,7 +2136,14 @@ const Manager = {
       qtyType: i.qtyType || '', qty: i.qty,
     }));
     try {
-      await DB.submitOrder({ ref: this.orderRef, deviceName, items });
+      if (this._noOrderId) {
+        // Some categories from this cart session were already emailed and saved —
+        // append the remaining items to that same doc instead of creating a duplicate.
+        await DB.appendItems(this._noOrderId, items);
+        this._noOrderId = null;
+      } else {
+        await DB.submitOrder({ ref: this.orderRef, deviceName, items });
+      }
       this._no._items = {};
       this.orderRef = genRef();
       this._updateNoBadge();

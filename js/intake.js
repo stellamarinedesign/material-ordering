@@ -1,4 +1,4 @@
-// intake.js — v0.37.1
+// intake.js — v0.37.2
 // Shared intake rendering module used by warehouse.html and manager.html.
 
 const Intake = {
@@ -96,15 +96,64 @@ const Intake = {
     });
   },
 
+  // ── ENTRIES-AWARE VARIANTS (a delivery can now span multiple orders) ──
+  // An "entry" is { item, order } — needed because a delivery's items can belong to
+  // DIFFERENT order docs, each with its own intake.items map. item.id is the catalog
+  // item's id (shared across orders that ordered the same material — see combineOrders),
+  // so any per-item state that spans orders must be keyed by the composite
+  // "orderId::itemId", never bare itemId, or two unrelated items could conflate.
+
+  computeCategoryStatusEntries(entries) {
+    if (!entries.length) return 'pending';
+    const statuses = entries.map(({ order, item }) => this._itemStatus(order, item));
+    if (statuses.every(s => s === 'pending')) return 'pending';
+    if (!statuses.every(s => this.RESOLVED_STATUSES.has(s))) return 'in_progress';
+    if (statuses.every(s => s === 'ok')) return 'received';
+    if (statuses.some(s => s === 'backorder')) return 'backorder';
+    return 'completed';
+  },
+
+  // Returns a map keyed "orderId::itemId" -> {status, qtyReceived, notes}, merging each
+  // entry's own order.intake.items with any staged draft patch.
+  mergeDraftEntries(entries, draftForCard) {
+    const merged = {};
+    for (const { order, item } of entries) {
+      const saved = (order.intake && order.intake.items) || {};
+      merged[`${order._id}::${item.id}`] = { ...(saved[String(item.id)] || {}) };
+    }
+    if (draftForCard) {
+      for (const [key, patch] of Object.entries(draftForCard)) {
+        merged[key] = { ...(merged[key] || {}), ...patch };
+      }
+    }
+    return merged;
+  },
+
+  canConfirmEntries(entries, draftForCard) {
+    const merged = this.mergeDraftEntries(entries, draftForCard);
+    return entries.every(({ order, item }) => {
+      const s = (merged[`${order._id}::${item.id}`] || {}).status;
+      return !!s && s !== 'pending';
+    });
+  },
+
   // ── CATEGORY-BASED RENDERING (Deliveries page + Sent tab) ─────────────
-  // Each "unit" is one (order, category) pair where that category has been emailed.
-  // This maps better to real orders (one supplier email = one delivery to track).
+  // Each "unit" is one delivery — everything emailed together in one real send, which
+  // may span multiple orders. Grouped by item.deliveryId (stamped when an item is marked
+  // emailed — see DB.markCategoryEmailed/markAllEmailed) so orders that contributed to the
+  // same email collapse into one card. Items from before deliveryId existed fall back to
+  // a per-order-per-category key — no retroactive merging for those (that's what the
+  // Combine debug tool is for).
 
   // cancelledOnly=false (default): excludes orders flagged intakeCancelled.
   // cancelledOnly=true: returns ONLY orders flagged intakeCancelled.
+  // NOTE: the cancelled/active split happens here, per-order, BEFORE grouping by
+  // deliveryId — so a delivery whose contributing orders have mixed cancelled state
+  // naturally partitions into two same-groupKey cards, one per tab (each showing only
+  // the entries from orders in that tab's state). This is intentional, not a bug.
   buildCategoryGroups(orders, type, cancelledOnly = false) {
     const isMat = type === 'materials';
-    const groups = [];
+    const flat = [];
     for (const order of orders) {
       const orderIsMat = !order.type || order.type === 'materials';
       if (orderIsMat !== isMat) continue;
@@ -115,18 +164,20 @@ const Intake = {
       const eligible = isMat
         ? items.filter(i => i.emailed && !i.rejected)
         : items.filter(i => !i.rejected);
-      if (!eligible.length) continue;
-      const cats = [...new Set(eligible.map(i => i.category))];
-      for (const cat of cats) {
-        const catItems = eligible.filter(i => i.category === cat);
-        if (catItems.length) groups.push({ order, category: cat, catItems });
-      }
+      for (const item of eligible) flat.push({ item, order });
     }
-    return groups;
+    const byKey = new Map();
+    for (const entry of flat) {
+      const { item, order } = entry;
+      const groupKey = item.deliveryId || `legacy:${order._id}:${item.category}`;
+      if (!byKey.has(groupKey)) byKey.set(groupKey, { groupKey, category: item.category, entries: [] });
+      byKey.get(groupKey).entries.push(entry);
+    }
+    return [...byKey.values()];
   },
 
   // filter: 'all' | 'outstanding' | 'backorder' | 'completed' | 'cancelled'
-  // drafts (optional): Map of cardKey ("orderId|||category") -> draftForCard,
+  // drafts (optional): Map of groupKey (+"|||bo" for the derived card) -> draftForCard,
   // so an open card keeps showing staged-but-unconfirmed edits across re-renders.
   // showRestore (optional): whether cancelled cards get a Restore button (manager.html only).
   renderCategoryList(orders, type, filter, openCards, drafts, showRestore) {
@@ -138,9 +189,9 @@ const Intake = {
     } else {
       const groups = this.buildCategoryGroups(orders, type, false);
       for (const g of groups) {
-        const status   = this.computeCategoryStatus(g.order, g.catItems);
+        const status   = this.computeCategoryStatusEntries(g.entries);
         const resolved = this.TAB_RESOLVED.has(status);
-        const boItems  = resolved ? g.catItems.filter(i => this._itemStatus(g.order, i) === 'backorder') : [];
+        const boEntries = resolved ? g.entries.filter(({ order, item }) => this._itemStatus(order, item) === 'backorder') : [];
 
         if (filter === 'all') {
           cards.push(g);
@@ -148,9 +199,9 @@ const Intake = {
           if (resolved) cards.push(g);
         } else if (filter === 'outstanding') {
           if (!resolved) cards.push(g);
-          else if (boItems.length) cards.push({ order: g.order, category: g.category, catItems: boItems, isDerived: true });
+          else if (boEntries.length) cards.push({ groupKey: g.groupKey, category: g.category, entries: boEntries, isDerived: true });
         } else if (filter === 'backorder') {
-          if (boItems.length) cards.push({ order: g.order, category: g.category, catItems: boItems, isDerived: true });
+          if (boEntries.length) cards.push({ groupKey: g.groupKey, category: g.category, entries: boEntries, isDerived: true });
         }
       }
     }
@@ -161,51 +212,60 @@ const Intake = {
       return `<div class="empty-state"><i class="ti ti-inbox-off"></i><p>No${label ? ' ' + label : ''} ${type} deliveries.</p></div>`;
     }
 
-    return cards.map(c => this.renderCategoryCard(c.order, c.category, c.catItems, type, openCards, {
+    return cards.map(c => this.renderCategoryCard(c.groupKey, c.category, c.entries, type, openCards, {
       isDerived:      !!c.isDerived,
       readOnly:       !!c.isCancelledCard,
       isCancelledCard:!!c.isCancelledCard,
       showRestore:    !!c.isCancelledCard && !!showRestore,
-      draftForCard:   drafts ? drafts.get(`${c.order._id}|||${c.category}`) : undefined,
+      draftForCard:   drafts ? drafts.get(`${c.groupKey}${c.isDerived ? '|||bo' : ''}`) : undefined,
     })).join('');
   },
 
-  // Card key = orderId|||category, with a |||bo suffix for the derived back-order-only
-  // card so it never collides (open state, draft, DOM id) with the full category card.
+  // Card key = groupKey, with a |||bo suffix for the derived back-order-only card so it
+  // never collides (open state, draft, DOM id) with the full delivery card. groupKey is
+  // always either a DLV-... deliveryId or a legacy:orderId:category fallback — never a
+  // bare Firestore doc id, which callers rely on to distinguish it from a plain orderId.
+  // entries: [{item, order}, ...] — may span multiple orders.
   // opts: { isDerived, readOnly, isCancelledCard, draftForCard, showRestore }
-  renderCategoryCard(order, category, catItems, type, openCards, opts = {}) {
+  renderCategoryCard(groupKey, category, entries, type, openCards, opts = {}) {
     const { isDerived = false, readOnly = false, isCancelledCard = false, draftForCard, showRestore = false } = opts;
-    const cardKey = `${order._id}|||${category}${isDerived ? '|||bo' : ''}`;
+    const cardKey = `${groupKey}${isDerived ? '|||bo' : ''}`;
     const safeId  = cardKey.replace(/[^a-zA-Z0-9]/g, '_');
     const isOpen  = openCards && openCards.has(cardKey);
 
-    const effectiveItems = this.mergeDraft(order, draftForCard);
-    const draftOrder = { ...order, intake: { ...(order.intake || {}), items: effectiveItems } };
-    const status  = this.computeCategoryStatus(draftOrder, catItems);
-    const badgeStatus = isCancelledCard ? 'cancelled' : status;
-    const suffix  = isDerived ? ' — Back Order' : '';
-    const ts      = order.submittedAt && order.submittedAt.toDate
-      ? order.submittedAt.toDate().toLocaleDateString('en-AU', { day:'2-digit', month:'short', year:'numeric' })
+    const distinctOrderIds = [...new Set(entries.map(e => e.order._id))];
+    const spansMultipleOrders = distinctOrderIds.length > 1;
+    const submittedDates = entries
+      .map(e => e.order.submittedAt && e.order.submittedAt.toDate ? e.order.submittedAt.toDate() : null)
+      .filter(Boolean);
+    const ts = submittedDates.length
+      ? new Date(Math.min(...submittedDates.map(d => d.getTime()))).toLocaleDateString('en-AU', { day:'2-digit', month:'short', year:'numeric' })
       : '';
+    const deviceNames = [...new Set(entries.map(e => e.order.deviceName || ''))].filter(Boolean);
+    const deviceLabel = deviceNames.length === 0 ? '' : (deviceNames.length === 1 ? deviceNames[0] : 'Multiple devices');
+
+    const status = this.computeCategoryStatusEntries(entries);
+    const badgeStatus = isCancelledCard ? 'cancelled' : status;
+    const suffix = isDerived ? ' — Back Order' : '';
     const hasDraft   = !readOnly && draftForCard && Object.keys(draftForCard).length > 0;
-    const canConfirm = hasDraft && this.canConfirm(order, catItems, draftForCard);
+    const canConfirm = hasDraft && this.canConfirmEntries(entries, draftForCard);
 
     return `
       <div class="intake-card${isOpen ? ' open' : ''}" id="intake-card-${esc(safeId)}">
         <div class="intake-card-hdr" data-toggle-order="${esc(cardKey)}">
           <div class="intake-card-title">
             <div class="intake-card-ref">${esc(category)}${esc(suffix)}</div>
-            <div class="intake-card-meta">${esc(ts)}${order.deviceName ? ' &middot; ' + esc(order.deviceName) : ''} &middot; ${catItems.length} item${catItems.length !== 1 ? 's' : ''}</div>
+            <div class="intake-card-meta">${esc(ts)}${deviceLabel ? ' &middot; ' + esc(deviceLabel) : ''} &middot; ${entries.length} item${entries.length !== 1 ? 's' : ''}</div>
           </div>
           <div class="intake-card-right">
-            ${readOnly && showRestore ? `<button class="intake-restore-btn" data-restore="${esc(order._id)}" title="Restore to active tracking"><i class="ti ti-arrow-back-up"></i> Restore</button>` : ''}
+            ${readOnly && showRestore ? `<button class="intake-restore-btn" data-restore="${esc(distinctOrderIds[0])}" title="Restore to active tracking"><i class="ti ti-arrow-back-up"></i> Restore</button>` : ''}
             ${isOpen && hasDraft ? `<button class="intake-confirm-btn" data-confirm="${esc(cardKey)}" ${!canConfirm ? 'disabled' : ''} title="${canConfirm ? 'Confirm and save changes' : 'Set a status for every item first'}"><i class="ti ti-check"></i> Confirm</button>` : ''}
             ${this.statusBadge(badgeStatus)}
             <i class="ti ${isOpen ? 'ti-chevron-up' : 'ti-chevron-down'} intake-chevron"></i>
           </div>
         </div>
         ${isOpen ? `<div class="intake-card-body">
-          ${catItems.map(i => this.renderItemRow(order, i, { draftForCard, readOnly })).join('')}
+          ${entries.map(({ item, order }) => this.renderItemRow(order, item, { draftForCard, readOnly, showOrderLabel: spansMultipleOrders })).join('')}
         </div>` : ''}
       </div>`;
   },
@@ -261,17 +321,29 @@ const Intake = {
 
   // ── RENDERING ────────────────────────────────────────────────────────
 
-  // opts: { draftForCard, readOnly }
+  // Reads an item row's effective status/qty/notes: its own order's saved intake data,
+  // overlaid with a draft patch stored under the composite "orderId::itemId" key (never
+  // bare itemId — item.id is the catalog item's id, shared across orders that ordered the
+  // same material, so a delivery spanning multiple orders needs the composite key to
+  // avoid conflating two unrelated items' statuses).
+  _rowState(order, item, draftForCard) {
+    const saved = (order.intake && order.intake.items) || {};
+    const base  = saved[String(item.id)] || {};
+    const patch = draftForCard ? draftForCard[`${order._id}::${item.id}`] : undefined;
+    return patch ? { ...base, ...patch } : base;
+  },
+
+  // opts: { draftForCard, readOnly, showOrderLabel }
   renderItemRow(order, item, opts = {}) {
-    const { draftForCard, readOnly = false } = opts;
-    const merged     = this.mergeDraft(order, draftForCard);
-    const istate     = merged[String(item.id)] || {};
+    const { draftForCard, readOnly = false, showOrderLabel = false } = opts;
+    const istate     = this._rowState(order, item, draftForCard);
     const status     = istate.status || null;
     const qtyRecv    = istate.qtyReceived;
     const notes      = istate.notes || '';
     const noteKey    = `${order._id}__${item.id}`;
     const notesOpen  = !readOnly && (this._openNotes.has(noteKey) || !!notes);
     const showCode   = item.partCode && !Data.isDummyCode(item.partCode);
+    const orderLabel = showOrderLabel ? (order.deviceName || order.ref || order._id) : '';
 
     if (readOnly) {
       return `
@@ -280,6 +352,7 @@ const Intake = {
             <div class="intake-item-info">
               <div class="intake-item-name">${esc(item.description)}</div>
               ${showCode ? `<div class="intake-item-code">${esc(item.partCode)}</div>` : ''}
+              ${orderLabel ? `<div class="intake-item-order-label">${esc(orderLabel)}</div>` : ''}
               <div class="intake-item-ordered">Ordered: <strong>${item.qty}</strong>${item.qtyType ? ' ' + esc(item.qtyType) : ''}</div>
             </div>
           </div>
@@ -293,6 +366,7 @@ const Intake = {
           <div class="intake-item-info" data-notes-toggle="${esc(String(item.id))}" data-notes-order="${esc(order._id)}">
             <div class="intake-item-name">${esc(item.description)}</div>
             ${showCode ? `<div class="intake-item-code">${esc(item.partCode)}</div>` : ''}
+            ${orderLabel ? `<div class="intake-item-order-label">${esc(orderLabel)}</div>` : ''}
             <div class="intake-item-ordered">Ordered: <strong>${item.qty}</strong>${item.qtyType ? ' ' + esc(item.qtyType) : ''}</div>
           </div>
           <div class="intake-item-btns">
