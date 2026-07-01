@@ -653,6 +653,23 @@ button { cursor: pointer; }
 }
 .intake-status-badge .ti { font-size: 12px; }
 
+/* Confirm button (shown on an open card once it has staged-but-unconfirmed edits) */
+.intake-confirm-btn {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 11px; font-weight: 600; padding: 5px 10px;
+  border-radius: var(--radius); border: 1px solid var(--green);
+  background: var(--green-bg); color: var(--green-text); cursor: pointer;
+}
+.intake-confirm-btn:disabled { opacity: .4; cursor: not-allowed; border-color: var(--border); background: var(--bg2); color: var(--text3); }
+
+/* Restore button (cancelled cards, manager.html only) */
+.intake-restore-btn {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 11px; font-weight: 600; padding: 5px 10px;
+  border-radius: var(--radius); border: 1px solid var(--border2);
+  background: var(--bg2); color: var(--text2); cursor: pointer;
+}
+
 /* Card body */
 .intake-card-body { border-top: 1px solid var(--border); }
 
@@ -730,6 +747,24 @@ button { cursor: pointer; }
   outline: none; resize: vertical;
 }
 .intake-notes-input:focus { border-color: var(--border2); }
+
+/* Read-only notes display (cancelled cards) */
+.intake-notes-readonly {
+  font-size: 12px; color: var(--text2); line-height: 1.5;
+  background: var(--bg); border-radius: var(--radius); padding: 7px 10px;
+}
+
+/* ── Edit mode (combine/cancel deliveries) — manager.html Deliveries tabs ── */
+.edit-delivery-row {
+  display: flex; align-items: flex-start; gap: 10px;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius-lg); margin-bottom: 10px; padding: 12px 14px;
+  cursor: pointer;
+}
+.edit-delivery-row input[type="checkbox"] { margin-top: 3px; width: 16px; height: 16px; flex-shrink: 0; }
+.edit-delivery-info { flex: 1; min-width: 0; }
+.edit-delivery-ref  { font-size: 14px; font-weight: 600; font-family: var(--mono); }
+.edit-delivery-meta { font-size: 11px; color: var(--text3); margin-top: 2px; }
 
 /* ── Setup paste field ── */
 .setup-paste-area {

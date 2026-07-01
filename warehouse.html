@@ -30,6 +30,7 @@ const Warehouse = {
   activeTab:   'materials',
   _filters:    { materials: 'all', consumables: 'all' },
   _openOrders: new Set(),
+  _drafts:     new Map(), // cardKey ("orderId|||category") -> { [itemId]: {status, qtyReceived, notes} }
   _unsubOrders: null,
   _connState:  { connected: false, latestVersion: null },
   _noteSaveTimers: {},
@@ -172,6 +173,8 @@ const Warehouse = {
               <div class="intake-filter-chip active" data-filter="all">All</div>
               <div class="intake-filter-chip" data-filter="outstanding"><i class="ti ti-clock"></i> Outstanding</div>
               <div class="intake-filter-chip" data-filter="backorder"><i class="ti ti-clock-pause"></i> Back Orders</div>
+              <div class="intake-filter-chip" data-filter="completed"><i class="ti ti-circle-check"></i> Completed</div>
+              <div class="intake-filter-chip" data-filter="cancelled"><i class="ti ti-ban"></i> Cancelled</div>
             </div>
           </div>
           <div class="intake-scroll app-scroll">
@@ -186,6 +189,8 @@ const Warehouse = {
               <div class="intake-filter-chip active" data-filter="all">All</div>
               <div class="intake-filter-chip" data-filter="outstanding"><i class="ti ti-clock"></i> Outstanding</div>
               <div class="intake-filter-chip" data-filter="backorder"><i class="ti ti-clock-pause"></i> Back Orders</div>
+              <div class="intake-filter-chip" data-filter="completed"><i class="ti ti-circle-check"></i> Completed</div>
+              <div class="intake-filter-chip" data-filter="cancelled"><i class="ti ti-ban"></i> Cancelled</div>
             </div>
           </div>
           <div class="intake-scroll app-scroll">
@@ -236,6 +241,7 @@ const Warehouse = {
       onQtyChange:(orderId, itemId, qty)    => this.setPartialQty(orderId, itemId, qty),
       onNoteChange:(orderId, itemId, text)  => this.setNote(orderId, itemId, text),
       onRerender: (orderId)                 => this.rerenderCard(orderId, type),
+      onConfirm:  (cardKey)                 => this.onConfirm(cardKey),
     });
   },
 
@@ -288,93 +294,141 @@ const Warehouse = {
 
   renderList(type) {
     const el = document.getElementById(`intake-list-${type}`); if (!el) return;
-    el.innerHTML = Intake.renderCategoryList(this.orders, type, this._filters[type], this._openOrders);
+    el.innerHTML = Intake.renderCategoryList(this.orders, type, this._filters[type], this._openOrders, this._drafts);
   },
 
+  // Toggles a card's open/closed state and re-renders it in place. cardKey may be a
+  // plain orderId (notes-toggle path — falls back to a full list re-render) or a
+  // category card key ("orderId|||category", optionally suffixed "|||bo" for the
+  // derived back-order-only card).
   rerenderCard(cardKey, type) {
+    if (this._openOrders.has(cardKey)) this._openOrders.delete(cardKey);
+    else this._openOrders.add(cardKey);
+
     const sep = cardKey.indexOf('|||');
-    if (sep >= 0) {
-      const orderId  = cardKey.slice(0, sep);
-      const category = cardKey.slice(sep + 3);
-      if (this._openOrders.has(cardKey)) this._openOrders.delete(cardKey);
-      else this._openOrders.add(cardKey);
-      const order = this.orders.find(o => o._id === orderId);
-      if (!order) { this.renderList(type); return; }
-      const isMat    = !order.type || order.type === 'materials';
-      const t        = type || (isMat ? 'materials' : 'consumables');
-      const catItems = (order.items || []).filter(i => i.category === category && (isMat ? !!i.emailed : true) && !i.rejected);
-      const safeId   = cardKey.replace(/[^a-zA-Z0-9]/g, '_');
-      const cardEl   = document.getElementById(`intake-card-${safeId}`);
-      if (cardEl) cardEl.outerHTML = Intake.renderCategoryCard(order, category, catItems, t, this._openOrders);
-      else this.renderList(t);
-    } else {
-      if (this._openOrders.has(cardKey)) this._openOrders.delete(cardKey);
-      else this._openOrders.add(cardKey);
-      this.renderList(type || 'materials');
-    }
+    if (sep < 0) { this.renderList(type || 'materials'); return; }
+
+    const orderId = cardKey.slice(0, sep);
+    let rest      = cardKey.slice(sep + 3);
+    let isDerived = false;
+    if (rest.endsWith('|||bo')) { isDerived = true; rest = rest.slice(0, -5); }
+    const category = rest;
+
+    const order = this.orders.find(o => o._id === orderId);
+    if (!order) { this.renderList(type); return; }
+    const isMat = !order.type || order.type === 'materials';
+    const t     = type || (isMat ? 'materials' : 'consumables');
+    const isCancelled = !!order.intakeCancelled;
+
+    let catItems = (order.items || []).filter(i => i.category === category && (isMat ? !!i.emailed : true) && !i.rejected);
+    if (isDerived) catItems = catItems.filter(i => Intake._itemStatus(order, i) === 'backorder');
+
+    const safeId = cardKey.replace(/[^a-zA-Z0-9]/g, '_');
+    const cardEl = document.getElementById(`intake-card-${safeId}`);
+    const draftForCard = this._drafts.get(`${orderId}|||${category}`);
+    const opts = { isDerived, readOnly: isCancelled, isCancelledCard: isCancelled, draftForCard };
+    if (cardEl) cardEl.outerHTML = Intake.renderCategoryCard(order, category, catItems, t, this._openOrders, opts);
+    else this.renderList(t);
   },
 
-  // ── INTAKE MUTATIONS ──────────────────────────────────────────────────
-  _getOrCreateIntake(orderId) {
-    const order = this.orders.find(o => o._id === orderId);
-    if (!order) return null;
-    if (!order.intake)       order.intake       = { items: {} };
-    if (!order.intake.items) order.intake.items = {};
-    return order;
-  },
+  // ── INTAKE MUTATIONS (staged in _drafts — nothing is saved until Confirm) ──
 
   setItemStatus(orderId, itemId, action) {
-    const order = this._getOrCreateIntake(orderId);
-    if (!order) return;
-    const key  = String(itemId);
-    const curr = order.intake.items[key] || {};
-    if (curr.status === action) delete order.intake.items[key];
-    else order.intake.items[key] = { ...curr, status: action, qtyReceived: action === 'partial' ? (curr.qtyReceived ?? null) : null };
-    const item = (order.items || []).find(i => String(i.id) === key);
-    this._saveAndRerender(orderId, order, item?.category);
+    const order = this.orders.find(o => o._id === orderId); if (!order) return;
+    const item = (order.items || []).find(i => String(i.id) === String(itemId)); if (!item) return;
+    const cardKey = `${orderId}|||${item.category}`;
+    if (!this._drafts.has(cardKey)) this._drafts.set(cardKey, {});
+    const draft = this._drafts.get(cardKey);
+    const key = String(itemId);
+    const saved = ((order.intake && order.intake.items) || {})[key] || {};
+    const draftItem = draft[key] || {};
+    const currentStatus = draftItem.status !== undefined ? draftItem.status : (saved.status || null);
+    if (currentStatus === action) {
+      draft[key] = { ...draftItem, status: null, qtyReceived: null };
+    } else {
+      draft[key] = { ...draftItem, status: action, qtyReceived: action === 'partial' ? (draftItem.qtyReceived ?? saved.qtyReceived ?? null) : null };
+    }
+    this._rerenderCardOnly(orderId, item.category);
   },
 
   setPartialQty(orderId, itemId, qty) {
-    const order = this._getOrCreateIntake(orderId);
-    if (!order) return;
+    const order = this.orders.find(o => o._id === orderId); if (!order) return;
+    const item = (order.items || []).find(i => String(i.id) === String(itemId)); if (!item) return;
+    const cardKey = `${orderId}|||${item.category}`;
+    if (!this._drafts.has(cardKey)) this._drafts.set(cardKey, {});
+    const draft = this._drafts.get(cardKey);
     const key = String(itemId);
-    if (!order.intake.items[key]) order.intake.items[key] = { status: 'partial' };
-    order.intake.items[key].qtyReceived = qty;
-    this._save(orderId, order);
+    draft[key] = { ...(draft[key] || {}), qtyReceived: qty };
+    this._rerenderCardOnly(orderId, item.category);
   },
 
   setNote(orderId, itemId, text) {
-    const order = this._getOrCreateIntake(orderId);
-    if (!order) return;
+    const order = this.orders.find(o => o._id === orderId); if (!order) return;
+    const item = (order.items || []).find(i => String(i.id) === String(itemId)); if (!item) return;
+    const cardKey = `${orderId}|||${item.category}`;
+    if (!this._drafts.has(cardKey)) this._drafts.set(cardKey, {});
+    const draft = this._drafts.get(cardKey);
     const key = String(itemId);
-    if (!order.intake.items[key]) order.intake.items[key] = {};
-    order.intake.items[key].notes = text;
-    // Debounced save (already debounced in Intake.attachListeners, but save directly)
-    this._save(orderId, order);
+    draft[key] = { ...(draft[key] || {}), notes: text };
+    this._rerenderCardOnly(orderId, item.category);
   },
 
-  _saveAndRerender(orderId, order, category) {
-    const type = (!order.type || order.type === 'materials') ? 'materials' : 'consumables';
-    if (category) {
-      const cardKey  = `${orderId}|||${category}`;
-      const safeId   = cardKey.replace(/[^a-zA-Z0-9]/g, '_');
-      const cardEl   = document.getElementById(`intake-card-${safeId}`);
-      const catItems = (order.items || []).filter(i => i.category === category && (type === 'materials' ? !!i.emailed : true) && !i.rejected);
-      if (cardEl) {
-        cardEl.outerHTML = Intake.renderCategoryCard(order, category, catItems, type, this._openOrders);
-        this._save(orderId, order);
-        return;
-      }
+  // Re-renders just the open card showing staged draft edits — no Firestore write,
+  // so tab placement never changes until the user hits Confirm.
+  _rerenderCardOnly(orderId, category) {
+    const order = this.orders.find(o => o._id === orderId); if (!order) return;
+    const isMat = !order.type || order.type === 'materials';
+    const type  = isMat ? 'materials' : 'consumables';
+    const draftForCard = this._drafts.get(`${orderId}|||${category}`);
+    const fullCatItems = (order.items || []).filter(i => i.category === category && (isMat ? !!i.emailed : true) && !i.rejected);
+
+    const fullKey  = `${orderId}|||${category}`;
+    const fullSafe = fullKey.replace(/[^a-zA-Z0-9]/g, '_');
+    const fullEl   = document.getElementById(`intake-card-${fullSafe}`);
+    if (fullEl) {
+      fullEl.outerHTML = Intake.renderCategoryCard(order, category, fullCatItems, type, this._openOrders, { draftForCard });
+      return;
     }
-    this.renderList(type);
-    this._save(orderId, order);
+
+    const boItems = fullCatItems.filter(i => Intake._itemStatus(order, i) === 'backorder');
+    const boSafe  = `${fullKey}|||bo`.replace(/[^a-zA-Z0-9]/g, '_');
+    const boEl    = document.getElementById(`intake-card-${boSafe}`);
+    if (boEl) {
+      boEl.outerHTML = Intake.renderCategoryCard(order, category, boItems, type, this._openOrders, { isDerived: true, draftForCard });
+    }
   },
 
-  _save(orderId, order) {
-    const isMat      = !order.type || order.type === 'materials';
+  // Validates and saves a card's staged draft to Firestore, then clears it.
+  async onConfirm(cardKey) {
+    const sep = cardKey.indexOf('|||');
+    if (sep < 0) return;
+    const orderId = cardKey.slice(0, sep);
+    let category  = cardKey.slice(sep + 3);
+    if (category.endsWith('|||bo')) category = category.slice(0, -5);
+    const realKey = `${orderId}|||${category}`;
+
+    const order = this.orders.find(o => o._id === orderId); if (!order) return;
+    const draft = this._drafts.get(realKey); if (!draft) return;
+
+    const isMat = !order.type || order.type === 'materials';
+    const catItems = (order.items || []).filter(i => i.category === category && (isMat ? !!i.emailed : true) && !i.rejected);
+    if (!Intake.canConfirm(order, catItems, draft)) return;
+
+    const merged = Intake.mergeDraft(order, draft);
+    const fullMap = { ...((order.intake && order.intake.items) || {}) };
+    for (const i of catItems) {
+      const key = String(i.id);
+      if (merged[key]) fullMap[key] = merged[key]; else delete fullMap[key];
+    }
     const totalItems = (order.items || []).filter(i => (isMat ? !!i.emailed : true) && !i.rejected).length;
-    DB.updateIntake(orderId, order.intake.items, WarehouseDeviceName.get(), totalItems)
-      .catch(e => console.error('Intake save failed:', e));
+    try {
+      await DB.updateIntake(orderId, fullMap, WarehouseDeviceName.get(), totalItems);
+      this._drafts.delete(realKey);
+      this.renderList(isMat ? 'materials' : 'consumables');
+    } catch (e) {
+      console.error('Confirm save failed:', e);
+      alert('Save failed — please try again.');
+    }
   },
 };
 

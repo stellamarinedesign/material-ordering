@@ -1,4 +1,4 @@
-// firebase-sync.js — v0.37
+// firebase-sync.js — v0.37.1
 let _db = null, _configured = false;
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -213,20 +213,21 @@ const DB = {
   },
 
   // Records intake status for one or more items on an order.
-  // intakeItems: { [itemId]: { status: 'ok'|'partial'|'missing'|'backorder', qtyReceived, notes } }
+  // intakeItems: { [itemId]: { status: 'ok'|'partial'|'missing'|'backorder'|null, qtyReceived, notes } }
   // totalItems: total line-item count in the order (used to compute overall status).
   async updateIntake(orderId, intakeItems, updatedBy, totalItems) {
     if (!this.isReady()) throw new Error('Firebase not initialised');
-    const statuses = Object.values(intakeItems || {}).map(i => i.status);
+    const RESOLVED = new Set(['ok', 'partial', 'missing', 'backorder']);
+    const statuses = Object.values(intakeItems || {})
+      .map(i => i.status)
+      .filter(s => !!s && s !== 'pending');
     let intakeStatus = 'pending';
     if (statuses.length > 0) {
-      const allOk = statuses.every(s => s === 'ok');
-      const allResolved = statuses.every(s => s === 'ok' || s === 'backorder');
-      const hasBackorder = statuses.some(s => s === 'backorder');
-      const allActioned = statuses.length >= (totalItems || 1);
-      if (allOk && allActioned)                          intakeStatus = 'received';
-      else if (allResolved && hasBackorder && allActioned) intakeStatus = 'backorder';
-      else                                                intakeStatus = 'in_progress';
+      const allActioned = statuses.length >= (totalItems || 1) && statuses.every(s => RESOLVED.has(s));
+      if (!allActioned)                               intakeStatus = 'in_progress';
+      else if (statuses.every(s => s === 'ok'))        intakeStatus = 'received';
+      else if (statuses.some(s => s === 'backorder'))  intakeStatus = 'backorder';
+      else                                              intakeStatus = 'completed';
     }
     await _db.collection('orders').doc(orderId).update({
       'intake.items':     intakeItems || {},
@@ -236,6 +237,65 @@ const DB = {
       updatedAt:          firebase.firestore.FieldValue.serverTimestamp(),
     });
     return intakeStatus;
+  },
+
+  // Sets/clears the intake-only cancellation flag for an order. Independent of
+  // `status` (Queue/ordering flow) and per-item `rejected` — a cancelled order
+  // just stops being tracked for receiving and moves to the Cancelled tab.
+  async setOrderIntakeCancelled(orderId, cancelled) {
+    if (!this.isReady()) throw new Error('Firebase not initialised');
+    await _db.collection('orders').doc(orderId).update({
+      intakeCancelled: !!cancelled,
+      updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+    });
+  },
+
+  // Manual cleanup tool: merges items[] (and any intake progress) from
+  // sourceOrderIds into targetOrderId, then hard-deletes the source docs.
+  // Mainly for legacy orders emailed before category-based grouping existed.
+  async combineOrders(targetOrderId, sourceOrderIds) {
+    if (!this.isReady()) throw new Error('Firebase not initialised');
+    const targetRef = _db.collection('orders').doc(targetOrderId);
+    const targetDoc = await targetRef.get();
+    if (!targetDoc.exists) throw new Error('Target order not found');
+    const targetData = targetDoc.data();
+    const items = [...(targetData.items || [])];
+    const intakeItems = { ...((targetData.intake && targetData.intake.items) || {}) };
+    const seenIds = new Set(items.map(i => String(i.id)));
+
+    for (const srcId of sourceOrderIds) {
+      if (srcId === targetOrderId) continue;
+      const srcDoc = await _db.collection('orders').doc(srcId).get();
+      if (!srcDoc.exists) continue;
+      const srcData = srcDoc.data();
+      const srcIntake = (srcData.intake && srcData.intake.items) || {};
+      for (const item of (srcData.items || [])) {
+        let id = String(item.id);
+        if (seenIds.has(id)) {
+          // Item id collides with one already in the merged set (same catalog item
+          // ordered in both orders) — rekey so its intake status doesn't get conflated.
+          const newId = `${id}_${srcId.slice(0, 4)}`;
+          if (srcIntake[id]) intakeItems[newId] = srcIntake[id];
+          items.push({ ...item, id: newId });
+          seenIds.add(newId);
+        } else {
+          if (srcIntake[id] && !intakeItems[id]) intakeItems[id] = srcIntake[id];
+          items.push(item);
+          seenIds.add(id);
+        }
+      }
+    }
+
+    const batch = _db.batch();
+    batch.update(targetRef, {
+      items,
+      'intake.items': intakeItems,
+      updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+    });
+    for (const srcId of sourceOrderIds) {
+      if (srcId !== targetOrderId) batch.delete(_db.collection('orders').doc(srcId));
+    }
+    await batch.commit();
   },
 
   async rejectOrder(id) {

@@ -62,6 +62,12 @@ const Manager = {
   // Intake tab state
   _intakeFilter:      { materials: 'all', consumables: 'all' },
   _intakeOpenOrders:  new Set(),
+  // cardKey ("orderId|||category") -> { [itemId]: {status, qtyReceived, notes} } —
+  // staged intake edits not yet saved to Firestore (see intakeConfirm).
+  _intakeDrafts:      new Map(),
+  // Edit mode (combine/cancel deliveries) — manager.html only.
+  _editMode:          { materials: false, consumables: false },
+  _editSelected:      { materials: new Set(), consumables: new Set() },
 
   // Receive Stock panel state
   _receive:           { _items: {} },
@@ -357,28 +363,58 @@ const Manager = {
         <!-- MATERIALS DELIVERIES VIEW -->
         <div id="view-intake-mat" style="display:none;flex:1;flex-direction:column;overflow:hidden;min-height:0">
           <div class="col" style="padding-top:10px;padding-bottom:0;flex-shrink:0">
-            <div class="intake-filter-bar" id="intake-filter-mat">
-              <div class="intake-filter-chip active" data-filter="all">All</div>
-              <div class="intake-filter-chip" data-filter="outstanding"><i class="ti ti-clock"></i> Outstanding</div>
-              <div class="intake-filter-chip" data-filter="backorder"><i class="ti ti-clock-pause"></i> Back Orders</div>
+            <div style="display:flex;align-items:center;gap:8px">
+              <div class="intake-filter-bar" id="intake-filter-mat" style="flex:1">
+                <div class="intake-filter-chip active" data-filter="all">All</div>
+                <div class="intake-filter-chip" data-filter="outstanding"><i class="ti ti-clock"></i> Outstanding</div>
+                <div class="intake-filter-chip" data-filter="backorder"><i class="ti ti-clock-pause"></i> Back Orders</div>
+                <div class="intake-filter-chip" data-filter="completed"><i class="ti ti-circle-check"></i> Completed</div>
+                <div class="intake-filter-chip" data-filter="cancelled"><i class="ti ti-ban"></i> Cancelled</div>
+              </div>
+              <button class="icon-btn" id="btn-intake-edit-mat" title="Edit mode — combine/cancel deliveries"><i class="ti ti-pencil"></i></button>
             </div>
           </div>
           <div class="intake-scroll app-scroll">
-            <div class="col"><div class="intake-list" id="intake-list-mat"></div></div>
+            <div class="col">
+              <div class="intake-list" id="intake-list-mat"></div>
+              <div class="intake-edit-list" id="intake-edit-list-mat" style="display:none"></div>
+            </div>
+          </div>
+          <div class="action-bar" id="intake-editbar-mat" style="display:none">
+            <div class="action-bar-inner" style="flex-direction:row">
+              <button class="btn btn-danger" id="btn-intake-cancel-mat" disabled><i class="ti ti-ban"></i> Cancel selected</button>
+              <button class="btn btn-primary" id="btn-intake-combine-mat" disabled><i class="ti ti-git-merge"></i> Combine selected</button>
+              <button class="btn btn-outline" id="btn-intake-editdone-mat"><i class="ti ti-check"></i> Done</button>
+            </div>
           </div>
         </div>
 
         <!-- CONSUMABLES DELIVERIES VIEW -->
         <div id="view-intake-cons" style="display:none;flex:1;flex-direction:column;overflow:hidden;min-height:0">
           <div class="col" style="padding-top:10px;padding-bottom:0;flex-shrink:0">
-            <div class="intake-filter-bar" id="intake-filter-cons">
-              <div class="intake-filter-chip active" data-filter="all">All</div>
-              <div class="intake-filter-chip" data-filter="outstanding"><i class="ti ti-clock"></i> Outstanding</div>
-              <div class="intake-filter-chip" data-filter="backorder"><i class="ti ti-clock-pause"></i> Back Orders</div>
+            <div style="display:flex;align-items:center;gap:8px">
+              <div class="intake-filter-bar" id="intake-filter-cons" style="flex:1">
+                <div class="intake-filter-chip active" data-filter="all">All</div>
+                <div class="intake-filter-chip" data-filter="outstanding"><i class="ti ti-clock"></i> Outstanding</div>
+                <div class="intake-filter-chip" data-filter="backorder"><i class="ti ti-clock-pause"></i> Back Orders</div>
+                <div class="intake-filter-chip" data-filter="completed"><i class="ti ti-circle-check"></i> Completed</div>
+                <div class="intake-filter-chip" data-filter="cancelled"><i class="ti ti-ban"></i> Cancelled</div>
+              </div>
+              <button class="icon-btn" id="btn-intake-edit-cons" title="Edit mode — combine/cancel deliveries"><i class="ti ti-pencil"></i></button>
             </div>
           </div>
           <div class="intake-scroll app-scroll">
-            <div class="col"><div class="intake-list" id="intake-list-cons"></div></div>
+            <div class="col">
+              <div class="intake-list" id="intake-list-cons"></div>
+              <div class="intake-edit-list" id="intake-edit-list-cons" style="display:none"></div>
+            </div>
+          </div>
+          <div class="action-bar" id="intake-editbar-cons" style="display:none">
+            <div class="action-bar-inner" style="flex-direction:row">
+              <button class="btn btn-danger" id="btn-intake-cancel-cons" disabled><i class="ti ti-ban"></i> Cancel selected</button>
+              <button class="btn btn-primary" id="btn-intake-combine-cons" disabled><i class="ti ti-git-merge"></i> Combine selected</button>
+              <button class="btn btn-outline" id="btn-intake-editdone-cons"><i class="ti ti-check"></i> Done</button>
+            </div>
           </div>
         </div>
 
@@ -517,18 +553,40 @@ const Manager = {
       this.renderIntakeCons();
     });
 
+    // Edit mode (combine/cancel deliveries) toggles + actions
+    document.getElementById('btn-intake-edit-mat').addEventListener('click',     () => this.toggleEditMode('materials'));
+    document.getElementById('btn-intake-edit-cons').addEventListener('click',    () => this.toggleEditMode('consumables'));
+    document.getElementById('btn-intake-editdone-mat').addEventListener('click', () => this.toggleEditMode('materials'));
+    document.getElementById('btn-intake-editdone-cons').addEventListener('click',() => this.toggleEditMode('consumables'));
+    document.getElementById('btn-intake-cancel-mat').addEventListener('click',   () => this.cancelSelectedOrders('materials'));
+    document.getElementById('btn-intake-cancel-cons').addEventListener('click',  () => this.cancelSelectedOrders('consumables'));
+    document.getElementById('btn-intake-combine-mat').addEventListener('click',  () => this.combineSelectedOrders('materials'));
+    document.getElementById('btn-intake-combine-cons').addEventListener('click', () => this.combineSelectedOrders('consumables'));
+    document.getElementById('intake-edit-list-mat').addEventListener('change', e => {
+      const cb = e.target.closest('[data-edit-order]'); if (!cb) return;
+      this.toggleEditSelect('materials', cb.dataset.editOrder);
+    });
+    document.getElementById('intake-edit-list-cons').addEventListener('change', e => {
+      const cb = e.target.closest('[data-edit-order]'); if (!cb) return;
+      this.toggleEditSelect('consumables', cb.dataset.editOrder);
+    });
+
     // Intake event delegation for both views
     Intake.attachListeners(document.getElementById('intake-list-mat'), {
       onAction:    (orderId, itemId, action) => this.intakeSetStatus(orderId, itemId, action),
       onQtyChange: (orderId, itemId, qty)    => this.intakeSetPartialQty(orderId, itemId, qty),
       onNoteChange:(orderId, itemId, text)   => this.intakeSetNote(orderId, itemId, text),
       onRerender:  (orderId)                 => this.intakeRerenderCard(orderId, 'materials'),
+      onConfirm:   (cardKey)                 => this.intakeConfirm(cardKey),
+      onRestore:   (orderId)                 => this.intakeRestore(orderId),
     });
     Intake.attachListeners(document.getElementById('intake-list-cons'), {
       onAction:    (orderId, itemId, action) => this.intakeSetStatus(orderId, itemId, action),
       onQtyChange: (orderId, itemId, qty)    => this.intakeSetPartialQty(orderId, itemId, qty),
       onNoteChange:(orderId, itemId, text)   => this.intakeSetNote(orderId, itemId, text),
       onRerender:  (orderId)                 => this.intakeRerenderCard(orderId, 'consumables'),
+      onConfirm:   (cardKey)                 => this.intakeConfirm(cardKey),
+      onRestore:   (orderId)                 => this.intakeRestore(orderId),
     });
     document.getElementById('btn-no-review')      .addEventListener('click', () => this.noOpenReview());
     document.getElementById('btn-close-no-review').addEventListener('click', () => this.closePanel('no-review-panel'));
@@ -820,101 +878,281 @@ const Manager = {
   // INTAKE TABS (Deliveries)
   // ══════════════════════════════════════════
   renderIntakeMat() {
+    if (this._editMode.materials) { this.renderEditList('materials'); return; }
     const el = document.getElementById('intake-list-mat'); if (!el) return;
-    el.innerHTML = Intake.renderCategoryList(this.orders, 'materials', this._intakeFilter.materials, this._intakeOpenOrders);
+    el.innerHTML = Intake.renderCategoryList(this.orders, 'materials', this._intakeFilter.materials, this._intakeOpenOrders, this._intakeDrafts, true);
   },
 
   renderIntakeCons() {
+    if (this._editMode.consumables) { this.renderEditList('consumables'); return; }
     const el = document.getElementById('intake-list-cons'); if (!el) return;
-    el.innerHTML = Intake.renderCategoryList(this.orders, 'consumables', this._intakeFilter.consumables, this._intakeOpenOrders);
+    el.innerHTML = Intake.renderCategoryList(this.orders, 'consumables', this._intakeFilter.consumables, this._intakeOpenOrders, this._intakeDrafts, true);
   },
 
+  // Toggles a card's open/closed state and re-renders it in place. cardKey may be a
+  // plain orderId (notes-toggle path — falls back to a full list re-render) or a
+  // category card key ("orderId|||category", optionally suffixed "|||bo" for the
+  // derived back-order-only card).
   intakeRerenderCard(cardKey, type) {
+    if (this._intakeOpenOrders.has(cardKey)) this._intakeOpenOrders.delete(cardKey);
+    else this._intakeOpenOrders.add(cardKey);
+
     const sep = cardKey.indexOf('|||');
-    if (sep >= 0) {
-      const orderId  = cardKey.slice(0, sep);
-      const category = cardKey.slice(sep + 3);
-      if (this._intakeOpenOrders.has(cardKey)) this._intakeOpenOrders.delete(cardKey);
-      else this._intakeOpenOrders.add(cardKey);
-      const order = this.orders.find(o => o._id === orderId);
-      if (!order) { this.renderIntakeMat(); return; }
-      const isMat    = !order.type || order.type === 'materials';
-      const t        = type || (isMat ? 'materials' : 'consumables');
-      const catItems = (order.items || []).filter(i => i.category === category && (isMat ? !!i.emailed : true) && !i.rejected);
-      const safeId   = cardKey.replace(/[^a-zA-Z0-9]/g, '_');
-      const cardEl   = document.getElementById(`intake-card-${safeId}`);
-      if (cardEl) cardEl.outerHTML = Intake.renderCategoryCard(order, category, catItems, t, this._intakeOpenOrders);
-      else { if (isMat) this.renderIntakeMat(); else this.renderIntakeCons(); }
-    } else {
-      if (type === 'materials') this.renderIntakeMat();
-      else this.renderIntakeCons();
-    }
+    if (sep < 0) { if (type === 'materials') this.renderIntakeMat(); else this.renderIntakeCons(); return; }
+
+    const orderId = cardKey.slice(0, sep);
+    let rest      = cardKey.slice(sep + 3);
+    let isDerived = false;
+    if (rest.endsWith('|||bo')) { isDerived = true; rest = rest.slice(0, -5); }
+    const category = rest;
+
+    const order = this.orders.find(o => o._id === orderId);
+    if (!order) { this.renderIntakeMat(); return; }
+    const isMat = !order.type || order.type === 'materials';
+    const t     = type || (isMat ? 'materials' : 'consumables');
+    const isCancelled = !!order.intakeCancelled;
+
+    let catItems = (order.items || []).filter(i => i.category === category && (isMat ? !!i.emailed : true) && !i.rejected);
+    if (isDerived) catItems = catItems.filter(i => Intake._itemStatus(order, i) === 'backorder');
+
+    const safeId = cardKey.replace(/[^a-zA-Z0-9]/g, '_');
+    const cardEl = document.getElementById(`intake-card-${safeId}`);
+    const draftForCard = this._intakeDrafts.get(`${orderId}|||${category}`);
+    const opts = { isDerived, readOnly: isCancelled, isCancelledCard: isCancelled, showRestore: isCancelled, draftForCard };
+    if (cardEl) cardEl.outerHTML = Intake.renderCategoryCard(order, category, catItems, t, this._intakeOpenOrders, opts);
+    else { if (isMat) this.renderIntakeMat(); else this.renderIntakeCons(); }
   },
 
-  _intakeGetOrCreate(orderId) {
-    const order = this.orders.find(o => o._id === orderId);
-    if (!order) return null;
-    if (!order.intake)       order.intake       = { items: {} };
-    if (!order.intake.items) order.intake.items = {};
-    return order;
-  },
+  // ── INTAKE MUTATIONS (staged in _intakeDrafts — nothing is saved until Confirm) ──
 
   intakeSetStatus(orderId, itemId, action) {
-    const order = this._intakeGetOrCreate(orderId); if (!order) return;
-    const key  = String(itemId);
-    const curr = order.intake.items[key] || {};
-    if (curr.status === action) delete order.intake.items[key];
-    else order.intake.items[key] = { ...curr, status: action, qtyReceived: action === 'partial' ? (curr.qtyReceived ?? null) : null };
-    const item = (order.items || []).find(i => String(i.id) === key);
-    this._intakeSaveAndRerender(orderId, order, item?.category);
+    const order = this.orders.find(o => o._id === orderId); if (!order) return;
+    const item = (order.items || []).find(i => String(i.id) === String(itemId)); if (!item) return;
+    const cardKey = `${orderId}|||${item.category}`;
+    if (!this._intakeDrafts.has(cardKey)) this._intakeDrafts.set(cardKey, {});
+    const draft = this._intakeDrafts.get(cardKey);
+    const key = String(itemId);
+    const saved = ((order.intake && order.intake.items) || {})[key] || {};
+    const draftItem = draft[key] || {};
+    const currentStatus = draftItem.status !== undefined ? draftItem.status : (saved.status || null);
+    if (currentStatus === action) {
+      draft[key] = { ...draftItem, status: null, qtyReceived: null };
+    } else {
+      draft[key] = { ...draftItem, status: action, qtyReceived: action === 'partial' ? (draftItem.qtyReceived ?? saved.qtyReceived ?? null) : null };
+    }
+    this._intakeRerenderCardOnly(orderId, item.category);
   },
 
   intakeSetPartialQty(orderId, itemId, qty) {
-    const order = this._intakeGetOrCreate(orderId); if (!order) return;
+    const order = this.orders.find(o => o._id === orderId); if (!order) return;
+    const item = (order.items || []).find(i => String(i.id) === String(itemId)); if (!item) return;
+    const cardKey = `${orderId}|||${item.category}`;
+    if (!this._intakeDrafts.has(cardKey)) this._intakeDrafts.set(cardKey, {});
+    const draft = this._intakeDrafts.get(cardKey);
     const key = String(itemId);
-    if (!order.intake.items[key]) order.intake.items[key] = { status: 'partial' };
-    order.intake.items[key].qtyReceived = qty;
-    this._intakeSave(orderId, order);
+    draft[key] = { ...(draft[key] || {}), qtyReceived: qty };
+    this._intakeRerenderCardOnly(orderId, item.category);
   },
 
   intakeSetNote(orderId, itemId, text) {
-    const order = this._intakeGetOrCreate(orderId); if (!order) return;
+    const order = this.orders.find(o => o._id === orderId); if (!order) return;
+    const item = (order.items || []).find(i => String(i.id) === String(itemId)); if (!item) return;
+    const cardKey = `${orderId}|||${item.category}`;
+    if (!this._intakeDrafts.has(cardKey)) this._intakeDrafts.set(cardKey, {});
+    const draft = this._intakeDrafts.get(cardKey);
     const key = String(itemId);
-    if (!order.intake.items[key]) order.intake.items[key] = {};
-    order.intake.items[key].notes = text;
-    this._intakeSave(orderId, order);
+    draft[key] = { ...(draft[key] || {}), notes: text };
+    this._intakeRerenderCardOnly(orderId, item.category);
   },
 
-  _intakeSaveAndRerender(orderId, order, category) {
-    const type = (!order.type || order.type === 'materials') ? 'materials' : 'consumables';
-    if (category) {
-      const cardKey  = `${orderId}|||${category}`;
-      const safeId   = cardKey.replace(/[^a-zA-Z0-9]/g, '_');
-      const cardEl   = document.getElementById(`intake-card-${safeId}`);
-      const catItems = (order.items || []).filter(i => i.category === category && (type === 'materials' ? !!i.emailed : true) && !i.rejected);
-      if (cardEl) {
-        cardEl.outerHTML = Intake.renderCategoryCard(order, category, catItems, type, this._intakeOpenOrders);
-        this._intakeSave(orderId, order);
-        return;
-      }
+  // Re-renders just the open card showing staged draft edits — no Firestore write,
+  // so tab placement never changes until the user hits Confirm.
+  _intakeRerenderCardOnly(orderId, category) {
+    const order = this.orders.find(o => o._id === orderId); if (!order) return;
+    const isMat = !order.type || order.type === 'materials';
+    const type  = isMat ? 'materials' : 'consumables';
+    const draftForCard = this._intakeDrafts.get(`${orderId}|||${category}`);
+    const fullCatItems = (order.items || []).filter(i => i.category === category && (isMat ? !!i.emailed : true) && !i.rejected);
+
+    const fullKey  = `${orderId}|||${category}`;
+    const fullSafe = fullKey.replace(/[^a-zA-Z0-9]/g, '_');
+    const fullEl   = document.getElementById(`intake-card-${fullSafe}`);
+    if (fullEl) {
+      fullEl.outerHTML = Intake.renderCategoryCard(order, category, fullCatItems, type, this._intakeOpenOrders, { draftForCard });
+      return;
     }
-    if (type === 'materials') this.renderIntakeMat();
-    else this.renderIntakeCons();
-    this._intakeSave(orderId, order);
+
+    const boItems = fullCatItems.filter(i => Intake._itemStatus(order, i) === 'backorder');
+    const boSafe  = `${fullKey}|||bo`.replace(/[^a-zA-Z0-9]/g, '_');
+    const boEl    = document.getElementById(`intake-card-${boSafe}`);
+    if (boEl) {
+      boEl.outerHTML = Intake.renderCategoryCard(order, category, boItems, type, this._intakeOpenOrders, { isDerived: true, draftForCard });
+    }
   },
 
-  _intakeSave(orderId, order) {
-    const isMat      = !order.type || order.type === 'materials';
+  // Validates and saves a card's staged draft to Firestore, then clears it.
+  async intakeConfirm(cardKey) {
+    const sep = cardKey.indexOf('|||');
+    if (sep < 0) return;
+    const orderId = cardKey.slice(0, sep);
+    let category  = cardKey.slice(sep + 3);
+    if (category.endsWith('|||bo')) category = category.slice(0, -5);
+    const realKey = `${orderId}|||${category}`;
+
+    const order = this.orders.find(o => o._id === orderId); if (!order) return;
+    const draft = this._intakeDrafts.get(realKey); if (!draft) return;
+
+    const isMat = !order.type || order.type === 'materials';
+    const catItems = (order.items || []).filter(i => i.category === category && (isMat ? !!i.emailed : true) && !i.rejected);
+    if (!Intake.canConfirm(order, catItems, draft)) return;
+
+    const merged = Intake.mergeDraft(order, draft);
+    const fullMap = { ...((order.intake && order.intake.items) || {}) };
+    for (const i of catItems) {
+      const key = String(i.id);
+      if (merged[key]) fullMap[key] = merged[key]; else delete fullMap[key];
+    }
     const totalItems = (order.items || []).filter(i => (isMat ? !!i.emailed : true) && !i.rejected).length;
-    const s          = Settings.get();
-    const by         = (s.managerName || 'Manager').trim() || 'Manager';
-    DB.updateIntake(orderId, order.intake.items, by, totalItems)
-      .catch(e => console.error('Intake save failed:', e));
+    const s  = Settings.get();
+    const by = (s.managerName || 'Manager').trim() || 'Manager';
+    try {
+      await DB.updateIntake(orderId, fullMap, by, totalItems);
+      this._intakeDrafts.delete(realKey);
+      if (isMat) this.renderIntakeMat(); else this.renderIntakeCons();
+    } catch (e) {
+      console.error('Confirm save failed:', e);
+      alert('Save failed — please try again.');
+    }
+  },
+
+  intakeRestore(orderId) {
+    DB.setOrderIntakeCancelled(orderId, false).catch(e => {
+      console.error('Restore failed:', e);
+      alert('Restore failed — please try again.');
+    });
+  },
+
+  // ── EDIT MODE (combine/cancel orders) — manager.html only ─────────────
+  toggleEditMode(type) {
+    this._editMode[type] = !this._editMode[type];
+    this._editSelected[type].clear();
+    const listEl    = document.getElementById(`intake-list-${type === 'materials' ? 'mat' : 'cons'}`);
+    const editEl     = document.getElementById(`intake-edit-list-${type === 'materials' ? 'mat' : 'cons'}`);
+    const filterBar  = document.getElementById(`intake-filter-${type === 'materials' ? 'mat' : 'cons'}`);
+    const editBar    = document.getElementById(`intake-editbar-${type === 'materials' ? 'mat' : 'cons'}`);
+    const active     = this._editMode[type];
+    if (listEl)   listEl.style.display   = active ? 'none' : '';
+    if (editEl)   editEl.style.display   = active ? '' : 'none';
+    if (filterBar)filterBar.style.opacity = active ? '0.4' : '1';
+    if (filterBar)filterBar.style.pointerEvents = active ? 'none' : '';
+    if (editBar)  editBar.style.display  = active ? '' : 'none';
+    if (active) { this.renderEditList(type); this._updateEditActionBar(type); }
+    else { if (type === 'materials') this.renderIntakeMat(); else this.renderIntakeCons(); }
+  },
+
+  // Edit mode lists DELIVERIES (one row per order+category, same grouping as the
+  // normal Deliveries cards), not raw orders — that's what the manager actually
+  // looks at and wants to fix. Combine/Cancel still act on the underlying order
+  // document(s) (a delivery has no separate existence in Firestore, it's just a
+  // view over an order's items), so a selection is keyed by "orderId|||category"
+  // for checkbox bookkeeping and resolved down to distinct order ids on action.
+  renderEditList(type) {
+    const id = type === 'materials' ? 'mat' : 'cons';
+    const el = document.getElementById(`intake-edit-list-${id}`); if (!el) return;
+    const groups = Intake.buildCategoryGroups(this.orders, type); // excludes cancelled/rejected already
+    if (!groups.length) {
+      el.innerHTML = `<div class="empty-state"><i class="ti ti-inbox-off"></i><p>No ${type} deliveries to edit.</p></div>`;
+      return;
+    }
+    el.innerHTML = groups.map(g => {
+      const cardKey = `${g.order._id}|||${g.category}`;
+      const ts = g.order.submittedAt && g.order.submittedAt.toDate
+        ? g.order.submittedAt.toDate().toLocaleDateString('en-AU', { day:'2-digit', month:'short', year:'numeric' })
+        : '';
+      const checked = this._editSelected[type].has(cardKey);
+      return `
+        <label class="edit-delivery-row">
+          <input type="checkbox" data-edit-order="${esc(cardKey)}" ${checked ? 'checked' : ''}>
+          <div class="edit-delivery-info">
+            <div class="edit-delivery-ref">${esc(g.category)}</div>
+            <div class="edit-delivery-meta">${esc(ts)}${g.order.deviceName ? ' &middot; ' + esc(g.order.deviceName) : ''} &middot; ${g.catItems.length} item${g.catItems.length !== 1 ? 's' : ''} &middot; from order ${esc(g.order.ref || g.order._id)}</div>
+          </div>
+        </label>`;
+    }).join('');
+  },
+
+  toggleEditSelect(type, cardKey) {
+    const s = this._editSelected[type];
+    if (s.has(cardKey)) s.delete(cardKey); else s.add(cardKey);
+    this._updateEditActionBar(type);
+  },
+
+  // Resolves the current delivery selection down to the distinct underlying order ids.
+  _editSelectedOrderIds(type) {
+    return [...new Set([...this._editSelected[type]].map(k => k.slice(0, k.indexOf('|||'))))];
+  },
+
+  _updateEditActionBar(type) {
+    const id = type === 'materials' ? 'mat' : 'cons';
+    const n  = this._editSelectedOrderIds(type).length;
+    const cancelBtn  = document.getElementById(`btn-intake-cancel-${id}`);
+    const combineBtn = document.getElementById(`btn-intake-combine-${id}`);
+    if (cancelBtn)  cancelBtn.disabled  = n < 1;
+    if (combineBtn) combineBtn.disabled = n < 2;
+  },
+
+  async cancelSelectedOrders(type) {
+    const orderIds = this._editSelectedOrderIds(type);
+    if (orderIds.length < 1) return;
+    if (!confirm(`Mark ${orderIds.length} order(s) as cancelled? Their deliveries will move to the Cancelled tab and stop being tracked for receiving. You can restore them later.`)) return;
+    try {
+      await Promise.all(orderIds.map(id => DB.setOrderIntakeCancelled(id, true)));
+      this._editSelected[type].clear();
+      this.toggleEditMode(type);
+    } catch (e) {
+      console.error('Cancel failed:', e);
+      alert('Cancel failed: ' + e.message);
+    }
+  },
+
+  async combineSelectedOrders(type) {
+    const orderIds = this._editSelectedOrderIds(type);
+    if (orderIds.length < 2) return;
+    const [target, ...sources] = orderIds;
+    const targetOrder = this.orders.find(o => o._id === target);
+    if (!confirm(`Combine the selected deliveries into one order ("${targetOrder?.ref || target}")? This merges ${orderIds.length} order documents and permanently deletes the other ${sources.length} — cannot be undone.`)) return;
+    try {
+      await DB.combineOrders(target, sources);
+      this._editSelected[type].clear();
+      this.toggleEditMode(type);
+    } catch (e) {
+      console.error('Combine failed:', e);
+      alert('Combine failed: ' + e.message);
+    }
   },
 
   // ══════════════════════════════════════════
   // QUEUE
   // ══════════════════════════════════════════
+  // An "order" is a submission from the materials/consumables ordering pages — it
+  // belongs in Pending as long as it still has at least one item that hasn't been
+  // turned into a delivery (emailed) or rejected. Computed live from item state
+  // rather than the stored `status` field, since `status` is only ever updated by
+  // the specific action that changes it (e.g. markCategoryEmailed) — the Sent tab's
+  // per-delivery grouping already works this way; this keeps the order-card list
+  // and the pending-count badge consistent with it instead of trusting a field that
+  // can go stale (e.g. legacy orders from before category-based sending existed).
+  _orderHasPendingItems(o) {
+    if (o.status === 'rejected') return false;
+    return (o.items || []).some(i => !i.emailed && !i.rejected);
+  },
+  _orderIsFullySent(o) {
+    if (o.status === 'rejected') return false;
+    const items = o.items || [];
+    if (!items.length) return false;
+    return items.some(i => i.emailed) && !items.some(i => !i.emailed && !i.rejected);
+  },
+
   setView(v) {
     this.activeView = v;
     document.querySelectorAll('[data-sb]').forEach(b => b.classList.toggle('active', b.dataset.sb === v));
@@ -926,7 +1164,7 @@ const Manager = {
     if (this.unsubscribe) this.unsubscribe();
     this.unsubscribe = DB.listenOrders(orders => {
       this.orders = orders;
-      const n = orders.filter(o => o.status === 'pending').length;
+      const n = orders.filter(o => this._orderHasPendingItems(o)).length;
       ['pending-count','mob-pending-count','queue-pending-badge'].forEach(id => {
         const el = document.getElementById(id);
         if (el) { el.textContent = n; el.classList.toggle('zero', n === 0); }
@@ -953,7 +1191,7 @@ const Manager = {
     }
 
     let list = this.orders;
-    if (this.activeView === 'pending')  list = list.filter(o => o.status === 'pending');
+    if (this.activeView === 'pending')  list = list.filter(o => this._orderHasPendingItems(o));
     if (this.activeView === 'rejected') list = list.filter(o => o.status === 'rejected');
     const listIds = new Set(list.map(o => o._id));
     for (const id of this._openCards) { if (!listIds.has(id)) this._openCards.delete(id); }
@@ -966,7 +1204,7 @@ const Manager = {
     }
 
     // Combined section
-    const pendingOrders = this.orders.filter(o => o.status === 'pending');
+    const pendingOrders = this.orders.filter(o => this._orderHasPendingItems(o));
     let combinedHtml = '';
     if (this.activeView === 'pending' && pendingOrders.length >= 1) {
       const groups = this._groupByCatKeepSeparate(pendingOrders);
@@ -1280,7 +1518,7 @@ const Manager = {
   // Merge lines locally — store merged qty/device in _combMerged, don't touch Firebase
   localMergeLines(cat, partCode) {
     if (!cat || !partCode) return;
-    const pendingOrders = this.orders.filter(o => o.status === 'pending');
+    const pendingOrders = this.orders.filter(o => this._orderHasPendingItems(o));
     const key = `${cat}|${partCode}`;
     // Collect all non-excluded lines for this partCode
     const lines = [];
@@ -1367,7 +1605,7 @@ const Manager = {
 
   async mergeCombinedLines(cat, partCode) {
     if (!cat || !partCode) { console.error('merge: missing params', cat, partCode); return; }
-    const pendingOrders = this.orders.filter(o => o.status === 'pending');
+    const pendingOrders = this.orders.filter(o => this._orderHasPendingItems(o));
     const linesWithItem = pendingOrders.filter(o =>
       o.items?.some(i => i.category === cat && i.partCode === partCode && !i.emailed)
     );
@@ -1393,8 +1631,8 @@ const Manager = {
 
   _orderCard(o) {
     const ts = o.submittedAt?.toDate ? fmtTime(o.submittedAt.toDate()) : fmtTime(o.submittedAt);
-    const isPending = o.status === 'pending';
-    const isSent    = o.status === 'sent';
+    const isPending = this._orderHasPendingItems(o);
+    const isSent    = this._orderIsFullySent(o);
     const items     = o.items || [];
     const isRejected = o.status === 'rejected';
     const statusLabel = isPending ? 'Pending review' : isSent ? 'Sent' : isRejected ? 'Rejected' : o.status;
@@ -1543,7 +1781,7 @@ const Manager = {
   // EMAIL
   // ══════════════════════════════════════════
   openCategoryEmail(category) {
-    const pendingOrders = this.orders.filter(o => o.status === 'pending');
+    const pendingOrders = this.orders.filter(o => this._orderHasPendingItems(o));
     const mergedItems   = {};
     const orderIds      = new Set();
     const excludedByOrder = {};  // orderId -> [partCode, ...] excluded from this send
