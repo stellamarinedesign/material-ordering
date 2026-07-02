@@ -663,6 +663,21 @@ button { cursor: pointer; }
 }
 .intake-confirm-btn:disabled { opacity: .4; cursor: not-allowed; border-color: var(--border); background: var(--bg2); color: var(--text3); }
 
+/* Save button (open card with partial progress, before all items are actioned) */
+.intake-save-btn {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 11px; font-weight: 600; padding: 5px 10px;
+  border-radius: var(--radius); border: 1px solid var(--border2);
+  background: var(--bg2); color: var(--text2); cursor: pointer;
+}
+
+/* Subcategory section label inside a delivery card */
+.intake-subcat-label {
+  font-size: 10px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--text3); padding: 8px 12px 2px; margin-top: 4px;
+}
+.intake-subcat-label:first-child { margin-top: 0; }
+
 /* Restore button (cancelled cards, manager.html only) */
 .intake-restore-btn {
   display: inline-flex; align-items: center; gap: 4px;

@@ -281,6 +281,7 @@ const Warehouse = {
       onNoteChange:(orderId, itemId, text)  => this.setNote(orderId, itemId, text),
       onRerender: (orderId)                 => this.rerenderCard(orderId, type),
       onConfirm:  (cardKey)                 => this.onConfirm(cardKey),
+      onSave:     (cardKey)                 => this.onSave(cardKey),
     });
   },
 
@@ -445,25 +446,17 @@ const Warehouse = {
     }
   },
 
-  // Validates and saves a card's staged draft to Firestore, then clears it. A delivery
-  // can span multiple orders, so this splits the merged draft by which order each item
-  // belongs to and writes each order's own intake.items patch separately.
-  async onConfirm(cardKey) {
+  async _write(cardKey, requireFullyActioned) {
     let groupKey = cardKey;
     if (groupKey.endsWith('|||bo')) groupKey = groupKey.slice(0, -5);
 
     const group = this._findGroup(groupKey); if (!group) return;
     const draft = this._drafts.get(groupKey); if (!draft) return;
 
-    // The derived back-order-only card's draft is shared with the full card (same
-    // underlying items, just a filtered view) — always validate/save against the FULL
-    // set of entries, not just the backorder-filtered subset.
-    if (!Intake.canConfirmEntries(group.entries, draft)) return;
+    if (requireFullyActioned && !Intake.canConfirmEntries(group.entries, draft)) return;
 
     const merged = Intake.mergeDraftEntries(group.entries, draft);
 
-    // Flat display: for entries sharing the same item.id the UI shows one row keyed to the
-    // first entry's order. Propagate that representative's status to all other same-item entries.
     const byItemId = new Map();
     for (const e of group.entries) {
       const k = String(e.item.id);
@@ -480,7 +473,7 @@ const Warehouse = {
       }
     }
 
-    const byOrder = new Map(); // orderId -> { order, fullMap }
+    const byOrder = new Map();
     for (const { order, item } of group.entries) {
       if (!byOrder.has(order._id)) {
         byOrder.set(order._id, { order, fullMap: { ...((order.intake && order.intake.items) || {}) } });
@@ -501,10 +494,13 @@ const Warehouse = {
       const isMat = !group.entries[0].order.type || group.entries[0].order.type === 'materials';
       this.renderList(isMat ? 'materials' : 'consumables');
     } catch (e) {
-      console.error('Confirm save failed:', e);
+      console.error('Save failed:', e);
       alert('Save failed — please try again.');
     }
   },
+
+  async onConfirm(cardKey) { await this._write(cardKey, true); },
+  async onSave(cardKey)    { await this._write(cardKey, false); },
 };
 
 Warehouse.init();

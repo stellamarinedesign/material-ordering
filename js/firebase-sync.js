@@ -274,6 +274,13 @@ const DB = {
     return intakeStatus;
   },
 
+  // Permanently deletes order documents from Firestore. Used for purging cancelled
+  // deliveries that are no longer needed. Irreversible — caller must confirm with user.
+  async deleteOrders(orderIds) {
+    if (!this.isReady()) throw new Error('Firebase not initialised');
+    await Promise.all(orderIds.map(id => _db.collection('orders').doc(id).delete()));
+  },
+
   // Sets/clears the intake-only cancellation flag for an order. Independent of
   // `status` (Queue/ordering flow) and per-item `rejected` — a cancelled order
   // just stops being tracked for receiving and moves to the Cancelled tab.

@@ -75,6 +75,8 @@ const Manager = {
   // Edit mode (combine/cancel deliveries) — manager.html only.
   _editMode:          { materials: false, consumables: false },
   _editSelected:      { materials: new Set(), consumables: new Set() },
+  // Which filter tab was active when edit mode was entered ('outstanding', 'cancelled', etc.)
+  _editModeFilter:    { materials: null, consumables: null },
 
   // Receive Stock panel state
   _receive:           { _items: {} },
@@ -405,6 +407,7 @@ const Manager = {
             <div class="action-bar-inner" style="flex-direction:row">
               <button class="btn btn-danger" id="btn-intake-cancel-mat" disabled><i class="ti ti-ban"></i> Cancel selected</button>
               <button class="btn btn-primary" id="btn-intake-combine-mat" disabled><i class="ti ti-git-merge"></i> Combine selected</button>
+              <button class="btn btn-danger" id="btn-intake-delete-mat" disabled style="display:none"><i class="ti ti-trash"></i> Delete selected</button>
               <button class="btn btn-outline" id="btn-intake-editdone-mat"><i class="ti ti-check"></i> Done</button>
             </div>
           </div>
@@ -434,6 +437,7 @@ const Manager = {
             <div class="action-bar-inner" style="flex-direction:row">
               <button class="btn btn-danger" id="btn-intake-cancel-cons" disabled><i class="ti ti-ban"></i> Cancel selected</button>
               <button class="btn btn-primary" id="btn-intake-combine-cons" disabled><i class="ti ti-git-merge"></i> Combine selected</button>
+              <button class="btn btn-danger" id="btn-intake-delete-cons" disabled style="display:none"><i class="ti ti-trash"></i> Delete selected</button>
               <button class="btn btn-outline" id="btn-intake-editdone-cons"><i class="ti ti-check"></i> Done</button>
             </div>
           </div>
@@ -583,6 +587,8 @@ const Manager = {
     document.getElementById('btn-intake-cancel-cons').addEventListener('click',  () => this.cancelSelectedOrders('consumables'));
     document.getElementById('btn-intake-combine-mat').addEventListener('click',  () => this.combineSelectedOrders('materials'));
     document.getElementById('btn-intake-combine-cons').addEventListener('click', () => this.combineSelectedOrders('consumables'));
+    document.getElementById('btn-intake-delete-mat').addEventListener('click',   () => this.deleteSelectedDeliveries('materials'));
+    document.getElementById('btn-intake-delete-cons').addEventListener('click',  () => this.deleteSelectedDeliveries('consumables'));
     document.getElementById('intake-edit-list-mat').addEventListener('change', e => {
       const cb = e.target.closest('[data-edit-order]'); if (!cb) return;
       this.toggleEditSelect('materials', cb.dataset.editOrder);
@@ -599,6 +605,7 @@ const Manager = {
       onNoteChange:(orderId, itemId, text)   => this.intakeSetNote(orderId, itemId, text),
       onRerender:  (orderId)                 => this.intakeRerenderCard(orderId, 'materials'),
       onConfirm:   (cardKey)                 => this.intakeConfirm(cardKey),
+      onSave:      (cardKey)                 => this.intakeSave(cardKey),
       onRestore:   (orderId)                 => this.intakeRestore(orderId),
     });
     Intake.attachListeners(document.getElementById('intake-list-cons'), {
@@ -607,6 +614,7 @@ const Manager = {
       onNoteChange:(orderId, itemId, text)   => this.intakeSetNote(orderId, itemId, text),
       onRerender:  (orderId)                 => this.intakeRerenderCard(orderId, 'consumables'),
       onConfirm:   (cardKey)                 => this.intakeConfirm(cardKey),
+      onSave:      (cardKey)                 => this.intakeSave(cardKey),
       onRestore:   (orderId)                 => this.intakeRestore(orderId),
     });
     document.getElementById('btn-no-review')      .addEventListener('click', () => this.noOpenReview());
@@ -1021,20 +1029,17 @@ const Manager = {
     }
   },
 
-  // Validates and saves a card's staged draft to Firestore, then clears it. A delivery
-  // can span multiple orders, so this splits the merged draft by which order each item
-  // belongs to and writes each order's own intake.items patch separately.
-  async intakeConfirm(cardKey) {
+  // Shared write path for Save and Confirm. When requireFullyActioned=true (Confirm),
+  // validates that every item has been actioned before writing. When false (Save), writes
+  // whatever partial progress is staged — useful for preserving work-in-progress across reloads.
+  async _intakeWrite(cardKey, requireFullyActioned) {
     let groupKey = cardKey;
     if (groupKey.endsWith('|||bo')) groupKey = groupKey.slice(0, -5);
 
     const group = this._intakeFindGroup(groupKey); if (!group) return;
     const draft = this._intakeDrafts.get(groupKey); if (!draft) return;
 
-    // The derived back-order-only card's draft is shared with the full card (same
-    // underlying items, just a filtered view) — always validate/save against the FULL
-    // set of entries, not just the backorder-filtered subset.
-    if (!Intake.canConfirmEntries(group.entries, draft)) return;
+    if (requireFullyActioned && !Intake.canConfirmEntries(group.entries, draft)) return;
 
     const merged = Intake.mergeDraftEntries(group.entries, draft);
 
@@ -1052,14 +1057,11 @@ const Manager = {
       if (!repStatus) continue;
       for (const { order, item } of itemEntries.slice(1)) {
         const ck = `${order._id}::${item.id}`;
-        // Always overwrite — mergeDraftEntries pre-populates every entry with {} (truthy),
-        // so checking !merged[ck] would never propagate. Spread existing data first so we
-        // don't lose any notes already saved on the entry.
         merged[ck] = { ...(merged[ck] || {}), ...repStatus };
       }
     }
 
-    const byOrder = new Map(); // orderId -> { order, fullMap }
+    const byOrder = new Map();
     for (const { order, item } of group.entries) {
       if (!byOrder.has(order._id)) {
         byOrder.set(order._id, { order, fullMap: { ...((order.intake && order.intake.items) || {}) } });
@@ -1082,10 +1084,13 @@ const Manager = {
       const isMat = !group.entries[0].order.type || group.entries[0].order.type === 'materials';
       if (isMat) this.renderIntakeMat(); else this.renderIntakeCons();
     } catch (e) {
-      console.error('Confirm save failed:', e);
+      console.error('Save failed:', e);
       alert('Save failed — please try again.');
     }
   },
+
+  async intakeConfirm(cardKey) { await this._intakeWrite(cardKey, true); },
+  async intakeSave(cardKey)    { await this._intakeWrite(cardKey, false); },
 
   intakeRestore(orderId) {
     DB.setOrderIntakeCancelled(orderId, false).catch(e => {
@@ -1094,20 +1099,26 @@ const Manager = {
     });
   },
 
-  // ── EDIT MODE (combine/cancel orders) — manager.html only ─────────────
+  // ── EDIT MODE (combine/cancel/delete deliveries) — manager.html only ─────────────
   toggleEditMode(type) {
     this._editMode[type] = !this._editMode[type];
     this._editSelected[type].clear();
-    const listEl    = document.getElementById(`intake-list-${type === 'materials' ? 'mat' : 'cons'}`);
-    const editEl     = document.getElementById(`intake-edit-list-${type === 'materials' ? 'mat' : 'cons'}`);
-    const filterBar  = document.getElementById(`intake-filter-${type === 'materials' ? 'mat' : 'cons'}`);
-    const editBar    = document.getElementById(`intake-editbar-${type === 'materials' ? 'mat' : 'cons'}`);
+    const id         = type === 'materials' ? 'mat' : 'cons';
+    const listEl     = document.getElementById(`intake-list-${id}`);
+    const editEl     = document.getElementById(`intake-edit-list-${id}`);
+    const filterBar  = document.getElementById(`intake-filter-${id}`);
+    const editBar    = document.getElementById(`intake-editbar-${id}`);
     const active     = this._editMode[type];
-    if (listEl)   listEl.style.display   = active ? 'none' : '';
-    if (editEl)   editEl.style.display   = active ? '' : 'none';
-    if (filterBar)filterBar.style.opacity = active ? '0.4' : '1';
-    if (filterBar)filterBar.style.pointerEvents = active ? 'none' : '';
-    if (editBar)  editBar.style.display  = active ? '' : 'none';
+    if (active) {
+      this._editModeFilter[type] = this._intakeFilter[type];
+    } else {
+      this._editModeFilter[type] = null;
+    }
+    if (listEl)   listEl.style.display              = active ? 'none' : '';
+    if (editEl)   editEl.style.display              = active ? '' : 'none';
+    if (filterBar)filterBar.style.opacity           = active ? '0.4' : '1';
+    if (filterBar)filterBar.style.pointerEvents     = active ? 'none' : '';
+    if (editBar)  editBar.style.display             = active ? '' : 'none';
     if (active) { this.renderEditList(type); this._updateEditActionBar(type); }
     else { if (type === 'materials') this.renderIntakeMat(); else this.renderIntakeCons(); }
   },
@@ -1122,9 +1133,11 @@ const Manager = {
   renderEditList(type) {
     const id = type === 'materials' ? 'mat' : 'cons';
     const el = document.getElementById(`intake-edit-list-${id}`); if (!el) return;
-    const groups = Intake.buildCategoryGroups(this.orders, type); // excludes cancelled/rejected already
+    const isCancelledMode = this._editModeFilter[type] === 'cancelled';
+    const groups = Intake.buildCategoryGroups(this.orders, type, isCancelledMode);
     if (!groups.length) {
-      el.innerHTML = `<div class="empty-state"><i class="ti ti-inbox-off"></i><p>No ${type} deliveries to edit.</p></div>`;
+      const noun = isCancelledMode ? 'cancelled' : '';
+      el.innerHTML = `<div class="empty-state"><i class="ti ti-inbox-off"></i><p>No ${noun ? noun + ' ' : ''}${type} deliveries${isCancelledMode ? ' to delete' : ' to edit'}.</p></div>`;
       return;
     }
     el.innerHTML = groups.map(g => {
@@ -1157,11 +1170,10 @@ const Manager = {
   },
 
   // Resolves the current delivery selection down to the distinct underlying order ids.
-  // groupKey is either a DLV-... deliveryId or a legacy:orderId:category fallback —
-  // neither has the shape a string-slice could reliably parse, so resolve via a fresh
-  // lookup against the current groups instead.
+  // Uses cancelled groups when in cancelled edit mode, active groups otherwise.
   _editSelectedOrderIds(type) {
-    const groups = Intake.buildCategoryGroups(this.orders, type);
+    const isCancelledMode = this._editModeFilter[type] === 'cancelled';
+    const groups = Intake.buildCategoryGroups(this.orders, type, isCancelledMode);
     const selectedKeys = this._editSelected[type];
     const orderIds = new Set();
     for (const g of groups) {
@@ -1175,10 +1187,13 @@ const Manager = {
   _updateEditActionBar(type) {
     const id = type === 'materials' ? 'mat' : 'cons';
     const n  = this._editSelectedOrderIds(type).length;
+    const isCancelledMode = this._editModeFilter[type] === 'cancelled';
     const cancelBtn  = document.getElementById(`btn-intake-cancel-${id}`);
     const combineBtn = document.getElementById(`btn-intake-combine-${id}`);
-    if (cancelBtn)  cancelBtn.disabled  = n < 1;
-    if (combineBtn) combineBtn.disabled = n < 2;
+    const deleteBtn  = document.getElementById(`btn-intake-delete-${id}`);
+    if (cancelBtn)  { cancelBtn.style.display  = isCancelledMode ? 'none' : ''; cancelBtn.disabled  = n < 1; }
+    if (combineBtn) { combineBtn.style.display = isCancelledMode ? 'none' : ''; combineBtn.disabled = n < 2; }
+    if (deleteBtn)  { deleteBtn.style.display  = isCancelledMode ? '' : 'none'; deleteBtn.disabled  = n < 1; }
   },
 
   async cancelSelectedOrders(type) {
@@ -1208,6 +1223,20 @@ const Manager = {
     } catch (e) {
       console.error('Combine failed:', e);
       alert('Combine failed: ' + e.message);
+    }
+  },
+
+  async deleteSelectedDeliveries(type) {
+    const orderIds = this._editSelectedOrderIds(type);
+    if (orderIds.length < 1) return;
+    if (!confirm(`Permanently delete ${orderIds.length} cancelled order record${orderIds.length !== 1 ? 's' : ''}? This cannot be undone.`)) return;
+    try {
+      await DB.deleteOrders(orderIds);
+      this._editSelected[type].clear();
+      this.toggleEditMode(type);
+    } catch (e) {
+      console.error('Delete failed:', e);
+      alert('Delete failed: ' + e.message);
     }
   },
 

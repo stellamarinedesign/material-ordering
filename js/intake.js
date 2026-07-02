@@ -282,7 +282,8 @@ const Intake = {
           </div>
           <div class="intake-card-right">
             ${readOnly && showRestore ? `<button class="intake-restore-btn" data-restore="${esc(distinctOrderIds[0])}" title="Restore to active tracking"><i class="ti ti-arrow-back-up"></i> Restore</button>` : ''}
-            ${isOpen && hasDraft ? `<button class="intake-confirm-btn" data-confirm="${esc(cardKey)}" ${!canConfirm ? 'disabled' : ''} title="${canConfirm ? 'Confirm and save changes' : 'Set a status for every item, and enter a quantity for any partial items'}"><i class="ti ti-check"></i> Confirm</button>` : ''}
+            ${isOpen && hasDraft && !canConfirm ? `<button class="intake-save-btn" data-save="${esc(cardKey)}" title="Save progress — some items still need a status"><i class="ti ti-device-floppy"></i> Save</button>` : ''}
+            ${isOpen && hasDraft && canConfirm ? `<button class="intake-confirm-btn" data-confirm="${esc(cardKey)}" title="Confirm and save changes"><i class="ti ti-check"></i> Confirm</button>` : ''}
             ${this.statusBadge(badgeStatus)}
             <i class="ti ${isOpen ? 'ti-chevron-up' : 'ti-chevron-down'} intake-chevron"></i>
           </div>
@@ -435,6 +436,7 @@ const Intake = {
   // Groups entries with the same item.id and renders a single flat row per unique item.
   // When multiple orders contributed the same catalog item to a delivery, their quantities
   // are summed into one row — indistinguishable from a single-order item at the delivery stage.
+  // Rows are sorted numerically by partCode, then grouped by subcategory when multiple exist.
   _renderMergedEntries(entries, { draftForCard, readOnly }) {
     const byItemId = new Map();
     for (const entry of entries) {
@@ -442,15 +444,29 @@ const Intake = {
       if (!byItemId.has(key)) byItemId.set(key, []);
       byItemId.get(key).push(entry);
     }
-    return [...byItemId.values()].map(group => {
+
+    // Merge multi-order groups into a single representative row object.
+    const rows = [...byItemId.values()].map(group => {
       const { item, order } = group[0];
-      if (group.length === 1) {
-        return this.renderItemRow(order, item, { draftForCard, readOnly });
-      }
-      // Render as a single flat row with total qty — the first entry's order is the representative
-      // (its orderId is used as the draft key; intakeConfirm propagates to all contributing orders).
-      const totalQty = group.reduce((s, e) => s + (e.item.qty || 0), 0);
-      return this.renderItemRow(order, { ...item, qty: totalQty }, { draftForCard, readOnly });
+      const mergedItem = group.length === 1 ? item : { ...item, qty: group.reduce((s, e) => s + (e.item.qty || 0), 0) };
+      return { order, item: mergedItem };
+    });
+
+    // Sort numerically by partCode (same order as the ordering form).
+    rows.sort((a, b) => {
+      const ca = a.item.partCode || '', cb = b.item.partCode || '';
+      return ca.localeCompare(cb, undefined, { numeric: true, sensitivity: 'base' });
+    });
+
+    // Group by subcategory. If only one subcategory, render flat without labels.
+    const subcats = [...new Set(rows.map(r => r.item.subcategory || 'General'))];
+    if (subcats.length <= 1) {
+      return rows.map(r => this.renderItemRow(r.order, r.item, { draftForCard, readOnly })).join('');
+    }
+    return subcats.map(sub => {
+      const subRows = rows.filter(r => (r.item.subcategory || 'General') === sub);
+      return `<div class="intake-subcat-label">${esc(sub)}</div>` +
+        subRows.map(r => this.renderItemRow(r.order, r.item, { draftForCard, readOnly })).join('');
     }).join('');
   },
 
@@ -465,6 +481,13 @@ const Intake = {
       if (confirmBtn) {
         if (confirmBtn.disabled) return;
         if (callbacks.onConfirm) callbacks.onConfirm(confirmBtn.dataset.confirm);
+        return;
+      }
+
+      // Save button — partial progress save, same position as confirm.
+      const saveBtn = e.target.closest('[data-save]');
+      if (saveBtn) {
+        if (callbacks.onSave) callbacks.onSave(saveBtn.dataset.save);
         return;
       }
 
