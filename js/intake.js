@@ -1,4 +1,4 @@
-// intake.js — v0.37.4
+// intake.js — v0.37.5
 // Shared intake rendering module used by warehouse.html and manager.html.
 
 const Intake = {
@@ -261,12 +261,24 @@ const Intake = {
     const hasDraft   = !readOnly && draftForCard && Object.keys(draftForCard).length > 0;
     const canConfirm = hasDraft && this.canConfirmEntries(entries, draftForCard);
 
+    // For resolved deliveries, show intake completion time instead of order submission date.
+    const metaTs = (() => {
+      if (!this.TAB_RESOLVED.has(status)) return ts;
+      const intakeDates = entries
+        .map(e => e.order.intake && e.order.intake.updatedAt && e.order.intake.updatedAt.toDate
+          ? e.order.intake.updatedAt.toDate() : null)
+        .filter(Boolean);
+      if (!intakeDates.length) return ts;
+      const latest = new Date(Math.max(...intakeDates.map(d => d.getTime())));
+      return 'Received ' + latest.toLocaleString('en-AU', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+    })();
+
     return `
       <div class="intake-card${isOpen ? ' open' : ''}" id="intake-card-${esc(safeId)}">
         <div class="intake-card-hdr" data-toggle-order="${esc(cardKey)}">
           <div class="intake-card-title">
             <div class="intake-card-ref">${esc(category)}${esc(suffix)}</div>
-            <div class="intake-card-meta">${esc(ts)}${deviceLabel ? ' &middot; ' + esc(deviceLabel) : ''} &middot; ${uniqueItemCount} item${uniqueItemCount !== 1 ? 's' : ''}</div>
+            <div class="intake-card-meta">${esc(metaTs)}${deviceLabel ? ' &middot; ' + esc(deviceLabel) : ''} &middot; ${uniqueItemCount} item${uniqueItemCount !== 1 ? 's' : ''}</div>
           </div>
           <div class="intake-card-right">
             ${readOnly && showRestore ? `<button class="intake-restore-btn" data-restore="${esc(distinctOrderIds[0])}" title="Restore to active tracking"><i class="ti ti-arrow-back-up"></i> Restore</button>` : ''}
@@ -276,7 +288,7 @@ const Intake = {
           </div>
         </div>
         ${isOpen ? `<div class="intake-card-body">
-          ${this._renderMergedEntries(entries, { draftForCard, readOnly, spansMultipleOrders })}
+          ${this._renderMergedEntries(entries, { draftForCard, readOnly })}
         </div>` : ''}
       </div>`;
   },
@@ -423,7 +435,7 @@ const Intake = {
   // Groups entries with the same item.id and renders a single flat row per unique item.
   // When multiple orders contributed the same catalog item to a delivery, their quantities
   // are summed into one row — indistinguishable from a single-order item at the delivery stage.
-  _renderMergedEntries(entries, { draftForCard, readOnly, spansMultipleOrders }) {
+  _renderMergedEntries(entries, { draftForCard, readOnly }) {
     const byItemId = new Map();
     for (const entry of entries) {
       const key = String(entry.item.id);
@@ -433,7 +445,7 @@ const Intake = {
     return [...byItemId.values()].map(group => {
       const { item, order } = group[0];
       if (group.length === 1) {
-        return this.renderItemRow(order, item, { draftForCard, readOnly, showOrderLabel: spansMultipleOrders });
+        return this.renderItemRow(order, item, { draftForCard, readOnly });
       }
       // Render as a single flat row with total qty — the first entry's order is the representative
       // (its orderId is used as the draft key; intakeConfirm propagates to all contributing orders).

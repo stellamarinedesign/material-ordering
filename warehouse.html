@@ -476,7 +476,7 @@ const Warehouse = {
       if (!repStatus) continue;
       for (const { order, item } of itemEntries.slice(1)) {
         const ck = `${order._id}::${item.id}`;
-        if (!merged[ck]) merged[ck] = { ...repStatus };
+        merged[ck] = { ...(merged[ck] || {}), ...repStatus };
       }
     }
 

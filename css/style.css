@@ -817,6 +817,8 @@ button { cursor: pointer; }
 
 /* ── Pending delivery group card (queue sort by delivery) ── */
 .pending-delivery-group { border-left: 3px solid var(--amber-text); }
+.pending-delivery-group .order-card-body { border-top: none; }
+.intake-merged-block .order-line { padding-left: 12px; padding-right: 12px; }
 
 /* ── Partial qty input error state ── */
 .intake-partial-input.error {

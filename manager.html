@@ -1052,7 +1052,10 @@ const Manager = {
       if (!repStatus) continue;
       for (const { order, item } of itemEntries.slice(1)) {
         const ck = `${order._id}::${item.id}`;
-        if (!merged[ck]) merged[ck] = { ...repStatus };
+        // Always overwrite — mergeDraftEntries pre-populates every entry with {} (truthy),
+        // so checking !merged[ck] would never propagate. Spread existing data first so we
+        // don't lose any notes already saved on the entry.
+        merged[ck] = { ...(merged[ck] || {}), ...repStatus };
       }
     }
 
