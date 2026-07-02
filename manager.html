@@ -3434,6 +3434,30 @@ const Manager = {
         </div>
       </div>
       <div class="settings-section">
+        <div class="settings-label">Notifications</div>
+        <div class="settings-card">
+          ${(() => {
+            if (!('Notification' in window)) {
+              return `<div class="settings-row"><div><div class="settings-row-label">System notifications</div><div class="settings-row-sub">Not supported in this browser.</div></div></div>`;
+            }
+            const perm = Notification.permission;
+            if (perm === 'granted') {
+              return `<div class="settings-row">
+                <div><div class="settings-row-label">System notifications</div><div class="settings-row-sub" style="color:var(--green-text)">Enabled — you'll receive alerts for new orders.</div></div>
+                <button class="btn-sm" id="btn-test-notif">Send test</button>
+              </div>`;
+            }
+            if (perm === 'denied') {
+              return `<div class="settings-row"><div><div class="settings-row-label">System notifications</div><div class="settings-row-sub" style="color:var(--red-text)">Blocked — open browser site settings to allow notifications for this page.</div></div></div>`;
+            }
+            return `<div class="settings-row">
+              <div><div class="settings-row-label">System notifications</div><div class="settings-row-sub">Not yet enabled. Allow to receive alerts when new orders arrive.</div></div>
+              <button class="btn-sm btn-sm-save" id="btn-enable-notif">Enable</button>
+            </div>`;
+          })()}
+        </div>
+      </div>
+      <div class="settings-section">
         <div class="settings-label">Database</div>
         <div class="settings-card">
           <div class="settings-row">
@@ -3453,6 +3477,15 @@ const Manager = {
       </div>`;
 
     document.getElementById('btn-clear-firebase').addEventListener('click', () => this.clearFirebase());
+    document.getElementById('btn-enable-notif')?.addEventListener('click', async () => {
+      const result = await Notification.requestPermission();
+      if (result === 'granted') this._populateSettings();
+      else alert('Notification permission was not granted. You may need to allow it in your browser\'s site settings.');
+    });
+    document.getElementById('btn-test-notif')?.addEventListener('click', () => {
+      try { new Notification('Test notification', { body: 'System notifications are working.', icon: './icons/icon-192.png' }); }
+      catch(e) { alert('Could not send notification: ' + e.message); }
+    });
     document.getElementById('btn-mgr-toggle-test').addEventListener('click', () => { FirebaseConfig.setTestMode(!FirebaseConfig.isTestMode()); location.reload(); });
     document.getElementById('btn-reset-template').addEventListener('click', () => {
       const ta = document.getElementById('s-template'); if (ta) ta.value = DEFAULT_SETTINGS.emailTemplate;
