@@ -481,7 +481,9 @@ const Warehouse = {
       const bucket = byOrder.get(order._id);
       const compositeKey = `${order._id}::${item.id}`;
       const bareKey = String(item.id);
-      if (merged[compositeKey]) bucket.fullMap[bareKey] = merged[compositeKey]; else delete bucket.fullMap[bareKey];
+      const entry = merged[compositeKey];
+      if (!requireFullyActioned && entry && entry.status === 'partial' && !entry.qtyReceived) continue;
+      if (entry) bucket.fullMap[bareKey] = entry; else delete bucket.fullMap[bareKey];
     }
 
     try {

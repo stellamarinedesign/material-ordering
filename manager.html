@@ -1069,7 +1069,11 @@ const Manager = {
       const bucket = byOrder.get(order._id);
       const compositeKey = `${order._id}::${item.id}`;
       const bareKey = String(item.id);
-      if (merged[compositeKey]) bucket.fullMap[bareKey] = merged[compositeKey]; else delete bucket.fullMap[bareKey];
+      const entry = merged[compositeKey];
+      // On a partial save, skip partial-without-qty — writing it would make the card appear
+      // resolved (partial is in RESOLVED_STATUSES) even though the qty hasn't been entered.
+      if (!requireFullyActioned && entry && entry.status === 'partial' && !entry.qtyReceived) continue;
+      if (entry) bucket.fullMap[bareKey] = entry; else delete bucket.fullMap[bareKey];
     }
 
     const s  = Settings.get();
@@ -1286,7 +1290,8 @@ const Manager = {
         let newInBatch = 0;
         for (const order of orders) {
           if (!this._seenOrderIds.has(order._id) && !this._myOrderIds.has(order._id)) {
-            if (this.mainTab !== 'queue') { this._newOrderCount++; newInBatch++; }
+            newInBatch++;
+            if (this.mainTab !== 'queue') this._newOrderCount++;
           }
           this._seenOrderIds.add(order._id);
         }
@@ -2165,6 +2170,7 @@ const Manager = {
         try {
           this._noOrderId = await DB.submitOrder({ ref: this.orderRef, deviceName, items: allItems });
           this._myOrderIds.add(this._noOrderId);
+          if (this._seenOrderIds) this._seenOrderIds.add(this._noOrderId);
         } catch(e) { console.error('New Order save failed:', e); }
       }
       if (this._noOrderId) {
@@ -2199,6 +2205,8 @@ const Manager = {
         }));
         try {
           this._coOrderId = await DB.submitConsumablesOrder({ ref, deviceName, items: allItems });
+          this._myOrderIds.add(this._coOrderId);
+          if (this._seenOrderIds) this._seenOrderIds.add(this._coOrderId);
         } catch(e) { console.error('CO order save failed:', e); }
       }
       // Mark this category (or all) as emailed in the Firestore doc
@@ -2392,11 +2400,13 @@ const Manager = {
         // Some categories from this cart session were already emailed and saved —
         // append the remaining items to that same doc instead of creating a duplicate.
         this._myOrderIds.add(this._noOrderId);
+        if (this._seenOrderIds) this._seenOrderIds.add(this._noOrderId);
         await DB.appendItems(this._noOrderId, items);
         this._noOrderId = null;
       } else {
         const submittedId = await DB.submitOrder({ ref: this.orderRef, deviceName, items });
         this._myOrderIds.add(submittedId);
+        if (this._seenOrderIds) this._seenOrderIds.add(submittedId);
       }
       this._no._items = {};
       this.orderRef = genRef();

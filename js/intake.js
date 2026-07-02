@@ -452,11 +452,8 @@ const Intake = {
       return { order, item: mergedItem };
     });
 
-    // Sort numerically by partCode (same order as the ordering form).
-    rows.sort((a, b) => {
-      const ca = a.item.partCode || '', cb = b.item.partCode || '';
-      return ca.localeCompare(cb, undefined, { numeric: true, sensitivity: 'base' });
-    });
+    // Sort by description, same natural order as the material ordering form.
+    rows.sort((a, b) => naturalCompare(a.item.description || '', b.item.description || ''));
 
     // Group by subcategory. If only one subcategory, render flat without labels.
     const subcats = [...new Set(rows.map(r => r.item.subcategory || 'General'))];
