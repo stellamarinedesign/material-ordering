@@ -1,6 +1,6 @@
 // shared.js — v0.37.3
 
-const APP_VERSION = 'v0.37.8';
+const APP_VERSION = 'v0.37.9';
 
 // Numeric version comparison (handles "v0.9" vs "v0.10" correctly, unlike
 // plain string comparison). Returns true if `a` is strictly newer than `b`.
@@ -92,12 +92,14 @@ const Settings = {
 
 // ── 1. NATURAL SORT ──────────────────────────────────────────────────
 // Splits a string into alternating text/number chunks and compares
-// numbers numerically rather than character-by-character. Handles
-// decimals (7.5) but not fractions — fraction handling lives in the
-// unit-aware layer below, since "1 1/2" as a sort key isn't well-defined
-// without knowing it's a measurement.
+// numbers numerically rather than character-by-character. Mixed fractions
+// ("1 1/2", "3/8") are converted to decimals before chunking so they sort
+// in numeric order ("1"" before "1 1/2"" before "2"").
 function naturalSortChunks(str) {
-  return String(str||'').toLowerCase().match(/\d+\.?\d*|\D+/g) || [];
+  const s = String(str||'').toLowerCase()
+    .replace(/(\d+)\s+(\d+)\/(\d+)/g, (_, w, n, d) => String(+w + +n / +d))
+    .replace(/(\d+)\/(\d+)/g, (_, n, d) => String(+n / +d));
+  return s.match(/\d+\.?\d*|\D+/g) || [];
 }
 function naturalCompare(a, b) {
   const ca = naturalSortChunks(a), cb = naturalSortChunks(b);
