@@ -1,4 +1,4 @@
-// intake.js — v0.37.5
+// intake.js — v0.38
 // Shared intake rendering module used by warehouse.html and manager.html.
 
 const Intake = {
@@ -103,6 +103,13 @@ const Intake = {
   // so any per-item state that spans orders must be keyed by the composite
   // "orderId::itemId", never bare itemId, or two unrelated items could conflate.
 
+  // Identity key for merging "the same material" across orders in one delivery.
+  // Real part codes are unique in the catalogue and survive CSV re-ordering; item.id
+  // is just the CSV row index at submit time, so orders submitted before/after a
+  // catalogue edit can carry the same id for DIFFERENT materials (or different ids
+  // for the same one). Only fall back to id when there's no part code at all.
+  mergeKey(item) { return item.partCode ? `pc:${item.partCode}` : `id:${item.id}`; },
+
   computeCategoryStatusEntries(entries) {
     if (!entries.length) return 'pending';
     const statuses = entries.map(({ order, item }) => this._itemStatus(order, item));
@@ -131,13 +138,13 @@ const Intake = {
 
   canConfirmEntries(entries, draftForCard) {
     const merged = this.mergeDraftEntries(entries, draftForCard);
-    // For entries sharing the same item.id, the flat display shows only one row
-    // (the representative — first entry per item.id). Only check the representative.
-    const checkedItemIds = new Set();
+    // For entries sharing the same mergeKey, the flat display shows only one row
+    // (the representative — first entry per key). Only check the representative.
+    const checkedKeys = new Set();
     for (const { order, item } of entries) {
-      const itemKey = String(item.id);
-      if (checkedItemIds.has(itemKey)) continue;
-      checkedItemIds.add(itemKey);
+      const itemKey = this.mergeKey(item);
+      if (checkedKeys.has(itemKey)) continue;
+      checkedKeys.add(itemKey);
       const entry = merged[`${order._id}::${item.id}`] || {};
       const s = entry.status;
       if (!s || s === 'pending') return false;
@@ -154,12 +161,16 @@ const Intake = {
   // a per-order-per-category key — no retroactive merging for those (that's what the
   // Combine debug tool is for).
 
-  // cancelledOnly=false (default): excludes orders flagged intakeCancelled.
-  // cancelledOnly=true: returns ONLY orders flagged intakeCancelled.
-  // NOTE: the cancelled/active split happens here, per-order, BEFORE grouping by
-  // deliveryId — so a delivery whose contributing orders have mixed cancelled state
-  // naturally partitions into two same-groupKey cards, one per tab (each showing only
-  // the entries from orders in that tab's state). This is intentional, not a bug.
+  // Cancellation is tracked per DELIVERY: order.intakeCancelledDeliveries is an array
+  // of groupKeys, so cancelling one delivery never drags an order's other deliveries
+  // along with it. The old order-level intakeCancelled flag is still honoured (legacy
+  // data) and means "every delivery on this order is cancelled".
+  // cancelledOnly=false (default): excludes cancelled entries.
+  // cancelledOnly=true: returns ONLY cancelled entries.
+  _entryCancelled(order, groupKey) {
+    return !!order.intakeCancelled || (order.intakeCancelledDeliveries || []).includes(groupKey);
+  },
+
   buildCategoryGroups(orders, type, cancelledOnly = false) {
     const isMat = type === 'materials';
     const flat = [];
@@ -167,20 +178,30 @@ const Intake = {
       const orderIsMat = !order.type || order.type === 'materials';
       if (orderIsMat !== isMat) continue;
       if (order.status === 'rejected') continue;
-      const isCancelled = !!order.intakeCancelled;
-      if (cancelledOnly ? !isCancelled : isCancelled) continue;
       const items = (order.items || []);
-      const eligible = isMat
-        ? items.filter(i => i.emailed && !i.rejected)
-        : items.filter(i => !i.rejected);
-      for (const item of eligible) flat.push({ item, order });
+      let eligible;
+      if (isMat) {
+        eligible = items.filter(i => i.emailed && !i.rejected);
+      } else {
+        // Consumables: only emailed items are real deliveries — a saved cart with
+        // un-emailed categories must not show phantom deliveries. Orders from before
+        // emailed-stamping (no emailed flag anywhere) keep the legacy all-items view.
+        const hasEmailedFlags = items.some(i => i.emailed);
+        eligible = hasEmailedFlags
+          ? items.filter(i => i.emailed && !i.rejected)
+          : items.filter(i => !i.rejected);
+      }
+      for (const item of eligible) {
+        const groupKey = item.deliveryId || `legacy:${order._id}:${item.category}`;
+        const isCancelled = this._entryCancelled(order, groupKey);
+        if (cancelledOnly ? !isCancelled : isCancelled) continue;
+        flat.push({ item, order, groupKey });
+      }
     }
     const byKey = new Map();
-    for (const entry of flat) {
-      const { item, order } = entry;
-      const groupKey = item.deliveryId || `legacy:${order._id}:${item.category}`;
+    for (const { item, order, groupKey } of flat) {
       if (!byKey.has(groupKey)) byKey.set(groupKey, { groupKey, category: item.category, entries: [] });
-      byKey.get(groupKey).entries.push(entry);
+      byKey.get(groupKey).entries.push({ item, order });
     }
     return [...byKey.values()];
   },
@@ -227,7 +248,9 @@ const Intake = {
       readOnly:       !!c.isCancelledCard,
       isCancelledCard:!!c.isCancelledCard,
       showRestore:    !!c.isCancelledCard && !!showRestore,
-      draftForCard:   drafts ? drafts.get(`${c.groupKey}${c.isDerived ? '|||bo' : ''}`) : undefined,
+      // Drafts are keyed by bare groupKey everywhere — the derived back-order card
+      // shares the full card's draft (same underlying items, filtered view).
+      draftForCard:   drafts ? drafts.get(c.groupKey) : undefined,
     })).join('');
   },
 
@@ -245,7 +268,7 @@ const Intake = {
 
     const distinctOrderIds = [...new Set(entries.map(e => e.order._id))];
     const spansMultipleOrders = distinctOrderIds.length > 1;
-    const uniqueItemCount = new Set(entries.map(e => String(e.item.id))).size;
+    const uniqueItemCount = new Set(entries.map(e => this.mergeKey(e.item))).size;
     const submittedDates = entries
       .map(e => e.order.submittedAt && e.order.submittedAt.toDate ? e.order.submittedAt.toDate() : null)
       .filter(Boolean);
@@ -281,7 +304,7 @@ const Intake = {
             <div class="intake-card-meta">${esc(metaTs)}${deviceLabel ? ' &middot; ' + esc(deviceLabel) : ''} &middot; ${uniqueItemCount} item${uniqueItemCount !== 1 ? 's' : ''}</div>
           </div>
           <div class="intake-card-right">
-            ${readOnly && showRestore ? `<button class="intake-restore-btn" data-restore="${esc(distinctOrderIds[0])}" title="Restore to active tracking"><i class="ti ti-arrow-back-up"></i> Restore</button>` : ''}
+            ${readOnly && showRestore ? `<button class="intake-restore-btn" data-restore="${esc(groupKey)}" title="Restore to active tracking"><i class="ti ti-arrow-back-up"></i> Restore</button>` : ''}
             ${isOpen && hasDraft && !canConfirm ? `<button class="intake-save-btn" data-save="${esc(cardKey)}" title="Save progress — some items still need a status"><i class="ti ti-device-floppy"></i> Save</button>` : ''}
             ${isOpen && hasDraft && canConfirm ? `<button class="intake-confirm-btn" data-confirm="${esc(cardKey)}" title="Confirm and save changes"><i class="ti ti-check"></i> Confirm</button>` : ''}
             ${this.statusBadge(badgeStatus)}
@@ -433,14 +456,14 @@ const Intake = {
       </div>`;
   },
 
-  // Groups entries with the same item.id and renders a single flat row per unique item.
+  // Groups entries with the same mergeKey and renders a single flat row per unique item.
   // When multiple orders contributed the same catalog item to a delivery, their quantities
   // are summed into one row — indistinguishable from a single-order item at the delivery stage.
-  // Rows are sorted numerically by partCode, then grouped by subcategory when multiple exist.
+  // Rows are sorted by description, then grouped by subcategory when multiple exist.
   _renderMergedEntries(entries, { draftForCard, readOnly }) {
     const byItemId = new Map();
     for (const entry of entries) {
-      const key = String(entry.item.id);
+      const key = this.mergeKey(entry.item);
       if (!byItemId.has(key)) byItemId.set(key, []);
       byItemId.get(key).push(entry);
     }
@@ -470,7 +493,8 @@ const Intake = {
   // ── EVENT WIRING ─────────────────────────────────────────────────────
   // Attach all intake interactions to a container element.
   // callbacks: { onAction(orderId, itemId, action), onQtyChange(orderId, itemId, qty),
-  //   onNoteChange(orderId, itemId, text), onRerender(cardKey), onConfirm(cardKey), onRestore(orderId) }
+  //   onNoteChange(orderId, itemId, text), onRerender(cardKey), onConfirm(cardKey),
+  //   onSave(cardKey), onRestore(groupKey) }
   attachListeners(container, callbacks) {
     container.addEventListener('click', e => {
       // Confirm button — sits inside the header, must be checked before the toggle handler.

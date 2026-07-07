@@ -1,6 +1,6 @@
-// shared.js — v0.37.3
+// shared.js — v0.38
 
-const APP_VERSION = 'v0.37.9';
+const APP_VERSION = 'v0.38';
 
 // Numeric version comparison (handles "v0.9" vs "v0.10" correctly, unlike
 // plain string comparison). Returns true if `a` is strictly newer than `b`.
@@ -44,8 +44,18 @@ const DEFAULT_SETTINGS = {
 };
 
 const CAT_ICONS = {
-  'Stainless Steel': { icon:'ti-atom-2',  bg:'#dbeafe', color:'#1d4ed8' },
-  'Aluminium':       { icon:'ti-diamond', bg:'#f0fdf4', color:'#15803d' },
+  // Material categories — colours loosely follow the real material's appearance
+  // (phenolic orange, brass gold, bronze brown, steel greys light→dark, etc.)
+  'Stainless Steel': { icon:'ti-atom-2',   bg:'#dbeafe', color:'#1d4ed8' },
+  'Aluminium':       { icon:'ti-diamond',  bg:'#f0fdf4', color:'#15803d' },
+  '2205 Duplex':     { icon:'ti-anchor',   bg:'#f1f5f9', color:'#64748b' },
+  'Mild Steel':      { icon:'ti-building-bridge', bg:'#e5e7eb', color:'#4b5563' },
+  '4140 Steel':      { icon:'ti-settings', bg:'#e5e7eb', color:'#374151' },
+  'Acetal':          { icon:'ti-cylinder', bg:'#e4e4e7', color:'#18181b' },
+  'Teflon':          { icon:'ti-droplet',  bg:'#f8fafc', color:'#9aa4b2' },
+  'Brass':           { icon:'ti-coin',     bg:'#fef9c3', color:'#ca8a04' },
+  'Bronze':          { icon:'ti-coins',    bg:'#fef3c7', color:'#92400e' },
+  'Thrust Washer':   { icon:'ti-circle-dot', bg:'#ffedd5', color:'#c2410c' },
   // Consumable categories
   'Fasteners':       { icon:'ti-bolt',    bg:'#fef9c3', color:'#a16207' },
   'Abrasives':       { icon:'ti-ripple',  bg:'#fce7f3', color:'#9d174d' },
@@ -429,6 +439,31 @@ const FirebaseConfig = {
 function esc(str) {
   return String(str||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
     .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
+// Captures which input/textarea currently has focus (plus its caret and un-committed
+// value) and returns a restore function to call after an innerHTML/outerHTML
+// re-render. Live Firestore snapshots re-render whole lists, which otherwise steals
+// focus mid-typing and can drop keystrokes still inside a debounce window.
+// Elements are re-found by id, or by the data-attribute pairs intake rows use.
+function captureInputFocus() {
+  const el = document.activeElement;
+  if (!el || (el.tagName !== 'INPUT' && el.tagName !== 'TEXTAREA')) return () => {};
+  let selector = null;
+  if (el.id) selector = `#${CSS.escape(el.id)}`;
+  else if (el.dataset.notesItem)   selector = `[data-notes-item="${el.dataset.notesItem}"][data-notes-order="${el.dataset.notesOrder}"]`;
+  else if (el.dataset.partialItem) selector = `[data-partial-item="${el.dataset.partialItem}"][data-partial-order="${el.dataset.partialOrder}"]`;
+  if (!selector) return () => {};
+  const value = el.value;
+  let selStart = null, selEnd = null;
+  try { selStart = el.selectionStart; selEnd = el.selectionEnd; } catch {} // number inputs throw
+  return () => {
+    const nel = document.querySelector(selector);
+    if (!nel) return;
+    nel.value = value;
+    nel.focus({ preventScroll: true });
+    if (selStart != null) { try { nel.setSelectionRange(selStart, selEnd); } catch {} }
+  };
 }
 
 // Parses a Firebase config string into { apiKey, projectId, appId }.

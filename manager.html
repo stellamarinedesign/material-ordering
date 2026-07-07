@@ -77,6 +77,9 @@ const Manager = {
   _editSelected:      { materials: new Set(), consumables: new Set() },
   // Which filter tab was active when edit mode was entered ('outstanding', 'cancelled', etc.)
   _editModeFilter:    { materials: null, consumables: null },
+  // In-flight keys for async buttons without a confirm dialog — a double-tap would
+  // otherwise apply the action twice (e.g. add stock twice, submit a duplicate order).
+  _opBusy:            new Set(),
 
   // Receive Stock panel state
   _receive:           { _items: {} },
@@ -583,8 +586,8 @@ const Manager = {
     document.getElementById('btn-intake-edit-cons').addEventListener('click',    () => this.toggleEditMode('consumables'));
     document.getElementById('btn-intake-editdone-mat').addEventListener('click', () => this.toggleEditMode('materials'));
     document.getElementById('btn-intake-editdone-cons').addEventListener('click',() => this.toggleEditMode('consumables'));
-    document.getElementById('btn-intake-cancel-mat').addEventListener('click',   () => this.cancelSelectedOrders('materials'));
-    document.getElementById('btn-intake-cancel-cons').addEventListener('click',  () => this.cancelSelectedOrders('consumables'));
+    document.getElementById('btn-intake-cancel-mat').addEventListener('click',   () => this.cancelSelectedDeliveries('materials'));
+    document.getElementById('btn-intake-cancel-cons').addEventListener('click',  () => this.cancelSelectedDeliveries('consumables'));
     document.getElementById('btn-intake-combine-mat').addEventListener('click',  () => this.combineSelectedOrders('materials'));
     document.getElementById('btn-intake-combine-cons').addEventListener('click', () => this.combineSelectedOrders('consumables'));
     document.getElementById('btn-intake-delete-mat').addEventListener('click',   () => this.deleteSelectedDeliveries('materials'));
@@ -914,13 +917,17 @@ const Manager = {
   renderIntakeMat() {
     if (this._editMode.materials) { this.renderEditList('materials'); return; }
     const el = document.getElementById('intake-list-mat'); if (!el) return;
+    const restoreFocus = captureInputFocus(); // live snapshots re-render mid-typing
     el.innerHTML = Intake.renderCategoryList(this.orders, 'materials', this._intakeFilter.materials, this._intakeOpenOrders, this._intakeDrafts, true);
+    restoreFocus();
   },
 
   renderIntakeCons() {
     if (this._editMode.consumables) { this.renderEditList('consumables'); return; }
     const el = document.getElementById('intake-list-cons'); if (!el) return;
+    const restoreFocus = captureInputFocus();
     el.innerHTML = Intake.renderCategoryList(this.orders, 'consumables', this._intakeFilter.consumables, this._intakeOpenOrders, this._intakeDrafts, true);
+    restoreFocus();
   },
 
   // Looks up a delivery group by groupKey across both types (a card doesn't know its own
@@ -1013,11 +1020,13 @@ const Manager = {
     const group = this._intakeFindGroup(groupKey);
     if (!group) return;
     const draftForCard = this._intakeDrafts.get(groupKey);
+    const restoreFocus = captureInputFocus(); // notes debounce re-renders while typing
 
     const fullSafe = groupKey.replace(/[^a-zA-Z0-9]/g, '_');
     const fullEl   = document.getElementById(`intake-card-${fullSafe}`);
     if (fullEl) {
       fullEl.outerHTML = Intake.renderCategoryCard(groupKey, category, group.entries, type, this._intakeOpenOrders, { draftForCard });
+      restoreFocus();
       return;
     }
 
@@ -1026,6 +1035,7 @@ const Manager = {
     const boEl    = document.getElementById(`intake-card-${boSafe}`);
     if (boEl) {
       boEl.outerHTML = Intake.renderCategoryCard(groupKey, category, boEntries, type, this._intakeOpenOrders, { isDerived: true, draftForCard });
+      restoreFocus();
     }
   },
 
@@ -1043,48 +1053,59 @@ const Manager = {
 
     const merged = Intake.mergeDraftEntries(group.entries, draft);
 
-    // Flat display: for entries sharing the same item.id the UI shows one row keyed to the
-    // first entry's order. Propagate that representative's status to all other same-item entries.
-    const byItemId = new Map();
+    // Flat display: entries sharing the same mergeKey (same material across orders) show
+    // as one row keyed to the first entry's order. Propagate that representative's status
+    // to all other same-material entries.
+    const byMergeKey = new Map();
+    const propagated = new Set();
     for (const e of group.entries) {
-      const k = String(e.item.id);
-      if (!byItemId.has(k)) byItemId.set(k, []);
-      byItemId.get(k).push(e);
+      const k = Intake.mergeKey(e.item);
+      if (!byMergeKey.has(k)) byMergeKey.set(k, []);
+      byMergeKey.get(k).push(e);
     }
-    for (const itemEntries of byItemId.values()) {
+    for (const itemEntries of byMergeKey.values()) {
       if (itemEntries.length < 2) continue;
       const repStatus = merged[`${itemEntries[0].order._id}::${itemEntries[0].item.id}`];
       if (!repStatus) continue;
       for (const { order, item } of itemEntries.slice(1)) {
         const ck = `${order._id}::${item.id}`;
         merged[ck] = { ...(merged[ck] || {}), ...repStatus };
+        propagated.add(ck);
       }
     }
 
+    // Per-order PATCH of bare-keyed entries — DB.updateIntake merges it into the saved
+    // map inside a transaction. Only entries this edit actually touched (staged in the
+    // draft, or propagated above) go in the patch — including untouched items would
+    // overwrite a concurrent device's fresher write with our stale snapshot of it.
     const byOrder = new Map();
+    const skippedKeys = new Set();
     for (const { order, item } of group.entries) {
-      if (!byOrder.has(order._id)) {
-        byOrder.set(order._id, { order, fullMap: { ...((order.intake && order.intake.items) || {}) } });
-      }
-      const bucket = byOrder.get(order._id);
+      if (!byOrder.has(order._id)) byOrder.set(order._id, {});
+      const patch = byOrder.get(order._id);
       const compositeKey = `${order._id}::${item.id}`;
-      const bareKey = String(item.id);
+      if (draft[compositeKey] === undefined && !propagated.has(compositeKey)) continue;
       const entry = merged[compositeKey];
+      if (!entry) continue;
       // On a partial save, skip partial-without-qty — writing it would make the card appear
       // resolved (partial is in RESOLVED_STATUSES) even though the qty hasn't been entered.
-      if (!requireFullyActioned && entry && entry.status === 'partial' && !entry.qtyReceived) continue;
-      if (entry) bucket.fullMap[bareKey] = entry; else delete bucket.fullMap[bareKey];
+      if (!requireFullyActioned && entry.status === 'partial' && !entry.qtyReceived) {
+        skippedKeys.add(compositeKey);
+        continue;
+      }
+      patch[String(item.id)] = entry;
     }
 
     const s  = Settings.get();
     const by = (s.managerName || 'Manager').trim() || 'Manager';
     try {
-      await Promise.all([...byOrder.values()].map(({ order, fullMap }) => {
-        const isMat = !order.type || order.type === 'materials';
-        const totalItems = (order.items || []).filter(i => (isMat ? !!i.emailed : true) && !i.rejected).length;
-        return DB.updateIntake(order._id, fullMap, by, totalItems);
-      }));
-      this._intakeDrafts.delete(groupKey);
+      await Promise.all([...byOrder.entries()].map(([orderId, patch]) => DB.updateIntake(orderId, patch, by)));
+      // Keep skipped partial-without-qty selections staged so the user's Partial toggle
+      // survives the Save instead of silently resetting to pending.
+      const retained = {};
+      for (const key of skippedKeys) if (draft[key]) retained[key] = draft[key];
+      if (Object.keys(retained).length) this._intakeDrafts.set(groupKey, retained);
+      else this._intakeDrafts.delete(groupKey);
       const isMat = !group.entries[0].order.type || group.entries[0].order.type === 'materials';
       if (isMat) this.renderIntakeMat(); else this.renderIntakeCons();
     } catch (e) {
@@ -1096,11 +1117,22 @@ const Manager = {
   async intakeConfirm(cardKey) { await this._intakeWrite(cardKey, true); },
   async intakeSave(cardKey)    { await this._intakeWrite(cardKey, false); },
 
-  intakeRestore(orderId) {
-    DB.setOrderIntakeCancelled(orderId, false).catch(e => {
+  // Restores a cancelled DELIVERY (by groupKey) — clears the cancelled marker on every
+  // contributing order, not just the first one, so multi-order deliveries restore whole.
+  async intakeRestore(groupKey) {
+    const groups = [
+      ...Intake.buildCategoryGroups(this.orders, 'materials', true),
+      ...Intake.buildCategoryGroups(this.orders, 'consumables', true),
+    ];
+    const group = groups.find(g => g.groupKey === groupKey);
+    if (!group) return;
+    const orderIds = [...new Set(group.entries.map(e => e.order._id))];
+    try {
+      await Promise.all(orderIds.map(id => DB.setDeliveryCancelled(id, groupKey, false)));
+    } catch (e) {
       console.error('Restore failed:', e);
       alert('Restore failed — please try again.');
-    });
+    }
   },
 
   // ── EDIT MODE (combine/cancel/delete deliveries) — manager.html only ─────────────
@@ -1173,39 +1205,50 @@ const Manager = {
     this._updateEditActionBar(type);
   },
 
-  // Resolves the current delivery selection down to the distinct underlying order ids.
-  // Uses cancelled groups when in cancelled edit mode, active groups otherwise.
-  _editSelectedOrderIds(type) {
+  // Resolves the current selection to delivery groups (cancelled groups when in
+  // cancelled edit mode, active groups otherwise).
+  _editSelectedGroups(type) {
     const isCancelledMode = this._editModeFilter[type] === 'cancelled';
     const groups = Intake.buildCategoryGroups(this.orders, type, isCancelledMode);
-    const selectedKeys = this._editSelected[type];
+    return groups.filter(g => this._editSelected[type].has(g.groupKey));
+  },
+
+  // Distinct underlying order ids across the selected deliveries (Combine needs these —
+  // combining is inherently an order-document operation).
+  _editSelectedOrderIds(type) {
     const orderIds = new Set();
-    for (const g of groups) {
-      if (selectedKeys.has(g.groupKey)) {
-        for (const { order } of g.entries) orderIds.add(order._id);
-      }
+    for (const g of this._editSelectedGroups(type)) {
+      for (const { order } of g.entries) orderIds.add(order._id);
     }
     return [...orderIds];
   },
 
   _updateEditActionBar(type) {
     const id = type === 'materials' ? 'mat' : 'cons';
-    const n  = this._editSelectedOrderIds(type).length;
+    const nGroups = this._editSelectedGroups(type).length;
+    const nOrders = this._editSelectedOrderIds(type).length;
     const isCancelledMode = this._editModeFilter[type] === 'cancelled';
     const cancelBtn  = document.getElementById(`btn-intake-cancel-${id}`);
     const combineBtn = document.getElementById(`btn-intake-combine-${id}`);
     const deleteBtn  = document.getElementById(`btn-intake-delete-${id}`);
-    if (cancelBtn)  { cancelBtn.style.display  = isCancelledMode ? 'none' : ''; cancelBtn.disabled  = n < 1; }
-    if (combineBtn) { combineBtn.style.display = isCancelledMode ? 'none' : ''; combineBtn.disabled = n < 2; }
-    if (deleteBtn)  { deleteBtn.style.display  = isCancelledMode ? '' : 'none'; deleteBtn.disabled  = n < 1; }
+    if (cancelBtn)  { cancelBtn.style.display  = isCancelledMode ? 'none' : ''; cancelBtn.disabled  = nGroups < 1; }
+    if (combineBtn) { combineBtn.style.display = isCancelledMode ? 'none' : ''; combineBtn.disabled = nOrders < 2; }
+    if (deleteBtn)  { deleteBtn.style.display  = isCancelledMode ? '' : 'none'; deleteBtn.disabled  = nGroups < 1; }
   },
 
-  async cancelSelectedOrders(type) {
-    const orderIds = this._editSelectedOrderIds(type);
-    if (orderIds.length < 1) return;
-    if (!confirm(`Mark ${orderIds.length} order(s) as cancelled? Their deliveries will move to the Cancelled tab and stop being tracked for receiving. You can restore them later.`)) return;
+  // Cancels the selected DELIVERIES individually — an order's other deliveries keep
+  // being tracked (cancellation is per-groupKey, see Intake.buildCategoryGroups).
+  async cancelSelectedDeliveries(type) {
+    const groups = this._editSelectedGroups(type);
+    if (!groups.length) return;
+    if (!confirm(`Cancel ${groups.length} deliver${groups.length === 1 ? 'y' : 'ies'}? They'll move to the Cancelled tab and stop being tracked for receiving. Other deliveries from the same orders are not affected. You can restore them later.`)) return;
     try {
-      await Promise.all(orderIds.map(id => DB.setOrderIntakeCancelled(id, true)));
+      const ops = [];
+      for (const g of groups) {
+        const orderIds = [...new Set(g.entries.map(e => e.order._id))];
+        for (const id of orderIds) ops.push(DB.setDeliveryCancelled(id, g.groupKey, true));
+      }
+      await Promise.all(ops);
       this._editSelected[type].clear();
       this.toggleEditMode(type);
     } catch (e) {
@@ -1230,12 +1273,24 @@ const Manager = {
     }
   },
 
+  // Permanently deletes the selected cancelled DELIVERIES — removes just those items
+  // from each contributing order (the order doc itself is only deleted once nothing
+  // else remains on it), so other deliveries and queue history survive.
   async deleteSelectedDeliveries(type) {
-    const orderIds = this._editSelectedOrderIds(type);
-    if (orderIds.length < 1) return;
-    if (!confirm(`Permanently delete ${orderIds.length} cancelled order record${orderIds.length !== 1 ? 's' : ''}? This cannot be undone.`)) return;
+    const groups = this._editSelectedGroups(type);
+    if (!groups.length) return;
+    if (!confirm(`Permanently delete ${groups.length} cancelled deliver${groups.length === 1 ? 'y' : 'ies'}? Items belonging to other deliveries on the same orders are kept. This cannot be undone.`)) return;
     try {
-      await DB.deleteOrders(orderIds);
+      const ops = [];
+      for (const g of groups) {
+        const byOrder = new Map();
+        for (const { item, order } of g.entries) {
+          if (!byOrder.has(order._id)) byOrder.set(order._id, []);
+          byOrder.get(order._id).push(String(item.id));
+        }
+        for (const [orderId, itemIds] of byOrder) ops.push(DB.deleteDeliveryItems(orderId, itemIds, g.groupKey));
+      }
+      await Promise.all(ops);
       this._editSelected[type].clear();
       this.toggleEditMode(type);
     } catch (e) {
@@ -1265,6 +1320,12 @@ const Manager = {
     if (!items.length) return false;
     return items.some(i => i.emailed) && !items.some(i => !i.emailed && !i.rejected);
   },
+  // The Order Queue is a MATERIALS view — consumables orders (saved by the CO panel,
+  // possibly with un-emailed categories) must never appear here or they'd get emailed
+  // through the materials flow with a "Material Order" subject.
+  _materialsOrders() {
+    return this.orders.filter(o => !o.type || o.type === 'materials');
+  },
 
   setView(v) {
     this.activeView = v;
@@ -1277,7 +1338,7 @@ const Manager = {
     if (this.unsubscribe) this.unsubscribe();
     this.unsubscribe = DB.listenOrders(orders => {
       this.orders = orders;
-      const n = orders.filter(o => this._orderHasPendingItems(o)).length;
+      const n = this._materialsOrders().filter(o => this._orderHasPendingItems(o)).length;
       ['pending-count','mob-pending-count','queue-pending-badge'].forEach(id => {
         const el = document.getElementById(id);
         if (el) { el.textContent = n; el.classList.toggle('zero', n === 0); }
@@ -1342,6 +1403,7 @@ const Manager = {
     const wrap = document.getElementById('order-queue'); if (!wrap) return;
     // Preserve open card state
     wrap.querySelectorAll('.order-card-body.open').forEach(el => this._openCards.add(el.id.replace('body-', '')));
+    const restoreFocus = captureInputFocus(); // snapshots re-render while qty fields are focused
 
     // Sent view: per-category email groups (not per-submission)
     if (this.activeView === 'sent') {
@@ -1350,10 +1412,11 @@ const Manager = {
         document.getElementById(`body-${id}`)?.classList.add('open');
         document.getElementById(`chev-${id}`)?.classList.add('open');
       }
+      restoreFocus();
       return;
     }
 
-    let list = this.orders;
+    let list = this._materialsOrders();
     if (this.activeView === 'pending')  list = list.filter(o => this._orderHasPendingItems(o));
     if (this.activeView === 'rejected') list = list.filter(o => o.status === 'rejected');
     const listIds = new Set(list.map(o => o._id));
@@ -1367,7 +1430,7 @@ const Manager = {
     }
 
     // Combined section
-    const pendingOrders = this.orders.filter(o => this._orderHasPendingItems(o));
+    const pendingOrders = this._materialsOrders().filter(o => this._orderHasPendingItems(o));
     let combinedHtml = '';
     if (this.activeView === 'pending' && pendingOrders.length >= 1) {
       const groups = this._groupByCatKeepSeparate(pendingOrders);
@@ -1564,6 +1627,7 @@ const Manager = {
       document.getElementById(`body-${id}`)?.classList.add('open');
       document.getElementById(`chev-${id}`)?.classList.add('open');
     }
+    restoreFocus();
   },
 
   // ── SENT VIEW: per-delivery groups ───────────────────────────────────
@@ -1612,7 +1676,7 @@ const Manager = {
         ${(() => {
           const byItemId = new Map();
           for (const { item, order } of entries) {
-            const key = String(item.id);
+            const key = Intake.mergeKey(item);
             if (!byItemId.has(key)) byItemId.set(key, { item, totalQty: 0, orders: [] });
             const b = byItemId.get(key); b.totalQty += (item.qty || 0); b.orders.push({ item, order });
           }
@@ -1706,7 +1770,7 @@ const Manager = {
   // Merge lines locally — store merged qty/device in _combMerged, don't touch Firebase
   localMergeLines(cat, partCode) {
     if (!cat || !partCode) return;
-    const pendingOrders = this.orders.filter(o => this._orderHasPendingItems(o));
+    const pendingOrders = this._materialsOrders().filter(o => this._orderHasPendingItems(o));
     const key = `${cat}|${partCode}`;
     // Collect all non-excluded lines for this partCode
     const lines = [];
@@ -1808,7 +1872,7 @@ const Manager = {
 
   async mergeCombinedLines(cat, partCode) {
     if (!cat || !partCode) { console.error('merge: missing params', cat, partCode); return; }
-    const pendingOrders = this.orders.filter(o => this._orderHasPendingItems(o));
+    const pendingOrders = this._materialsOrders().filter(o => this._orderHasPendingItems(o));
     const linesWithItem = pendingOrders.filter(o =>
       o.items?.some(i => i.category === cat && i.partCode === partCode && !i.emailed)
     );
@@ -1977,7 +2041,7 @@ const Manager = {
 
     const byItemId = new Map();
     for (const { item, order } of entries) {
-      const key = String(item.id);
+      const key = Intake.mergeKey(item);
       if (!byItemId.has(key)) byItemId.set(key, { item, totalQty: 0, subEntries: [] });
       const b = byItemId.get(key); b.totalQty += (item.qty || 0); b.subEntries.push({ item, order });
     }
@@ -2091,7 +2155,7 @@ const Manager = {
   // EMAIL
   // ══════════════════════════════════════════
   openCategoryEmail(category) {
-    const pendingOrders = this.orders.filter(o => this._orderHasPendingItems(o));
+    const pendingOrders = this._materialsOrders().filter(o => this._orderHasPendingItems(o));
     const mergedItems   = {};
     const orderIds      = new Set();
     const excludedByOrder = {};  // orderId -> [partCode, ...] excluded from this send
@@ -2384,10 +2448,12 @@ const Manager = {
   // ADD NEW ORDER TO QUEUE FROM MANAGER
   // ══════════════════════════════════════════
   async noAddToOrders() {
+    if (this._opBusy.has('noAdd')) return; // double-tap would submit a duplicate order doc
     if (this.noCount() === 0) { alert('No items on this order.'); return; }
     if (this._connState && !this._connState.connected) {
       alert("You're currently offline — orders can't be submitted without a connection."); return;
     }
+    this._opBusy.add('noAdd');
     const s = Settings.get();
     const deviceName = (s.managerName || 'Manager').trim() || 'Manager';
     const items = this.noItems().map(i => ({
@@ -2427,6 +2493,8 @@ const Manager = {
       document.getElementById('btn-done-add').addEventListener('click', () => { ow.innerHTML = ''; });
     } catch(e) {
       alert('Failed to submit: ' + e.message);
+    } finally {
+      this._opBusy.delete('noAdd');
     }
   },
 
@@ -2966,9 +3034,11 @@ const Manager = {
   },
 
   async stockEnable(sid) {
-    const initEl = document.getElementById(`si-init-${sid}`);
-    const initQty = parseInt(initEl?.value || '0') || 0;
+    if (this._opBusy.has(`enable:${sid}`)) return;
+    this._opBusy.add(`enable:${sid}`);
     try {
+      const initEl = document.getElementById(`si-init-${sid}`);
+      const initQty = parseInt(initEl?.value || '0') || 0;
       await DB.enableTracking(sid);
       if (initQty > 0) {
         const item = this.consumables.find(m => stockId(m) === sid);
@@ -2977,6 +3047,7 @@ const Manager = {
         await DB.adjustStock(sid, item?.description || sid, initQty, 'adjustment', by, genRef(), 'initial_qty');
       }
     } catch(e) { alert('Failed to enable tracking: ' + e.message); }
+    finally { this._opBusy.delete(`enable:${sid}`); }
   },
 
   async stockDisable(sid) {
@@ -2986,16 +3057,19 @@ const Manager = {
   },
 
   async stockIntake(sid) {
+    if (this._opBusy.has(`intake:${sid}`)) return;
     const el = document.getElementById(`si-intake-${sid}`);
     const delta = parseInt(el?.value || '0');
     if (!delta || delta <= 0) { alert('Enter a quantity to add.'); return; }
     const item = this.consumables.find(m => stockId(m) === sid);
     const s = Settings.get();
     const by = (s.managerName || 'Manager').trim() || 'Manager';
+    this._opBusy.add(`intake:${sid}`);
     try {
       await DB.adjustStock(sid, item?.description || sid, delta, 'adjustment', by, genRef(), 'panel_intake');
       if (el) el.value = '';
     } catch(e) { alert('Intake failed: ' + e.message); }
+    finally { this._opBusy.delete(`intake:${sid}`); }
   },
 
   // Take inventory out from the manager side — e.g. damaged/wasted stock, or
@@ -3021,6 +3095,7 @@ const Manager = {
 
   // Intake N whole boxes (default workflow for boxed items — adds boxSize * N units)
   async stockIntakeBoxes(sid) {
+    if (this._opBusy.has(`intakebox:${sid}`)) return;
     const el = document.getElementById(`si-intake-box-${sid}`);
     const numBoxes = parseInt(el?.value || '0');
     if (!numBoxes || numBoxes <= 0) { alert(`Enter a number of boxes received.`); return; }
@@ -3029,10 +3104,12 @@ const Manager = {
     const delta = numBoxes * item.boxSize;
     const s = Settings.get();
     const by = (s.managerName || 'Manager').trim() || 'Manager';
+    this._opBusy.add(`intakebox:${sid}`);
     try {
       await DB.adjustStock(sid, item?.description || sid, delta, 'adjustment', by, genRef(), 'panel_intake_box');
       if (el) el.value = '';
     } catch(e) { alert('Intake failed: ' + e.message); }
+    finally { this._opBusy.delete(`intakebox:${sid}`); }
   },
 
   // Stocktake-style correction: rounds the recorded qty down to the nearest whole box.

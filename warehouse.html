@@ -337,7 +337,9 @@ const Warehouse = {
 
   renderList(type) {
     const el = document.getElementById(`intake-list-${type}`); if (!el) return;
+    const restoreFocus = captureInputFocus(); // live snapshots re-render mid-typing
     el.innerHTML = Intake.renderCategoryList(this.orders, type, this._filters[type], this._openOrders, this._drafts);
+    restoreFocus();
   },
 
   // Looks up a delivery group by groupKey across both types (a card doesn't know its own
@@ -430,11 +432,13 @@ const Warehouse = {
     const group = this._findGroup(groupKey);
     if (!group) return;
     const draftForCard = this._drafts.get(groupKey);
+    const restoreFocus = captureInputFocus(); // notes debounce re-renders while typing
 
     const fullSafe = groupKey.replace(/[^a-zA-Z0-9]/g, '_');
     const fullEl   = document.getElementById(`intake-card-${fullSafe}`);
     if (fullEl) {
       fullEl.outerHTML = Intake.renderCategoryCard(groupKey, category, group.entries, type, this._openOrders, { draftForCard });
+      restoreFocus();
       return;
     }
 
@@ -443,6 +447,7 @@ const Warehouse = {
     const boEl    = document.getElementById(`intake-card-${boSafe}`);
     if (boEl) {
       boEl.outerHTML = Intake.renderCategoryCard(groupKey, category, boEntries, type, this._openOrders, { isDerived: true, draftForCard });
+      restoreFocus();
     }
   },
 
@@ -457,42 +462,55 @@ const Warehouse = {
 
     const merged = Intake.mergeDraftEntries(group.entries, draft);
 
-    const byItemId = new Map();
+    // Entries sharing a mergeKey display as one row — propagate the representative's
+    // status to the other same-material entries (see manager.html _intakeWrite).
+    const byMergeKey = new Map();
+    const propagated = new Set();
     for (const e of group.entries) {
-      const k = String(e.item.id);
-      if (!byItemId.has(k)) byItemId.set(k, []);
-      byItemId.get(k).push(e);
+      const k = Intake.mergeKey(e.item);
+      if (!byMergeKey.has(k)) byMergeKey.set(k, []);
+      byMergeKey.get(k).push(e);
     }
-    for (const itemEntries of byItemId.values()) {
+    for (const itemEntries of byMergeKey.values()) {
       if (itemEntries.length < 2) continue;
       const repStatus = merged[`${itemEntries[0].order._id}::${itemEntries[0].item.id}`];
       if (!repStatus) continue;
       for (const { order, item } of itemEntries.slice(1)) {
         const ck = `${order._id}::${item.id}`;
         merged[ck] = { ...(merged[ck] || {}), ...repStatus };
+        propagated.add(ck);
       }
     }
 
+    // Per-order PATCH — DB.updateIntake merges it transactionally with the saved map.
+    // Only entries this edit touched (draft or propagation) go in the patch, so a
+    // concurrent device's fresher writes to other items survive.
     const byOrder = new Map();
+    const skippedKeys = new Set();
     for (const { order, item } of group.entries) {
-      if (!byOrder.has(order._id)) {
-        byOrder.set(order._id, { order, fullMap: { ...((order.intake && order.intake.items) || {}) } });
-      }
-      const bucket = byOrder.get(order._id);
+      if (!byOrder.has(order._id)) byOrder.set(order._id, {});
+      const patch = byOrder.get(order._id);
       const compositeKey = `${order._id}::${item.id}`;
-      const bareKey = String(item.id);
+      if (draft[compositeKey] === undefined && !propagated.has(compositeKey)) continue;
       const entry = merged[compositeKey];
-      if (!requireFullyActioned && entry && entry.status === 'partial' && !entry.qtyReceived) continue;
-      if (entry) bucket.fullMap[bareKey] = entry; else delete bucket.fullMap[bareKey];
+      if (!entry) continue;
+      // On a partial save, skip partial-without-qty — writing it would make the card
+      // appear resolved even though the qty hasn't been entered.
+      if (!requireFullyActioned && entry.status === 'partial' && !entry.qtyReceived) {
+        skippedKeys.add(compositeKey);
+        continue;
+      }
+      patch[String(item.id)] = entry;
     }
 
     try {
-      await Promise.all([...byOrder.values()].map(({ order, fullMap }) => {
-        const isMat = !order.type || order.type === 'materials';
-        const totalItems = (order.items || []).filter(i => (isMat ? !!i.emailed : true) && !i.rejected).length;
-        return DB.updateIntake(order._id, fullMap, WarehouseDeviceName.get(), totalItems);
-      }));
-      this._drafts.delete(groupKey);
+      await Promise.all([...byOrder.entries()].map(([orderId, patch]) =>
+        DB.updateIntake(orderId, patch, WarehouseDeviceName.get())));
+      // Keep skipped partial-without-qty selections staged across the save.
+      const retained = {};
+      for (const key of skippedKeys) if (draft[key]) retained[key] = draft[key];
+      if (Object.keys(retained).length) this._drafts.set(groupKey, retained);
+      else this._drafts.delete(groupKey);
       const isMat = !group.entries[0].order.type || group.entries[0].order.type === 'materials';
       this.renderList(isMat ? 'materials' : 'consumables');
     } catch (e) {

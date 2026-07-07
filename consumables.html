@@ -70,6 +70,7 @@ const ConsApp = {
   _unsubStock: null,
   _items:      {},       // id -> qty in current checkout
   _stockReady: false,
+  _checkoutBusy: false,  // in-flight guard — Enter key bypasses the disabled button
 
   async init() {
     const cfg = FirebaseConfig.get();
@@ -288,6 +289,10 @@ const ConsApp = {
     this._unsubStock = DB.listenStock(records => {
       this._stock = records;
       this._stockReady = true;
+      // Tabs are computed from TRACKED items, which need stock data — the initial
+      // renderShell ran before any stock arrived, so they must be re-rendered here
+      // too or the category bar stays stuck on just "All".
+      this.renderTabs();
       this.renderList();
       // Re-render the sign-out overlay if it's currently open, so live stock changes reflect there too
       if (document.getElementById('signout-item-list')) this._refreshSignOutItemsOnly();
@@ -550,6 +555,10 @@ const ConsApp = {
 
   // Writes the stock adjustments once a name has been entered
   async _doCheckout(tradesmanName) {
+    // Double-submit guard: the confirm button gets disabled below, but the Enter key
+    // on the name field calls this directly — without the flag, a second Enter during
+    // the awaits would deduct every item's stock a second time.
+    if (this._checkoutBusy) return;
     if (!tradesmanName) { alert('Please enter your name to confirm.'); return; }
     const items = this.items();
     if (!items.length) { document.getElementById('overlay-wrap').innerHTML=''; return; }
@@ -565,43 +574,48 @@ const ConsApp = {
       }
     }
 
-    const deviceName = ConsumablesDeviceName.get();
-    const by = deviceName ? `${deviceName} — ${tradesmanName}` : tradesmanName;
-    const sessionId = genRef();
+    this._checkoutBusy = true;
+    try {
+      const deviceName = ConsumablesDeviceName.get();
+      const by = deviceName ? `${deviceName} — ${tradesmanName}` : tradesmanName;
+      const sessionId = genRef();
 
-    const btn = document.getElementById('btn-overlay-confirm');
-    if (btn) { btn.disabled = true; btn.innerHTML = '<i class="ti ti-loader" style="animation:spin 1s linear infinite"></i> Processing…'; }
+      const btn = document.getElementById('btn-overlay-confirm');
+      if (btn) { btn.disabled = true; btn.innerHTML = '<i class="ti ti-loader" style="animation:spin 1s linear infinite"></i> Processing…'; }
 
-    const errors = [];
-    for (const item of items) {
-      try {
-        await DB.adjustStock(stockId(item), item.description, -item.qty, 'checkout', by, sessionId);
-      } catch(e) {
-        if (e.message === 'INSUFFICIENT_STOCK') errors.push(`${item.description}: insufficient stock`);
-        else errors.push(`${item.description}: ${e.message}`);
+      const errors = [];
+      for (const item of items) {
+        try {
+          await DB.adjustStock(stockId(item), item.description, -item.qty, 'checkout', by, sessionId);
+        } catch(e) {
+          if (e.message === 'INSUFFICIENT_STOCK') errors.push(`${item.description}: insufficient stock`);
+          else errors.push(`${item.description}: ${e.message}`);
+        }
       }
+
+      this._items = {};
+      this._changed();
+
+      const ow = document.getElementById('overlay-wrap');
+      if (errors.length) {
+        ow.innerHTML = '';
+        alert(`Some items could not be signed out:\n\n${errors.join('\n')}\n\nOther items were processed.`);
+        return;
+      }
+
+      ow.innerHTML = `
+        <div class="success-overlay">
+          <div class="success-card">
+            <div class="success-icon green"><i class="ti ti-circle-check"></i></div>
+            <h3>Item sign out complete!</h3>
+            <p>Stock levels have been updated. Thank you, ${esc(tradesmanName)}.</p>
+            <button class="btn btn-primary" id="btn-done-checkout">Done</button>
+          </div>
+        </div>`;
+      document.getElementById('btn-done-checkout').addEventListener('click', () => { ow.innerHTML=''; });
+    } finally {
+      this._checkoutBusy = false;
     }
-
-    this._items = {};
-    this._changed();
-
-    const ow = document.getElementById('overlay-wrap');
-    if (errors.length) {
-      ow.innerHTML = '';
-      alert(`Some items could not be signed out:\n\n${errors.join('\n')}\n\nOther items were processed.`);
-      return;
-    }
-
-    ow.innerHTML = `
-      <div class="success-overlay">
-        <div class="success-card">
-          <div class="success-icon green"><i class="ti ti-circle-check"></i></div>
-          <h3>Item sign out complete!</h3>
-          <p>Stock levels have been updated. Thank you, ${esc(tradesmanName)}.</p>
-          <button class="btn btn-primary" id="btn-done-checkout">Done</button>
-        </div>
-      </div>`;
-    document.getElementById('btn-done-checkout').addEventListener('click', () => { ow.innerHTML=''; });
   },
 };
 

@@ -1,4 +1,4 @@
-// firebase-sync.js — v0.37.3
+// firebase-sync.js — v0.38
 let _db = null, _configured = false;
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -124,27 +124,27 @@ const DB = {
     });
   },
 
-  // Fresh read-modify-write append — used when a cart session's items need to land on
-  // an order doc that may have just been created/updated by a different action moments
-  // ago (e.g. New Order tab: email one category, then add the rest to the queue). Reads
-  // the doc directly rather than trusting the client's local snapshot cache, which could
-  // still be a beat behind the write that just happened. Also skips any item whose id is
-  // already present — the New Order/CO cart-saving pattern persists the WHOLE cart on
-  // the first email from a session (not just the emailed category), so by the time a
-  // later "add remaining to queue" runs, those items are usually already saved; without
-  // this dedupe they'd be appended a second time.
+  // Transactional append — used when a cart session's items need to land on an order
+  // doc that may have just been created/updated by a different action moments ago
+  // (e.g. New Order tab: email one category, then add the rest to the queue). Skips
+  // any item whose id is already present — the New Order/CO cart-saving pattern
+  // persists the WHOLE cart on the first email from a session (not just the emailed
+  // category), so by the time a later "add remaining to queue" runs, those items are
+  // usually already saved; without this dedupe they'd be appended a second time.
   async appendItems(orderId, newItems) {
     if (!this.isReady()) throw new Error('Firebase not initialised');
     const ref = _db.collection('orders').doc(orderId);
-    const doc = await ref.get();
-    if (!doc.exists) throw new Error('Order not found');
-    const existing = doc.data().items || [];
-    const existingIds = new Set(existing.map(i => String(i.id)));
-    const toAdd = newItems.filter(i => !existingIds.has(String(i.id)));
-    if (!toAdd.length) return;
-    await ref.update({
-      items: [...existing, ...toAdd],
-      updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+    await _db.runTransaction(async tx => {
+      const doc = await tx.get(ref);
+      if (!doc.exists) throw new Error('Order not found');
+      const existing = doc.data().items || [];
+      const existingIds = new Set(existing.map(i => String(i.id)));
+      const toAdd = newItems.filter(i => !existingIds.has(String(i.id)));
+      if (!toAdd.length) return;
+      tx.update(ref, {
+        items: [...existing, ...toAdd],
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+      });
     });
   },
 
@@ -153,23 +153,27 @@ const DB = {
   // Only items newly transitioning to emailed get stamped — an already-emailed sibling
   // (from an earlier, separate send) must keep its own deliveryId untouched, or a later
   // partial send of the same category would silently merge two unrelated deliveries.
+  // Runs in a transaction so a concurrent items-array write from another device (reject,
+  // qty edit, intake) can't be silently clobbered.
   async markCategoryEmailed(orderId, category, excludePartCodes = [], deliveryId = null) {
     if (!this.isReady()) throw new Error('Firebase not initialised');
-    const doc   = await _db.collection('orders').doc(orderId).get();
-    if (!doc.exists) return;
-    const order = doc.data();
-    const excludeSet = new Set(excludePartCodes);
-    const items = (order.items||[]).map(item =>
-      item.category === category && !excludeSet.has(item.partCode) && !item.emailed
-        ? { ...item, emailed: true, deliveryId }
-        : item
-    );
-    const nonRejected = items.filter(i => !i.rejected);
-    const allEmailed  = nonRejected.length > 0 && nonRejected.every(i => i.emailed);
-    await _db.collection('orders').doc(orderId).update({
-      items,
-      status:    allEmailed ? 'sent' : 'pending',
-      updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+    const ref = _db.collection('orders').doc(orderId);
+    await _db.runTransaction(async tx => {
+      const doc = await tx.get(ref);
+      if (!doc.exists) return;
+      const excludeSet = new Set(excludePartCodes);
+      const items = (doc.data().items||[]).map(item =>
+        item.category === category && !excludeSet.has(item.partCode) && !item.emailed
+          ? { ...item, emailed: true, deliveryId }
+          : item
+      );
+      const nonRejected = items.filter(i => !i.rejected);
+      const allEmailed  = nonRejected.length > 0 && nonRejected.every(i => i.emailed);
+      tx.update(ref, {
+        items,
+        status:    allEmailed ? 'sent' : 'pending',
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+      });
     });
   },
 
@@ -180,33 +184,44 @@ const DB = {
 
   async rejectItem(orderId, partCode) {
     if (!this.isReady()) throw new Error('Firebase not initialised');
-    const doc   = await _db.collection('orders').doc(orderId).get();
-    if (!doc.exists) return;
-    const order = doc.data();
-    const items = (order.items || []).map(item =>
-      item.partCode === partCode ? { ...item, rejected: true } : item
-    );
-    const nonRejected = items.filter(i => !i.rejected);
-    let newStatus = 'pending';
-    if (nonRejected.length === 0)               newStatus = 'rejected';
-    else if (nonRejected.every(i => i.emailed)) newStatus = 'sent';
-    else                                         newStatus = 'pending';
-    await _db.collection('orders').doc(orderId).update({
-      items, status: newStatus,
-      updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+    const ref = _db.collection('orders').doc(orderId);
+    await _db.runTransaction(async tx => {
+      const doc = await tx.get(ref);
+      if (!doc.exists) return;
+      const items = (doc.data().items || []).map(item =>
+        item.partCode === partCode ? { ...item, rejected: true } : item
+      );
+      const nonRejected = items.filter(i => !i.rejected);
+      let newStatus = 'pending';
+      if (nonRejected.length === 0)               newStatus = 'rejected';
+      else if (nonRejected.every(i => i.emailed)) newStatus = 'sent';
+      tx.update(ref, {
+        items, status: newStatus,
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+      });
     });
   },
 
   async resetCategoryEmailed(orderId, category) {
     if (!this.isReady()) throw new Error('Firebase not initialised');
-    const doc = await _db.collection('orders').doc(orderId).get();
-    if (!doc.exists) return;
-    const items = (doc.data().items || []).map(item =>
-      item.category === category ? { ...item, emailed: false } : item
-    );
-    await _db.collection('orders').doc(orderId).update({
-      items, status: 'pending',
-      updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+    const ref = _db.collection('orders').doc(orderId);
+    await _db.runTransaction(async tx => {
+      const doc = await tx.get(ref);
+      if (!doc.exists) return;
+      const data  = doc.data();
+      const items = (data.items || []).map(item =>
+        item.category === category ? { ...item, emailed: false } : item
+      );
+      // Clear stale intake statuses for the reset items — without this, re-emailing
+      // them creates a delivery that instantly shows the OLD received/backorder state.
+      const intakeItems = { ...((data.intake && data.intake.items) || {}) };
+      for (const item of (data.items || [])) {
+        if (item.category === category) delete intakeItems[String(item.id)];
+      }
+      tx.update(ref, {
+        items, 'intake.items': intakeItems, status: 'pending',
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+      });
     });
   },
 
@@ -230,65 +245,100 @@ const DB = {
   // stamps items that are newly transitioning to emailed in this call.
   async markAllEmailed(orderId) {
     if (!this.isReady()) throw new Error('Firebase not initialised');
-    const doc = await _db.collection('orders').doc(orderId).get();
-    if (!doc.exists) return;
-    const catIdMap = {};
-    const items = (doc.data().items || []).map(item => {
-      if (item.rejected || item.emailed) return item;
-      if (!catIdMap[item.category]) catIdMap[item.category] = genDeliveryId();
-      return { ...item, emailed: true, deliveryId: catIdMap[item.category] };
-    });
-    const nonRejected = items.filter(i => !i.rejected);
-    const allEmailed  = nonRejected.length > 0 && nonRejected.every(i => i.emailed);
-    await _db.collection('orders').doc(orderId).update({
-      items,
-      status: allEmailed ? 'sent' : 'pending',
-      updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+    const ref = _db.collection('orders').doc(orderId);
+    await _db.runTransaction(async tx => {
+      const doc = await tx.get(ref);
+      if (!doc.exists) return;
+      const catIdMap = {};
+      const items = (doc.data().items || []).map(item => {
+        if (item.rejected || item.emailed) return item;
+        if (!catIdMap[item.category]) catIdMap[item.category] = genDeliveryId();
+        return { ...item, emailed: true, deliveryId: catIdMap[item.category] };
+      });
+      const nonRejected = items.filter(i => !i.rejected);
+      const allEmailed  = nonRejected.length > 0 && nonRejected.every(i => i.emailed);
+      tx.update(ref, {
+        items,
+        status: allEmailed ? 'sent' : 'pending',
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+      });
     });
   },
 
-  // Records intake status for one or more items on an order.
-  // intakeItems: { [itemId]: { status: 'ok'|'partial'|'missing'|'backorder'|null, qtyReceived, notes } }
-  // totalItems: total line-item count in the order (used to compute overall status).
-  async updateIntake(orderId, intakeItems, updatedBy, totalItems) {
+  // Merges an intake patch into an order inside a transaction. patch is a map of
+  // bare item ids -> { status, qtyReceived, notes }. Merging (rather than overwriting
+  // the whole intake.items map from the client's cached copy) means two devices
+  // confirming different items on the same order can no longer clobber each other.
+  // The order-level intake.status is recomputed from the merged result in-tx.
+  async updateIntake(orderId, patch, updatedBy) {
     if (!this.isReady()) throw new Error('Firebase not initialised');
     const RESOLVED = new Set(['ok', 'partial', 'missing', 'backorder']);
-    const statuses = Object.values(intakeItems || {})
-      .map(i => i.status)
-      .filter(s => !!s && s !== 'pending');
-    let intakeStatus = 'pending';
-    if (statuses.length > 0) {
-      const allActioned = statuses.length >= (totalItems || 1) && statuses.every(s => RESOLVED.has(s));
-      if (!allActioned)                               intakeStatus = 'in_progress';
-      else if (statuses.every(s => s === 'ok'))        intakeStatus = 'received';
-      else if (statuses.some(s => s === 'backorder'))  intakeStatus = 'backorder';
-      else                                              intakeStatus = 'completed';
-    }
-    await _db.collection('orders').doc(orderId).update({
-      'intake.items':     intakeItems || {},
-      'intake.status':    intakeStatus,
-      'intake.updatedBy': updatedBy || '',
-      'intake.updatedAt': firebase.firestore.FieldValue.serverTimestamp(),
-      updatedAt:          firebase.firestore.FieldValue.serverTimestamp(),
+    const ref = _db.collection('orders').doc(orderId);
+    await _db.runTransaction(async tx => {
+      const doc = await tx.get(ref);
+      if (!doc.exists) return;
+      const data   = doc.data();
+      const merged = { ...((data.intake && data.intake.items) || {}) };
+      for (const [id, entry] of Object.entries(patch || {})) merged[id] = entry;
+      const isMat = !data.type || data.type === 'materials';
+      const totalItems = (data.items || []).filter(i => (isMat ? !!i.emailed : true) && !i.rejected).length;
+      const statuses = Object.values(merged).map(i => i.status).filter(s => !!s && s !== 'pending');
+      let intakeStatus = 'pending';
+      if (statuses.length > 0) {
+        const allActioned = statuses.length >= (totalItems || 1) && statuses.every(s => RESOLVED.has(s));
+        if (!allActioned)                               intakeStatus = 'in_progress';
+        else if (statuses.every(s => s === 'ok'))        intakeStatus = 'received';
+        else if (statuses.some(s => s === 'backorder'))  intakeStatus = 'backorder';
+        else                                              intakeStatus = 'completed';
+      }
+      tx.update(ref, {
+        'intake.items':     merged,
+        'intake.status':    intakeStatus,
+        'intake.updatedBy': updatedBy || '',
+        'intake.updatedAt': firebase.firestore.FieldValue.serverTimestamp(),
+        updatedAt:          firebase.firestore.FieldValue.serverTimestamp(),
+      });
     });
-    return intakeStatus;
   },
 
-  // Permanently deletes order documents from Firestore. Used for purging cancelled
-  // deliveries that are no longer needed. Irreversible — caller must confirm with user.
-  async deleteOrders(orderIds) {
+  // Sets/clears cancellation for ONE delivery (groupKey) on an order — deliveries are
+  // cancelled individually, so an order's other deliveries stay tracked. Restoring
+  // also clears the legacy order-level intakeCancelled flag (which meant "everything
+  // on this order is cancelled"), or the delivery would stay cancelled via that path.
+  async setDeliveryCancelled(orderId, groupKey, cancelled) {
     if (!this.isReady()) throw new Error('Firebase not initialised');
-    await Promise.all(orderIds.map(id => _db.collection('orders').doc(id).delete()));
-  },
-
-  // Sets/clears the intake-only cancellation flag for an order. Independent of
-  // `status` (Queue/ordering flow) and per-item `rejected` — a cancelled order
-  // just stops being tracked for receiving and moves to the Cancelled tab.
-  async setOrderIntakeCancelled(orderId, cancelled) {
-    if (!this.isReady()) throw new Error('Firebase not initialised');
-    await _db.collection('orders').doc(orderId).update({
-      intakeCancelled: !!cancelled,
+    const update = {
+      intakeCancelledDeliveries: cancelled
+        ? firebase.firestore.FieldValue.arrayUnion(groupKey)
+        : firebase.firestore.FieldValue.arrayRemove(groupKey),
       updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+    };
+    if (!cancelled) update.intakeCancelled = false;
+    await _db.collection('orders').doc(orderId).update(update);
+  },
+
+  // Removes a cancelled delivery's items from an order. Deletes the whole document
+  // only when nothing would remain on it; otherwise strips just those items (plus
+  // their intake entries and the delivery's cancelled marker) so the order's other
+  // deliveries and queue history survive.
+  async deleteDeliveryItems(orderId, itemIds, groupKey) {
+    if (!this.isReady()) throw new Error('Firebase not initialised');
+    const ref = _db.collection('orders').doc(orderId);
+    await _db.runTransaction(async tx => {
+      const doc = await tx.get(ref);
+      if (!doc.exists) return;
+      const data   = doc.data();
+      const remove = new Set(itemIds.map(String));
+      const remaining = (data.items || []).filter(i => !remove.has(String(i.id)));
+      if (!remaining.length) { tx.delete(ref); return; }
+      const intakeItems = { ...((data.intake && data.intake.items) || {}) };
+      for (const id of remove) delete intakeItems[id];
+      tx.update(ref, {
+        items: remaining,
+        'intake.items': intakeItems,
+        intakeCancelledDeliveries: firebase.firestore.FieldValue.arrayRemove(groupKey),
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+      });
     });
   },
 
@@ -364,31 +414,39 @@ const DB = {
 
   async resetItemEmailed(orderId, category, partCode) {
     if (!this.isReady()) throw new Error('Firebase not initialised');
-    const doc = await _db.collection('orders').doc(orderId).get();
-    if (!doc.exists) return;
-    const items = (doc.data().items || []).map(item =>
-      (item.category === category && item.partCode === partCode)
-        ? { ...item, emailed: false }
-        : item
-    );
-    const nonRejected = items.filter(i => !i.rejected);
-    const allEmailed  = nonRejected.length > 0 && nonRejected.every(i => i.emailed);
-    await _db.collection('orders').doc(orderId).update({
-      items,
-      status: allEmailed ? 'sent' : 'pending',
-      updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+    const ref = _db.collection('orders').doc(orderId);
+    await _db.runTransaction(async tx => {
+      const doc = await tx.get(ref);
+      if (!doc.exists) return;
+      const data  = doc.data();
+      const match = item => item.category === category && item.partCode === partCode;
+      const items = (data.items || []).map(item => match(item) ? { ...item, emailed: false } : item);
+      // Clear stale intake status so re-sending starts fresh (see resetCategoryEmailed).
+      const intakeItems = { ...((data.intake && data.intake.items) || {}) };
+      for (const item of (data.items || [])) if (match(item)) delete intakeItems[String(item.id)];
+      const nonRejected = items.filter(i => !i.rejected);
+      const allEmailed  = nonRejected.length > 0 && nonRejected.every(i => i.emailed);
+      tx.update(ref, {
+        items, 'intake.items': intakeItems,
+        status: allEmailed ? 'sent' : 'pending',
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+      });
     });
   },
 
   async resetOrderToPending(orderId) {
     if (!this.isReady()) throw new Error('Firebase not initialised');
-    const doc = await _db.collection('orders').doc(orderId).get();
-    if (!doc.exists) return;
-    const items = (doc.data().items || []).map(item => ({ ...item, emailed: false }));
-    await _db.collection('orders').doc(orderId).update({
-      items,
-      status: 'pending',
-      updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+    const ref = _db.collection('orders').doc(orderId);
+    await _db.runTransaction(async tx => {
+      const doc = await tx.get(ref);
+      if (!doc.exists) return;
+      const items = (doc.data().items || []).map(item => ({ ...item, emailed: false }));
+      tx.update(ref, {
+        items,
+        'intake.items': {}, // every item is back to pending — no delivery state survives
+        status: 'pending',
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+      });
     });
   },
 
