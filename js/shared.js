@@ -1,6 +1,6 @@
-// shared.js — v0.38
+// shared.js — v0.38.1
 
-const APP_VERSION = 'v0.38';
+const APP_VERSION = 'v0.38.1';
 
 // Numeric version comparison (handles "v0.9" vs "v0.10" correctly, unlike
 // plain string comparison). Returns true if `a` is strictly newer than `b`.
@@ -111,6 +111,13 @@ function naturalSortChunks(str) {
     .replace(/(\d+)\/(\d+)/g, (_, n, d) => String(+n / +d));
   return s.match(/\d+\.?\d*|\D+/g) || [];
 }
+// Description comparator that honours the naturalSort setting — for secondary sorts
+// outside Data.filter (stock lists, consumables checkout) so "8mm before 10mm"
+// applies consistently everywhere, not just on the ordering pages.
+function descCompare(a, b) {
+  return Settings.get().naturalSort ? naturalCompare(a, b) : String(a||'').localeCompare(String(b||''));
+}
+
 function naturalCompare(a, b) {
   const ca = naturalSortChunks(a), cb = naturalSortChunks(b);
   const len = Math.max(ca.length, cb.length);
@@ -250,7 +257,7 @@ const Data = {
       }
       throw new Error('CSV parsed to 0 rows');
     } catch (e) { console.warn('[Consumables] CSV load failed:', e.message); }
-    try { const c = localStorage.getItem('mo_cons_cache'); if (c) { this._consumablesList = JSON.parse(c); return JSON.parse(c); } } catch {}
+    try { const c = localStorage.getItem('mo_cons_cache'); if (c) { this._consumablesList = JSON.parse(c); return this._consumablesList; } } catch {}
     this._consumablesList = [];
     return [];
   },

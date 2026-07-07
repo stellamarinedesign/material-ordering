@@ -32,7 +32,7 @@ const Warehouse = {
   _openOrders: new Set(),
   _drafts:     new Map(), // cardKey ("orderId|||category") -> { [itemId]: {status, qtyReceived, notes} }
   _unsubOrders: null,
-  _connState:  { connected: false, latestVersion: null },
+  _connState:  { connected: null, latestVersion: null }, // null = not yet known
   _noteSaveTimers: {},
 
   async init() {
@@ -463,7 +463,8 @@ const Warehouse = {
     const merged = Intake.mergeDraftEntries(group.entries, draft);
 
     // Entries sharing a mergeKey display as one row — propagate the representative's
-    // status to the other same-material entries (see manager.html _intakeWrite).
+    // STATUS (not its qtyReceived/notes, which describe the delivery total rather than
+    // each order's share) to the other same-material entries. See manager _intakeWrite.
     const byMergeKey = new Map();
     const propagated = new Set();
     for (const e of group.entries) {
@@ -474,10 +475,10 @@ const Warehouse = {
     for (const itemEntries of byMergeKey.values()) {
       if (itemEntries.length < 2) continue;
       const repStatus = merged[`${itemEntries[0].order._id}::${itemEntries[0].item.id}`];
-      if (!repStatus) continue;
+      if (!repStatus || repStatus.status === undefined) continue;
       for (const { order, item } of itemEntries.slice(1)) {
         const ck = `${order._id}::${item.id}`;
-        merged[ck] = { ...(merged[ck] || {}), ...repStatus };
+        merged[ck] = { ...(merged[ck] || {}), status: repStatus.status };
         propagated.add(ck);
       }
     }

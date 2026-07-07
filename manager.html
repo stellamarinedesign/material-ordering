@@ -127,7 +127,9 @@ const Manager = {
 
   // ── LIVE STATUS DOT (3-state: Live / Update Available / Offline) ──
   // Single source of truth so the dot and the update banner never disagree.
-  _connState: { connected: false, latestVersion: null },
+  // connected starts null (= not yet known) — submit guards must only block on an
+  // explicit false, or submitting right after page load gets wrongly refused.
+  _connState: { connected: null, latestVersion: null },
 
   _renderLiveStatus() {
     const dot = document.getElementById('live-dot');
@@ -1054,8 +1056,9 @@ const Manager = {
     const merged = Intake.mergeDraftEntries(group.entries, draft);
 
     // Flat display: entries sharing the same mergeKey (same material across orders) show
-    // as one row keyed to the first entry's order. Propagate that representative's status
-    // to all other same-material entries.
+    // as one row keyed to the first entry's order. Propagate that representative's STATUS
+    // to all other same-material entries — but not its qtyReceived or notes, which
+    // describe the delivery total, not each order's share.
     const byMergeKey = new Map();
     const propagated = new Set();
     for (const e of group.entries) {
@@ -1066,10 +1069,10 @@ const Manager = {
     for (const itemEntries of byMergeKey.values()) {
       if (itemEntries.length < 2) continue;
       const repStatus = merged[`${itemEntries[0].order._id}::${itemEntries[0].item.id}`];
-      if (!repStatus) continue;
+      if (!repStatus || repStatus.status === undefined) continue;
       for (const { order, item } of itemEntries.slice(1)) {
         const ck = `${order._id}::${item.id}`;
-        merged[ck] = { ...(merged[ck] || {}), ...repStatus };
+        merged[ck] = { ...(merged[ck] || {}), status: repStatus.status };
         propagated.add(ck);
       }
     }
@@ -1344,13 +1347,17 @@ const Manager = {
         if (el) { el.textContent = n; el.classList.toggle('zero', n === 0); }
       });
 
-      // New order notification — seed on first call, then detect arrivals
+      // New order notification — seed on first call, then detect arrivals.
+      // _pendingWrite means the doc was just written by THIS device (latency-
+      // compensated local snapshot, pre server-ack) — i.e. the manager created it
+      // themselves, so it never counts as "new". It still gets added to _seenOrderIds
+      // here, which also covers the later server-ack snapshot for the same doc.
       if (this._seenOrderIds === null) {
         this._seenOrderIds = new Set(orders.map(o => o._id));
       } else {
         let newInBatch = 0;
         for (const order of orders) {
-          if (!this._seenOrderIds.has(order._id) && !this._myOrderIds.has(order._id)) {
+          if (!this._seenOrderIds.has(order._id) && !this._myOrderIds.has(order._id) && !order._pendingWrite) {
             newInBatch++;
             if (this.mainTab !== 'queue') this._newOrderCount++;
           }
@@ -2450,7 +2457,7 @@ const Manager = {
   async noAddToOrders() {
     if (this._opBusy.has('noAdd')) return; // double-tap would submit a duplicate order doc
     if (this.noCount() === 0) { alert('No items on this order.'); return; }
-    if (this._connState && !this._connState.connected) {
+    if (this._connState.connected === false) {
       alert("You're currently offline — orders can't be submitted without a connection."); return;
     }
     this._opBusy.add('noAdd');
@@ -2547,7 +2554,7 @@ const Manager = {
     const sorted = [...filtered].sort((a,b) => {
       const ta = this._stockFor(stockId(a))?.tracked ? 0 : 1;
       const tb = this._stockFor(stockId(b))?.tracked ? 0 : 1;
-      return ta - tb || a.description.localeCompare(b.description);
+      return ta - tb || descCompare(a.description, b.description);
     });
     list.innerHTML = sorted.map(m => {
       const qty = this.coGet(m.id), inOrder = qty > 0;
@@ -2699,7 +2706,7 @@ const Manager = {
     const sorted = [...filtered].sort((a,b) => {
       const ta = this._stockFor(stockId(a))?.tracked ? 0 : 1;
       const tb = this._stockFor(stockId(b))?.tracked ? 0 : 1;
-      return ta - tb || a.description.localeCompare(b.description);
+      return ta - tb || descCompare(a.description, b.description);
     });
     list.innerHTML = sorted.map(m => {
       const qty = this.receiveGet(m.id), inOrder = qty > 0;
@@ -2729,7 +2736,7 @@ const Manager = {
   async receiveSubmit() {
     const items = this.receiveItems();
     if (!items.length) { alert('Select at least one item received.'); return; }
-    if (this._connState && !this._connState.connected) {
+    if (this._connState.connected === false) {
       alert("You're currently offline — stock can't be updated without a connection."); return;
     }
     const reference = document.getElementById('receive-reference')?.value.trim();
@@ -2881,7 +2888,7 @@ const Manager = {
     items.sort((a, b) => {
       const ra = this._stockFor(stockId(a)), rb = this._stockFor(stockId(b));
       const sa = this._stockStatus(ra), sb = this._stockStatus(rb);
-      return (order[sa]??4) - (order[sb]??4) || a.description.localeCompare(b.description);
+      return (order[sa]??4) - (order[sb]??4) || descCompare(a.description, b.description);
     });
 
     if (!items.length) { list.innerHTML = `<div class="empty-state"><i class="ti ti-package-off"></i><p>No consumables found.</p></div>`; return; }
@@ -3255,7 +3262,15 @@ const Manager = {
       this._historyHasMore = hasMore;
       this.renderHistoryList();
     } catch(e) {
-      if (list) list.innerHTML = `<div class="empty-state"><i class="ti ti-alert-circle"></i><p>Failed to load history: ${esc(e.message)}</p></div>`;
+      // Filtering by item needs a composite Firestore index (stockId + timestamp).
+      // Firestore's error message includes a console link that creates it — surface
+      // that as a clickable link instead of a wall of error text.
+      const idxUrl = (e.message || '').match(/https:\/\/console\.firebase\.google\.com[^\s"')]+/);
+      if (list) list.innerHTML = idxUrl
+        ? `<div class="empty-state"><i class="ti ti-alert-circle"></i><p>This filter needs a one-time Firestore index.<br>
+            <a href="${esc(idxUrl[0])}" target="_blank" rel="noopener" style="color:var(--blue-text);text-decoration:underline">Create it in the Firebase console</a>,
+            wait a minute for it to build, then try again.</p></div>`
+        : `<div class="empty-state"><i class="ti ti-alert-circle"></i><p>Failed to load history: ${esc(e.message)}</p></div>`;
     } finally { this._historyLoading = false; }
   },
 

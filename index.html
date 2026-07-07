@@ -36,7 +36,7 @@
 <script src="js/shared.js"></script>
 <script src="js/firebase-sync.js"></script>
 <script>
-const Worker = {
+const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker global
   activeCat:  null,
   activeSub:  null,
   orderRef:   genRef(),
@@ -286,7 +286,9 @@ const Worker = {
 
   // ── LIVE STATUS DOT (3-state: Live / Update Available / Offline) ──
   // Single source of truth so the dot and the update banner never disagree.
-  _connState: { connected: false, latestVersion: null },
+  // connected starts null (= not yet known) — the submit guard must only block on an
+  // explicit false, or submitting right after page load gets wrongly refused.
+  _connState: { connected: null, latestVersion: null },
 
   _renderLiveStatus() {
     const dot = document.getElementById('live-dot');
@@ -482,7 +484,7 @@ const Worker = {
 
   confirmSubmit() {
     if(Order.isEmpty()){ alert('No items on this order.'); return; }
-    if (this._connState && !this._connState.connected) {
+    if (this._connState.connected === false) {
       alert("You're currently offline — orders can't be submitted without a connection. Please reconnect and try again.");
       return;
     }
@@ -515,21 +517,24 @@ const Worker = {
   },
 
   async doSubmit() {
-    this.closeOverlay();
     const items=Order.items(this.materials).map(i=>({
       id:i.id,partCode:i.partCode,description:i.description,
       category:i.category,subcategory:i.subcategory,qtyType:i.qtyType||'',qty:i.qty,
     }));
     // Submit can take a moment to fail outright when offline (App Check needs
     // a live network round-trip for a token, so offline writes don't queue
-    // the way plain Firestore writes normally would) — show a brief loading
-    // state rather than letting the button look unresponsive.
+    // the way plain Firestore writes normally would) — keep the sheet open with
+    // a disabled, spinning button until the write settles. Disabling also blocks
+    // a double-tap from submitting the order twice.
     const yesBtn = document.getElementById('btn-confirm-yes');
+    if (yesBtn) { yesBtn.disabled = true; yesBtn.innerHTML = '<i class="ti ti-loader" style="animation:spin 1s linear infinite"></i> Submitting…'; }
     try {
       await DB.submitOrder({ ref:this.orderRef, deviceName:DeviceName.get(), items });
+      this.closeOverlay();
       this.closePanel('review-panel');
       this.openPanel('success-panel');
     } catch(e) {
+      if (yesBtn) { yesBtn.disabled = false; yesBtn.innerHTML = '<i class="ti ti-send"></i> Confirm and submit'; }
       alert("Couldn't submit the order — check your internet connection and try again.\n\n" + e.message);
     }
   },
@@ -543,7 +548,7 @@ const Worker = {
   },
 };
 
-document.addEventListener('DOMContentLoaded', ()=>Worker.init());
+document.addEventListener('DOMContentLoaded', ()=>WorkerApp.init());
 </script>
 </body>
 </html>

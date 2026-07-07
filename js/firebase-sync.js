@@ -1,4 +1,4 @@
-// firebase-sync.js — v0.38
+// firebase-sync.js — v0.38.1
 let _db = null, _configured = false;
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -54,10 +54,15 @@ const DB = {
     return ref.id;
   },
 
+  // _pendingWrite: true while a doc's latest write came from THIS client and hasn't
+  // been acked by the server yet (Firestore latency compensation). The manager page
+  // uses it to tell its own just-created orders apart from ones arriving from other
+  // devices — the local snapshot fires BEFORE submitOrder's promise resolves, so any
+  // "remember my own id after submitting" bookkeeping is inherently too late.
   listenOrders(callback) {
     if (!this.isReady()) return ()=>{};
     return _db.collection('orders').orderBy('submittedAt','desc')
-      .onSnapshot(snap=>callback(snap.docs.map(d=>({_id:d.id,...d.data()}))),
+      .onSnapshot(snap=>callback(snap.docs.map(d=>({_id:d.id, _pendingWrite:d.metadata.hasPendingWrites, ...d.data()}))),
         err=>console.error('Listen error:',err));
   },
 
@@ -126,11 +131,12 @@ const DB = {
 
   // Transactional append — used when a cart session's items need to land on an order
   // doc that may have just been created/updated by a different action moments ago
-  // (e.g. New Order tab: email one category, then add the rest to the queue). Skips
-  // any item whose id is already present — the New Order/CO cart-saving pattern
-  // persists the WHOLE cart on the first email from a session (not just the emailed
-  // category), so by the time a later "add remaining to queue" runs, those items are
-  // usually already saved; without this dedupe they'd be appended a second time.
+  // (e.g. New Order tab: email one category, then add the rest to the queue). The
+  // New Order/CO cart-saving pattern persists the WHOLE cart on the first email from
+  // a session, so by the time a later "add remaining to queue" runs, most items are
+  // already saved: those get their qty refreshed from the cart (the user may have
+  // edited quantities in between) rather than appended a second time. Emailed items
+  // are never touched — they've already been ordered.
   async appendItems(orderId, newItems) {
     if (!this.isReady()) throw new Error('Firebase not initialised');
     const ref = _db.collection('orders').doc(orderId);
@@ -138,11 +144,15 @@ const DB = {
       const doc = await tx.get(ref);
       if (!doc.exists) throw new Error('Order not found');
       const existing = doc.data().items || [];
+      const incomingById = new Map(newItems.map(i => [String(i.id), i]));
+      const merged = existing.map(i => {
+        const incoming = incomingById.get(String(i.id));
+        return incoming && !i.emailed ? { ...i, qty: incoming.qty } : i;
+      });
       const existingIds = new Set(existing.map(i => String(i.id)));
       const toAdd = newItems.filter(i => !existingIds.has(String(i.id)));
-      if (!toAdd.length) return;
       tx.update(ref, {
-        items: [...existing, ...toAdd],
+        items: [...merged, ...toAdd],
         updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
       });
     });
@@ -407,9 +417,13 @@ const DB = {
   async deleteAllOrders() {
     if (!this.isReady()) throw new Error('Firebase not initialised');
     const snap = await _db.collection('orders').get();
-    const batch = _db.batch();
-    snap.docs.forEach(d => batch.delete(d.ref));
-    await batch.commit();
+    // Firestore batches cap at 500 operations — chunk so large collections don't fail.
+    const docs = snap.docs;
+    for (let i = 0; i < docs.length; i += 450) {
+      const batch = _db.batch();
+      docs.slice(i, i + 450).forEach(d => batch.delete(d.ref));
+      await batch.commit();
+    }
   },
 
   async resetItemEmailed(orderId, category, partCode) {
@@ -548,39 +562,43 @@ const DB = {
 
   // Revert a history record: applies a compensating adjustment (−delta) to the
   // affected stock item, then marks the original record reverted (greyed out, ignored).
-  // Does not delete or rewrite the original — stays append-only.
+  // Does not delete or rewrite the original — stays append-only. If the compensation
+  // would take stock negative it's clamped at zero, and the amount ACTUALLY applied is
+  // stored on the record so unrevert restores exactly that (no permanent drift).
   async revertHistoryRecord(historyId) {
     if (!this.isReady()) throw new Error('Firebase not initialised');
     const histRef = _db.collection('stock_history').doc(historyId);
-    const histDoc = await histRef.get();
-    if (!histDoc.exists) throw new Error('History record not found');
-    const rec = histDoc.data();
-    if (rec.reverted) return; // already reverted, no-op
-    const stockRef = _db.collection('stock').doc(rec.stockId);
     await _db.runTransaction(async tx => {
+      const histDoc = await tx.get(histRef);
+      if (!histDoc.exists) throw new Error('History record not found');
+      const rec = histDoc.data();
+      if (rec.reverted) return; // already reverted, no-op
+      const stockRef = _db.collection('stock').doc(rec.stockId);
       const doc = await tx.get(stockRef);
       const current = doc.exists ? (doc.data().qty || 0) : 0;
-      const newQty  = current - rec.delta;
-      tx.update(stockRef, { qty: newQty < 0 ? 0 : newQty });
+      const newQty  = Math.max(0, current - rec.delta);
+      tx.set(stockRef, { qty: newQty }, { merge: true });
+      tx.update(histRef, { reverted: true, revertAppliedDelta: newQty - current });
     });
-    await histRef.update({ reverted: true });
   },
 
-  // Reverses a revert: re-applies the original delta and clears the reverted flag.
+  // Reverses a revert: undoes exactly what the revert applied (falling back to the
+  // original delta for records reverted before revertAppliedDelta existed).
   async unrevertHistoryRecord(historyId) {
     if (!this.isReady()) throw new Error('Firebase not initialised');
     const histRef = _db.collection('stock_history').doc(historyId);
-    const histDoc = await histRef.get();
-    if (!histDoc.exists) throw new Error('History record not found');
-    const rec = histDoc.data();
-    if (!rec.reverted) return; // not reverted, no-op
-    const stockRef = _db.collection('stock').doc(rec.stockId);
     await _db.runTransaction(async tx => {
+      const histDoc = await tx.get(histRef);
+      if (!histDoc.exists) throw new Error('History record not found');
+      const rec = histDoc.data();
+      if (!rec.reverted) return; // not reverted, no-op
+      const stockRef = _db.collection('stock').doc(rec.stockId);
       const doc = await tx.get(stockRef);
       const current = doc.exists ? (doc.data().qty || 0) : 0;
-      tx.update(stockRef, { qty: current + rec.delta });
+      const applied = (rec.revertAppliedDelta != null) ? rec.revertAppliedDelta : -rec.delta;
+      tx.set(stockRef, { qty: Math.max(0, current - applied) }, { merge: true });
+      tx.update(histRef, { reverted: false, revertAppliedDelta: firebase.firestore.FieldValue.delete() });
     });
-    await histRef.update({ reverted: false });
   },
 
   // ── STOCK HISTORY ─────────────────────────────────────────────────

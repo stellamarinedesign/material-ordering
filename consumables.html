@@ -240,7 +240,9 @@ const ConsApp = {
 
   // ── LIVE STATUS DOT (3-state: Live / Update Available / Offline) ──
   // Single source of truth so the dot and the update banner never disagree.
-  _connState: { connected: false, latestVersion: null },
+  // connected starts null (= not yet known) — the sign-out guard must only block on
+  // an explicit false, or signing out right after page load gets wrongly refused.
+  _connState: { connected: null, latestVersion: null },
 
   _renderLiveStatus() {
     const dot = document.getElementById('live-dot');
@@ -370,7 +372,7 @@ const ConsApp = {
 
     // Sort: in-stock first (by status), then zero/out
     const order = {ok:0, low:1, zero:2};
-    filtered.sort((a,b)=>(order[this._stockStatus(a)]??0)-(order[this._stockStatus(b)]??0)||a.description.localeCompare(b.description));
+    filtered.sort((a,b)=>(order[this._stockStatus(a)]??0)-(order[this._stockStatus(b)]??0)||descCompare(a.description,b.description));
 
     if (!filtered.length) {
       list.innerHTML = `<div class="empty-state"><i class="ti ti-package-off"></i><p>${this._stockReady ? 'No consumables in stock.' : 'Loading stock levels…'}</p></div>`;
@@ -562,7 +564,7 @@ const ConsApp = {
     if (!tradesmanName) { alert('Please enter your name to confirm.'); return; }
     const items = this.items();
     if (!items.length) { document.getElementById('overlay-wrap').innerHTML=''; return; }
-    if (this._connState && !this._connState.connected) {
+    if (this._connState.connected === false) {
       alert("You're currently offline — sign outs can't be recorded without a connection. Please reconnect and try again.");
       return;
     }
@@ -584,22 +586,26 @@ const ConsApp = {
       if (btn) { btn.disabled = true; btn.innerHTML = '<i class="ti ti-loader" style="animation:spin 1s linear infinite"></i> Processing…'; }
 
       const errors = [];
+      const failedIds = new Set();
       for (const item of items) {
         try {
           await DB.adjustStock(stockId(item), item.description, -item.qty, 'checkout', by, sessionId);
         } catch(e) {
+          failedIds.add(item.id);
           if (e.message === 'INSUFFICIENT_STOCK') errors.push(`${item.description}: insufficient stock`);
           else errors.push(`${item.description}: ${e.message}`);
         }
       }
 
-      this._items = {};
+      // Clear only what went through — failed items stay selected so they can be
+      // adjusted and retried instead of having to be found and re-added from scratch.
+      for (const item of items) if (!failedIds.has(item.id)) delete this._items[item.id];
       this._changed();
 
       const ow = document.getElementById('overlay-wrap');
       if (errors.length) {
         ow.innerHTML = '';
-        alert(`Some items could not be signed out:\n\n${errors.join('\n')}\n\nOther items were processed.`);
+        alert(`Some items could not be signed out:\n\n${errors.join('\n')}\n\nThose items are still selected — adjust the quantities and try again.`);
         return;
       }
 

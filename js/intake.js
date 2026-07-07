@@ -1,10 +1,21 @@
-// intake.js — v0.38
+// intake.js — v0.38.1
 // Shared intake rendering module used by warehouse.html and manager.html.
 
 const Intake = {
-  // UI-only state: which items have their notes field open.
-  // Key format: "orderId__itemId"
-  _openNotes: new Set(),
+  // UI-only state: which items have their notes field open / explicitly closed.
+  // Items with saved note text default to open, so collapsing one needs an explicit
+  // "closed" marker — _openNotes alone can't express that. Key format: "orderId__itemId"
+  _openNotes:   new Set(),
+  _closedNotes: new Set(),
+
+  // Toggles a note field. Visibility is derived (explicitly opened, OR has saved text
+  // and not explicitly closed), so read the live DOM state instead of re-deriving it.
+  _toggleNotes(orderId, itemId) {
+    const key = `${orderId}__${itemId}`;
+    const visible = !!document.querySelector(`[data-notes-item="${itemId}"][data-notes-order="${orderId}"]`);
+    if (visible) { this._openNotes.delete(key); this._closedNotes.add(key); }
+    else         { this._openNotes.add(key);    this._closedNotes.delete(key); }
+  },
 
   // Item statuses that count as "actioned" — once every item in a category
   // has one of these, the category is resolved and leaves Outstanding.
@@ -388,7 +399,7 @@ const Intake = {
     const qtyRecv    = istate.qtyReceived;
     const notes      = istate.notes || '';
     const noteKey    = `${order._id}__${item.id}`;
-    const notesOpen  = !readOnly && (this._openNotes.has(noteKey) || !!notes);
+    const notesOpen  = !readOnly && (this._openNotes.has(noteKey) || (!!notes && !this._closedNotes.has(noteKey)));
     const showCode   = item.partCode && !Data.isDummyCode(item.partCode);
     const orderLabel = showOrderLabel ? (order.deviceName || order.ref || order._id) : '';
 
@@ -529,9 +540,7 @@ const Intake = {
       // Clicking the item info text area opens/closes notes
       const infoEl = e.target.closest('[data-notes-toggle]');
       if (infoEl && !e.target.closest('[data-action]')) {
-        const key = `${infoEl.dataset.notesOrder}__${infoEl.dataset.notesToggle}`;
-        if (this._openNotes.has(key)) this._openNotes.delete(key);
-        else this._openNotes.add(key);
+        this._toggleNotes(infoEl.dataset.notesOrder, infoEl.dataset.notesToggle);
         if (callbacks.onRerender) callbacks.onRerender(infoEl.dataset.notesOrder);
         return;
       }
@@ -542,9 +551,7 @@ const Intake = {
       const { action, item: itemId, order: orderId } = btn.dataset;
 
       if (action === 'notes') {
-        const key = `${orderId}__${itemId}`;
-        if (this._openNotes.has(key)) this._openNotes.delete(key);
-        else this._openNotes.add(key);
+        this._toggleNotes(orderId, itemId);
         if (callbacks.onRerender) callbacks.onRerender(orderId);
         return;
       }
