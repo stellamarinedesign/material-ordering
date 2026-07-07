@@ -18,6 +18,8 @@
 <script src="js/shared.js"></script>
 <script src="js/firebase-sync.js"></script>
 <script src="js/intake.js"></script>
+<!-- Vendored xlsx-js-style (SheetJS fork with cell styling) — stocktake Excel exports -->
+<script src="js/xlsx-style.min.js"></script>
 <script>
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.getRegistrations().then(rs => rs.forEach(r => r.unregister()));
@@ -81,6 +83,15 @@ const Manager = {
   // otherwise apply the action twice (e.g. add stock twice, submit a duplicate order).
   _opBusy:            new Set(),
 
+  // Materials stocktake tab state
+  _stocktakeView:     'qty',   // 'qty' | 'history'
+  _matStock:          [],      // live material_stock records
+  _unsubMatStockMgr:  null,
+  _stSessions:        [],
+  _stSessionsLoaded:  false,
+  _stSessionsLoading: false,
+  _openStSessions:    new Set(),
+
   // Receive Stock panel state
   _receive:           { _items: {} },
   _receiveActiveCat:  null,
@@ -118,6 +129,7 @@ const Manager = {
     if (verEl) verEl.textContent = APP_VERSION;
     this.startListening();
     this.startStockListening();
+    this.startMatStockListening();
     this.startConnectionStatus();
     this.startVersionCheck();
     if ('Notification' in window && Notification.permission === 'default') {
@@ -233,6 +245,7 @@ const Manager = {
     const verEl=document.getElementById('app-version'); if(verEl) verEl.textContent=APP_VERSION;
     this.startListening();
     this.startStockListening();
+    this.startMatStockListening();
     this.startConnectionStatus();
     this.startVersionCheck();
     if ('Notification' in window && Notification.permission === 'default') {
@@ -282,6 +295,9 @@ const Manager = {
                   <button class="main-tab" id="main-tab-intake-mat">
                     <i class="ti ti-truck-delivery"></i>Deliveries
                     <span class="sidebar-count zero" id="deliveries-mat-badge">0</span>
+                  </button>
+                  <button class="main-tab" id="main-tab-stocktake">
+                    <i class="ti ti-clipboard-list"></i>Stocktake
                   </button>
                 </div>
               </div>
@@ -416,6 +432,32 @@ const Manager = {
               <button class="btn btn-outline" id="btn-intake-editdone-mat"><i class="ti ti-check"></i> Done</button>
             </div>
           </div>
+        </div>
+
+        <!-- MATERIALS STOCKTAKE VIEW -->
+        <div id="view-stocktake" style="display:none;flex:1;flex-direction:column;overflow:hidden;min-height:0">
+          <div class="col" style="padding-top:10px;padding-bottom:0;flex-shrink:0">
+            <div class="intake-filter-bar" id="stocktake-filter">
+              <div class="intake-filter-chip active" data-st-view="qty"><i class="ti ti-list-numbers"></i> Quantities</div>
+              <div class="intake-filter-chip" data-st-view="history"><i class="ti ti-history"></i> History</div>
+            </div>
+            <div id="stocktake-export-bar" style="display:flex;align-items:center;gap:12px;padding:8px 0 2px;flex-wrap:wrap">
+              <button class="btn-sm btn-sm-save" id="btn-st-export"><i class="ti ti-file-spreadsheet"></i> Export stocktake</button>
+              <button class="btn-sm" id="btn-st-export-blank"><i class="ti ti-printer"></i> Export blank count sheet</button>
+              <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text2);cursor:pointer">
+                <input type="checkbox" id="st-export-grouped" checked style="width:16px;height:16px">
+                Group by category &amp; subcategory
+              </label>
+            </div>
+          </div>
+          <div class="search-bar" id="stocktake-search-bar"><div class="col"><div class="search-wrap">
+            <i class="ti ti-search"></i>
+            <input type="search" id="stocktake-search" placeholder="Search materials…" autocomplete="off">
+          </div></div></div>
+          <div class="app-scroll"><div class="col">
+            <div id="stocktake-qty-list"></div>
+            <div id="stocktake-history-list" style="display:none"></div>
+          </div></div>
         </div>
 
         <!-- CONSUMABLES DELIVERIES VIEW -->
@@ -568,6 +610,26 @@ const Manager = {
     document.getElementById('main-tab-history')   .addEventListener('click', () => this.setMainTab('history'));
     document.getElementById('main-tab-intake-mat').addEventListener('click', () => this.setMainTab('intake-mat'));
     document.getElementById('main-tab-intake-cons').addEventListener('click', () => this.setMainTab('intake-cons'));
+    document.getElementById('main-tab-stocktake') .addEventListener('click', () => this.setMainTab('stocktake'));
+
+    // Materials stocktake tab
+    document.getElementById('stocktake-filter').addEventListener('click', e => {
+      const chip = e.target.closest('[data-st-view]'); if (!chip) return;
+      this._stocktakeView = chip.dataset.stView;
+      // Re-fetch sessions each time History is opened so fresh submissions appear.
+      if (this._stocktakeView === 'history') this._stSessionsLoaded = false;
+      document.querySelectorAll('#stocktake-filter .intake-filter-chip').forEach(c => c.classList.toggle('active', c === chip));
+      this.renderStocktakeView();
+    });
+    document.getElementById('stocktake-search').addEventListener('input', () => this.renderStocktakeQty());
+    document.getElementById('btn-st-export').addEventListener('click', () => this.exportStocktake(false));
+    document.getElementById('btn-st-export-blank').addEventListener('click', () => this.exportStocktake(true));
+    document.getElementById('stocktake-history-list').addEventListener('click', e => {
+      const sess = e.target.closest('[data-st-session]'); if (!sess) return;
+      const id = sess.dataset.stSession;
+      if (this._openStSessions.has(id)) this._openStSessions.delete(id); else this._openStSessions.add(id);
+      this.renderStocktakeHistory();
+    });
 
     // Filter chips for intake views
     document.getElementById('intake-filter-mat').addEventListener('click', e => {
@@ -894,15 +956,18 @@ const Manager = {
       queue: 'view-queue', 'new-order': 'view-new-order',
       stock: 'view-stock', history: 'view-history',
       'intake-mat': 'view-intake-mat', 'intake-cons': 'view-intake-cons',
+      stocktake: 'view-stocktake',
     };
     const tabs  = {
       queue: 'main-tab-queue', 'new-order': 'main-tab-new',
       stock: 'main-tab-stock', history: 'main-tab-history',
       'intake-mat': 'main-tab-intake-mat', 'intake-cons': 'main-tab-intake-cons',
+      stocktake: 'main-tab-stocktake',
     };
     if (tab === 'queue') { this._newOrderCount = 0; this._updateNewOrderDot(); }
     if (tab === 'intake-mat')  this.renderIntakeMat();
     if (tab === 'intake-cons') this.renderIntakeCons();
+    if (tab === 'stocktake')   this.renderStocktakeView();
     Object.entries(views).forEach(([key, id]) => {
       const el = document.getElementById(id); if (!el) return;
       el.style.display = key === tab ? 'flex' : 'none';
@@ -1300,6 +1365,156 @@ const Manager = {
       console.error('Delete failed:', e);
       alert('Delete failed: ' + e.message);
     }
+  },
+
+  // ══════════════════════════════════════════
+  // MATERIALS STOCKTAKE — Quantities / History sub-tabs + Excel exports.
+  // Quantities come from material_stock (written only by stocktake submissions
+  // from the materials page); History lists material_stocktakes sessions.
+  // ══════════════════════════════════════════
+  startMatStockListening() {
+    if (this._unsubMatStockMgr) this._unsubMatStockMgr();
+    this._unsubMatStockMgr = DB.listenMaterialStock(recs => {
+      this._matStock = recs;
+      if (this.mainTab === 'stocktake' && this._stocktakeView === 'qty') this.renderStocktakeQty();
+    });
+  },
+
+  renderStocktakeView() {
+    const qtyEl     = document.getElementById('stocktake-qty-list');
+    const histEl    = document.getElementById('stocktake-history-list');
+    const searchBar = document.getElementById('stocktake-search-bar');
+    const exportBar = document.getElementById('stocktake-export-bar');
+    const isQty = this._stocktakeView === 'qty';
+    if (qtyEl)     qtyEl.style.display     = isQty ? '' : 'none';
+    if (histEl)    histEl.style.display    = isQty ? 'none' : '';
+    if (searchBar) searchBar.style.display = isQty ? '' : 'none';
+    if (exportBar) exportBar.style.display = isQty ? 'flex' : 'none';
+    if (isQty) this.renderStocktakeQty(); else this.renderStocktakeHistory();
+  },
+
+  _stStockMap() { return new Map(this._matStock.map(r => [r._id, r])); },
+
+  renderStocktakeQty() {
+    const el = document.getElementById('stocktake-qty-list'); if (!el) return;
+    const q = (document.getElementById('stocktake-search')?.value || '').toLowerCase();
+    const stockMap = this._stStockMap();
+    let items = [...this.materials];
+    if (q) items = items.filter(m => m.description.toLowerCase().includes(q) || (m.partCode||'').toLowerCase().includes(q));
+    items.sort((a,b) => naturalCompare(a.category,b.category) || naturalCompare(a.subcategory,b.subcategory) || descCompare(a.description,b.description));
+    if (!items.length) { el.innerHTML = `<div class="empty-state"><i class="ti ti-package-off"></i><p>No materials found.</p></div>`; return; }
+    let html = '', lastSection = null;
+    for (const m of items) {
+      const section = `${m.category}${m.subcategory && m.subcategory !== 'General' ? ' — ' + m.subcategory : ''}`;
+      if (section !== lastSection) { html += `<div class="stocktake-section">${esc(section)}</div>`; lastSection = section; }
+      const rec = stockMap.get(stockId(m));
+      const unit = stocktakeUnit(m);
+      const showCode = m.partCode && !Data.isDummyCode(m.partCode);
+      const counted = rec && rec.qty != null;
+      const when = rec?.updatedAt?.toDate ? fmtTime(rec.updatedAt.toDate()) : '';
+      html += `<div class="stocktake-row">
+        <div class="stocktake-row-info">
+          <div class="stocktake-row-name">${esc(m.description)}</div>
+          <div class="stocktake-row-meta">${showCode ? esc(m.partCode) + ' · ' : ''}${esc(unit)}${counted && when ? ` · counted ${when}${rec.updatedBy ? ' by ' + esc(rec.updatedBy) : ''}` : ''}</div>
+        </div>
+        <div class="stocktake-qty${counted ? '' : ' uncounted'}">${counted ? rec.qty + ' ' + esc(unit) : '—'}</div>
+      </div>`;
+    }
+    el.innerHTML = html;
+  },
+
+  async renderStocktakeHistory() {
+    const el = document.getElementById('stocktake-history-list'); if (!el) return;
+    if (!this._stSessionsLoaded && !this._stSessionsLoading) {
+      this._stSessionsLoading = true;
+      el.innerHTML = `<div class="empty-state"><i class="ti ti-loader" style="animation:spin 1s linear infinite"></i><p>Loading…</p></div>`;
+      try {
+        this._stSessions = await DB.fetchStocktakeSessions(100);
+        this._stSessionsLoaded = true;
+      } catch(e) {
+        el.innerHTML = `<div class="empty-state"><i class="ti ti-alert-circle"></i><p>Failed to load history: ${esc(e.message)}</p></div>`;
+        this._stSessionsLoading = false;
+        return;
+      }
+      this._stSessionsLoading = false;
+    }
+    if (!this._stSessions.length) { el.innerHTML = `<div class="empty-state"><i class="ti ti-clipboard-off"></i><p>No stocktakes submitted yet.</p></div>`; return; }
+    const modeCfg = {
+      set:      { label: 'Count',   col: 'var(--blue-text)',  bg: 'var(--blue-bg)'  },
+      add:      { label: 'Added',   col: 'var(--green-text)', bg: 'var(--green-bg)' },
+      subtract: { label: 'Removed', col: 'var(--red-text)',   bg: 'var(--red-bg)'   },
+    };
+    el.innerHTML = this._stSessions.map(s => {
+      const ts = s.submittedAt?.toDate ? fmtTime(s.submittedAt.toDate()) : '';
+      const mc = modeCfg[s.mode] || modeCfg.set;
+      const isOpen = this._openStSessions.has(s._id);
+      const n = (s.items || []).length;
+      return `<div class="stocktake-row" data-st-session="${esc(s._id)}" style="cursor:pointer;flex-wrap:wrap">
+        <span class="intake-status-badge" style="color:${mc.col};background:${mc.bg}">${mc.label}</span>
+        <div class="stocktake-row-info">
+          <div class="stocktake-row-name">${esc(s.countedBy || 'Unknown')}</div>
+          <div class="stocktake-row-meta">${ts}${s.deviceName ? ' · ' + esc(s.deviceName) : ''} · ${n} item${n !== 1 ? 's' : ''}</div>
+        </div>
+        <i class="ti ${isOpen ? 'ti-chevron-up' : 'ti-chevron-down'}" style="color:var(--text3)"></i>
+        ${isOpen ? `<div style="flex-basis:100%;padding-top:8px;border-top:1px solid var(--border);margin-top:6px">
+          ${(s.items || []).map(i => `<div class="stocktake-row-meta" style="padding:2px 0">${esc(i.description)} — <strong>${i.qty} ${esc(i.unit || '')}</strong></div>`).join('')}
+        </div>` : ''}
+      </div>`;
+    }).join('');
+  },
+
+  // Builds and downloads the stocktake Excel file. blank=true → empty QTY cells for
+  // printing off and writing on by hand. Formatting mirrors the accounting system's
+  // stocktake template: navy header band with white bold text, bold Calibri data
+  // cells, Tahoma 9 QTY column, thin borders, wide description column.
+  // Grouping checkbox ON → category/subcategory section rows; OFF → flat, sorted by code.
+  exportStocktake(blank) {
+    if (typeof XLSX === 'undefined') { alert('Export library failed to load — refresh the page and try again.'); return; }
+    const grouped = document.getElementById('st-export-grouped')?.checked !== false;
+    const stockMap = this._stStockMap();
+    const items = [...this.materials];
+    if (grouped) {
+      items.sort((a,b) => naturalCompare(a.category,b.category) || naturalCompare(a.subcategory,b.subcategory) || descCompare(a.description,b.description));
+    } else {
+      items.sort((a,b) => naturalCompare(a.partCode || '', b.partCode || ''));
+    }
+
+    const thin = { style: 'thin', color: { rgb: '000000' } };
+    const BORDER    = { top: thin, bottom: thin, left: thin, right: thin };
+    const S_HEADER  = { font: { name: 'Calibri', sz: 11, bold: true, color: { rgb: 'FFFFFF' } }, fill: { patternType: 'solid', fgColor: { rgb: '000080' } }, border: BORDER };
+    const S_SECTION = { font: { name: 'Calibri', sz: 11, bold: true }, fill: { patternType: 'solid', fgColor: { rgb: 'D9D9D9' } }, border: BORDER };
+    const S_CELL    = { font: { name: 'Calibri', sz: 11, bold: true }, border: BORDER };
+    const S_QTY     = { font: { name: 'Tahoma', sz: 9 }, border: BORDER };
+
+    const rows = [], merges = [];
+    rows.push(['Code', 'Description', 'Base Unit', 'QTY'].map(v => ({ v, t: 's', s: S_HEADER })));
+    let lastSection = null;
+    for (const m of items) {
+      if (grouped) {
+        const section = `${m.category}${m.subcategory && m.subcategory !== 'General' ? ' — ' + m.subcategory : ''}`;
+        if (section !== lastSection) {
+          merges.push({ s: { r: rows.length, c: 0 }, e: { r: rows.length, c: 3 } });
+          rows.push([{ v: section, t: 's', s: S_SECTION }, { v: '', t: 's', s: S_SECTION }, { v: '', t: 's', s: S_SECTION }, { v: '', t: 's', s: S_SECTION }]);
+          lastSection = section;
+        }
+      }
+      const rec = stockMap.get(stockId(m));
+      const code = m.partCode && !Data.isDummyCode(m.partCode) ? m.partCode : '';
+      const qty = blank ? '' : (rec && rec.qty != null ? rec.qty : '');
+      rows.push([
+        { v: code, t: 's', s: S_CELL },
+        { v: m.description, t: 's', s: S_CELL },
+        { v: stocktakeUnit(m), t: 's', s: S_CELL },
+        qty === '' ? { v: '', t: 's', s: S_QTY } : { v: qty, t: 'n', s: S_QTY },
+      ]);
+    }
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+    ws['!cols'] = [{ wch: 12 }, { wch: 40 }, { wch: 10 }, { wch: 9 }];
+    ws['!merges'] = merges;
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Stocktake');
+    const date = new Date().toISOString().slice(0, 10);
+    XLSX.writeFile(wb, `Stocktake${blank ? '_blank' : ''}_${date}.xlsx`);
   },
 
   // ══════════════════════════════════════════

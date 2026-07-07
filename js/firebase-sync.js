@@ -1,4 +1,4 @@
-// firebase-sync.js — v0.38.1
+// firebase-sync.js — v0.39
 let _db = null, _configured = false;
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -462,6 +462,76 @@ const DB = {
         updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
       });
     });
+  },
+
+  // ── MATERIAL STOCK (periodic stocktake — deliberately NOT live inventory) ──
+  // One doc per material keyed by stockId(item). Quantities only change through
+  // stocktake submissions from the materials page (set/add/subtract), so there's
+  // no per-job usage tracking to keep honest — it's a tax-time snapshot system.
+
+  listenMaterialStock(callback) {
+    if (!this.isReady()) return ()=>{};
+    return _db.collection('material_stock')
+      .onSnapshot(
+        snap => callback(snap.docs.map(d => ({ _id: d.id, ...d.data() }))),
+        err  => console.error('Material stock listen error:', err)
+      );
+  },
+
+  // Applies a stocktake submission: adjusts each item's material_stock doc per mode
+  // ('set' = counted absolute qty, 'add'/'subtract' = relative to recorded qty), then
+  // records the whole submission as one session in material_stocktakes for history.
+  // 'set' writes absolute values so it needs no reads — chunked batches keep a full
+  // 150+ item count fast; add/subtract read the current qty in a transaction each.
+  // items: [{ sid, partCode, description, category, subcategory, unit, qty }]
+  async applyStocktake(items, mode, countedBy, deviceName) {
+    if (!this.isReady()) throw new Error('Firebase not initialised');
+    const docFields = (item, qty) => ({
+      qty,
+      unit:        item.unit || '',
+      partCode:    item.partCode || '',
+      description: item.description || '',
+      category:    item.category || '',
+      subcategory: item.subcategory || '',
+      updatedBy:   countedBy || '',
+      updatedAt:   firebase.firestore.FieldValue.serverTimestamp(),
+    });
+    if (mode === 'set') {
+      for (let i = 0; i < items.length; i += 450) {
+        const batch = _db.batch();
+        for (const item of items.slice(i, i + 450)) {
+          batch.set(_db.collection('material_stock').doc(item.sid), docFields(item, item.qty), { merge: true });
+        }
+        await batch.commit();
+      }
+    } else {
+      for (const item of items) {
+        const ref = _db.collection('material_stock').doc(item.sid);
+        await _db.runTransaction(async tx => {
+          const doc = await tx.get(ref);
+          const current = doc.exists ? (doc.data().qty || 0) : 0;
+          const qty = mode === 'add'
+            ? Math.round((current + item.qty) * 100) / 100
+            : Math.max(0, Math.round((current - item.qty) * 100) / 100);
+          tx.set(ref, docFields(item, qty), { merge: true });
+        });
+      }
+    }
+    await _db.collection('material_stocktakes').add({
+      mode,
+      countedBy:   countedBy || '',
+      deviceName:  deviceName || '',
+      items:       items.map(({ sid, ...rest }) => rest),
+      submittedAt: firebase.firestore.FieldValue.serverTimestamp(),
+    });
+  },
+
+  // Stocktake session history, newest first (single-field orderBy — no index needed).
+  async fetchStocktakeSessions(limitN) {
+    if (!this.isReady()) throw new Error('Firebase not initialised');
+    const snap = await _db.collection('material_stocktakes')
+      .orderBy('submittedAt', 'desc').limit(limitN || 50).get();
+    return snap.docs.map(d => ({ _id: d.id, ...d.data() }));
   },
 
   // ── STOCK ─────────────────────────────────────────────────────────

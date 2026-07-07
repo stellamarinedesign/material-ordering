@@ -1,6 +1,6 @@
-// shared.js — v0.38.1
+// shared.js — v0.39
 
-const APP_VERSION = 'v0.38.1';
+const APP_VERSION = 'v0.39';
 
 // Numeric version comparison (handles "v0.9" vs "v0.10" correctly, unlike
 // plain string comparison). Returns true if `a` is strictly newer than `b`.
@@ -399,6 +399,14 @@ function stockId(item) {
   }
   // Fallback: first 40 chars of slugified description
   return item.description.toLowerCase().replace(/[^a-z0-9]+/g, '_').slice(0, 40);
+}
+
+// Stocktake counting unit — hard-coded rule for now: anything bought by the length
+// (round bar, box section, pipe/tube etc., i.e. qtyType Length or Metre) is counted
+// in metres; sheets/plates and per-each items are counted as-is. Decimals allowed.
+function stocktakeUnit(item) {
+  const qt = String(item.qtyType || '').toLowerCase();
+  return (qt === 'length' || qt === 'metre') ? 'Metre' : (item.qtyType || 'Each');
 }
 
 // Returns true if an item uses dual-unit (box) tracking
