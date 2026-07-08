@@ -85,6 +85,10 @@ const Manager = {
 
   // Materials stocktake tab state
   _stocktakeView:     'qty',   // 'qty' | 'history'
+  _stActiveCat:       null,    // category/subcategory tabs on the Quantities view
+  _stActiveSub:       null,
+  _stCats:            [],
+  _stSubs:            [],
   _matStock:          [],      // live material_stock records
   _unsubMatStockMgr:  null,
   _stSessions:        [],
@@ -450,6 +454,7 @@ const Manager = {
               </label>
             </div>
           </div>
+          <div id="stocktake-tabs-wrap"></div>
           <div class="search-bar" id="stocktake-search-bar"><div class="col"><div class="search-wrap">
             <i class="ti ti-search"></i>
             <input type="search" id="stocktake-search" placeholder="Search materials…" autocomplete="off">
@@ -622,6 +627,12 @@ const Manager = {
       this.renderStocktakeView();
     });
     document.getElementById('stocktake-search').addEventListener('input', () => this.renderStocktakeQty());
+    document.getElementById('stocktake-tabs-wrap').addEventListener('click', e => {
+      const c = e.target.closest('[data-st-cat-idx]');
+      const s = e.target.closest('[data-st-sub-idx]');
+      if (c) { const i=+c.dataset.stCatIdx; this.stqSetCat(i===-1?null:this._stCats[i]); }
+      else if (s) { const i=+s.dataset.stSubIdx; this.stqSetSub(i===-1?null:this._stSubs[i]); }
+    });
     document.getElementById('btn-st-export').addEventListener('click', () => this.exportStocktake(false));
     document.getElementById('btn-st-export-blank').addEventListener('click', () => this.exportStocktake(true));
     document.getElementById('stocktake-history-list').addEventListener('click', e => {
@@ -1385,49 +1396,57 @@ const Manager = {
     const histEl    = document.getElementById('stocktake-history-list');
     const searchBar = document.getElementById('stocktake-search-bar');
     const exportBar = document.getElementById('stocktake-export-bar');
+    const tabsWrap  = document.getElementById('stocktake-tabs-wrap');
     const isQty = this._stocktakeView === 'qty';
     if (qtyEl)     qtyEl.style.display     = isQty ? '' : 'none';
     if (histEl)    histEl.style.display    = isQty ? 'none' : '';
     if (searchBar) searchBar.style.display = isQty ? '' : 'none';
     if (exportBar) exportBar.style.display = isQty ? 'flex' : 'none';
-    if (isQty) this.renderStocktakeQty(); else this.renderStocktakeHistory();
+    if (tabsWrap)  tabsWrap.style.display  = isQty ? '' : 'none';
+    if (isQty) { this.renderStocktakeTabs(); this.renderStocktakeQty(); } else this.renderStocktakeHistory();
   },
 
   _stStockMap() { return new Map(this._matStock.map(r => [r._id, r])); },
 
+  // Category tabs + subcategory subtabs, exactly like the ordering menus.
+  renderStocktakeTabs() {
+    const wrap = document.getElementById('stocktake-tabs-wrap'); if (!wrap) return;
+    this._stCats = Data.categories(this.materials);
+    this._stSubs = this._stActiveCat ? Data.subcategories(this.materials, this._stActiveCat) : [];
+    const catBtns = this._stCats.map((c,i) => `<button class="tab ${this._stActiveCat===c?'active':''}" data-st-cat-idx="${i}">${esc(c)}</button>`).join('');
+    let subHtml = '';
+    if (this._stActiveCat && this._stSubs.length) {
+      const subBtns = this._stSubs.map((s,i) => `<button class="tab ${this._stActiveSub===s?'active':''}" data-st-sub-idx="${i}">${esc(s)}</button>`).join('');
+      subHtml = `<div class="tabs-bar sub-bar"><div class="tabs-inner"><button class="tab ${!this._stActiveSub?'active':''}" data-st-sub-idx="-1">All</button>${subBtns}</div></div>`;
+    }
+    wrap.innerHTML = `<div class="tabs-bar"><div class="tabs-inner"><button class="tab ${!this._stActiveCat?'active':''}" data-st-cat-idx="-1">All</button>${catBtns}</div></div>${subHtml}`;
+  },
+
+  stqSetCat(cat) { this._stActiveCat=cat; this._stActiveSub=null; this.renderStocktakeTabs(); this.renderStocktakeQty(); },
+  stqSetSub(sub) { this._stActiveSub=sub; this.renderStocktakeTabs(); this.renderStocktakeQty(); },
+
   renderStocktakeQty() {
     const el = document.getElementById('stocktake-qty-list'); if (!el) return;
-    const q = (document.getElementById('stocktake-search')?.value || '').toLowerCase();
+    const q = document.getElementById('stocktake-search')?.value || '';
     const stockMap = this._stStockMap();
-    // Order sections exactly like the ordering page's category view: categories in
-    // Data.categories() order, subcategories in Data.subcategories() order, items by
-    // description — rather than an independent natural sort of the flat list.
-    const match = m => !q || m.description.toLowerCase().includes(q) || (m.partCode||'').toLowerCase().includes(q);
-    const ordered = [];
-    for (const cat of Data.categories(this.materials)) {
-      for (const sub of Data.subcategories(this.materials, cat)) {
-        Data.filter(this.materials, cat, sub, '').filter(match).forEach(m => ordered.push(m));
-      }
-    }
-    if (!ordered.length) { el.innerHTML = `<div class="empty-state"><i class="ti ti-package-off"></i><p>No materials found.</p></div>`; return; }
-    let html = '', lastSection = null;
-    for (const m of ordered) {
-      const section = `${m.category}${m.subcategory && m.subcategory !== 'General' ? ' — ' + m.subcategory : ''}`;
-      if (section !== lastSection) { html += `<div class="stocktake-section">${esc(section)}</div>`; lastSection = section; }
+    // Same filtering/sorting engine as the ordering pages — active category/subcategory
+    // tabs + search, items sorted by description. No section headers; the tabs organise.
+    const filtered = Data.filter(this.materials, this._stActiveCat, this._stActiveSub, q);
+    if (!filtered.length) { el.innerHTML = `<div class="empty-state"><i class="ti ti-package-off"></i><p>No materials found.</p></div>`; return; }
+    el.innerHTML = filtered.map(m => {
       const rec = stockMap.get(stockId(m));
       const unit = stocktakeUnit(m);
       const showCode = m.partCode && !Data.isDummyCode(m.partCode);
       const counted = rec && rec.qty != null;
       const when = rec?.updatedAt?.toDate ? fmtTime(rec.updatedAt.toDate()) : '';
-      html += `<div class="stocktake-row">
+      return `<div class="stocktake-row">
         <div class="stocktake-row-info">
           <div class="stocktake-row-name">${esc(m.description)}</div>
           <div class="stocktake-row-meta">${showCode ? esc(m.partCode) + ' · ' : ''}${esc(unit)}${counted && when ? ` · counted ${when}${rec.updatedBy ? ' by ' + esc(rec.updatedBy) : ''}` : ''}</div>
         </div>
         <div class="stocktake-qty${counted ? '' : ' uncounted'}">${counted ? rec.qty + ' ' + esc(unit) : '—'}</div>
       </div>`;
-    }
-    el.innerHTML = html;
+    }).join('');
   },
 
   async renderStocktakeHistory() {
