@@ -34,23 +34,39 @@
     }
     .stocktake-btn .ti { font-size:16px; }
     .st-recorded { font-family:var(--mono); }
-    /* Stocktake mode must be unmistakable from ordering — the list itself reuses the
-       ordering cards, so the environment carries the signal: amber header band,
-       tinted background, mode-coloured banner, and an accent stripe on every card. */
-    #stocktake-panel { background:#fdf6ec; }
-    #stocktake-panel .panel-header { background:#b45309; border-bottom-color:#92400e; }
-    #stocktake-panel .panel-title { color:#fff; }
-    #stocktake-panel .panel-title .ti { vertical-align:-2px; margin-right:6px; }
-    #stocktake-panel .back-btn { color:rgba(255,255,255,0.92); }
-    #stocktake-panel .mat-card { border-left:4px solid #d97706; }
+    /* Stocktake MODE — the whole page switches (persisted until exited), so the
+       environment carries the signal: amber header, banner, tinted background,
+       accent stripe on every card. Nothing here can create an order. */
+    .app-root.stocktake-mode .header { background:#b45309; }
+    .app-root.stocktake-mode { background:#fdf6ec; }
+    .app-root.stocktake-mode .app-scroll { background:#fdf6ec; }
+    .app-root.stocktake-mode .mat-card { border-left:4px solid #d97706; }
     .st-mode-banner {
-      display:flex; align-items:center; gap:8px; padding:9px 16px;
+      display:none; align-items:center; gap:8px; padding:9px 16px;
       font-size:12.5px; font-weight:600; flex-shrink:0; letter-spacing:0.01em;
+      background:#fef3c7; color:#92400e; border-bottom:1px solid #fde68a;
     }
     .st-mode-banner .ti { font-size:15px; }
-    .st-mode-banner.set      { background:var(--blue-bg);  color:var(--blue-text); }
-    .st-mode-banner.add      { background:var(--green-bg); color:var(--green-text); }
-    .st-mode-banner.subtract { background:var(--red-bg);   color:var(--red-text); }
+    /* Per-row controls: stepper+tick on top, =/+/− mode segment underneath */
+    .st-controls { display:flex; flex-direction:column; align-items:flex-end; gap:5px; }
+    .st-ctrl-row { display:flex; align-items:center; gap:4px; }
+    .st-tick {
+      width:36px; height:32px; margin-left:4px; border-radius:var(--radius);
+      border:1px solid var(--border); background:var(--bg2); color:var(--text3);
+      display:flex; align-items:center; justify-content:center; font-size:16px;
+    }
+    .st-tick.ready { background:var(--green); border-color:var(--green); color:#fff; }
+    .st-tick:disabled { opacity:0.45; }
+    .st-mode-seg { display:flex; border:1px solid var(--border); border-radius:6px; overflow:hidden; }
+    .st-mode-opt {
+      width:36px; height:24px; background:var(--surface); border:none;
+      border-right:1px solid var(--border); font-size:13px; color:var(--text3);
+      font-family:var(--mono); display:flex; align-items:center; justify-content:center;
+    }
+    .st-mode-opt:last-child { border-right:none; }
+    .st-mode-opt.active.set      { background:var(--blue-bg);  color:var(--blue-text);  font-weight:700; }
+    .st-mode-opt.active.add      { background:var(--green-bg); color:var(--green-text); font-weight:700; }
+    .st-mode-opt.active.subtract { background:var(--red-bg);   color:var(--red-text);   font-weight:700; }
     /* Review overlay bits (same look as the consumables sign-out overlay) */
     .checkout-name-input {
       width:100%; border:1px solid var(--border); background:var(--bg);
@@ -85,17 +101,17 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
   _cats:      [],
   _subs:      [],
 
-  // Stocktake panel state — its own cart (decimals allowed: bar/pipe counted in
-  // metres) and category tabs, fully independent of the ordering flow.
+  // Stocktake MODE state — the whole page switches between ordering and counting.
+  // The flag persists in localStorage so a reload mid-count stays in stocktake mode.
+  // Counts are a separate cart (decimals allowed: bar/pipe counted in metres) with a
+  // per-item set/add/subtract mode; ticks record single items immediately.
+  _stocktakeMode: localStorage.getItem('mo_stocktake_mode') === '1',
   _st:            { _items: {} },   // id -> counted qty (float)
-  _stMode:        'set',            // 'set' | 'add' | 'subtract'
-  _stCat:         null,
-  _stSub:         null,
-  _stCats:        [],
-  _stSubs:        [],
+  _stModes:       {},               // id -> 'add' | 'subtract' (absent = 'set')
   _matStock:      [],               // live material_stock records
   _unsubMatStock: null,
-  _stBusy:        false,
+  _stBusy:        false,            // bulk-submit in-flight guard
+  _stTickBusy:    new Set(),        // per-item tick in-flight guards
 
   async init() {
     if ('serviceWorker' in navigator) {
@@ -204,7 +220,7 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
             </div>
             <div class="header-actions">
               <span class="device-chip">${esc(device)}</span>
-              <button class="stocktake-btn" id="btn-stocktake" title="Materials stocktake"><i class="ti ti-clipboard-list"></i> Stocktake</button>
+              <button class="stocktake-btn" id="btn-stocktake" title="Materials stocktake"><i class="ti ti-clipboard-list"></i> <span id="stocktake-btn-label">Stocktake</span></button>
               <button class="icon-btn" id="btn-settings" title="Settings"><i class="ti ti-settings"></i></button>
             </div>
           </div></div>
@@ -212,6 +228,8 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
 
         <div id="update-banner-wrap"></div>
         ${FirebaseConfig.isTestMode() ? '<div class="test-mode-banner"><i class="ti ti-flask"></i> Test mode — connected to test database</div>' : ''}
+
+        <div class="st-mode-banner" id="st-mode-banner"><i class="ti ti-clipboard-list"></i> <span>STOCKTAKE MODE — counting stock, not ordering. Nothing here creates an order.</span></div>
 
         <div id="tabs-wrap"></div>
 
@@ -228,13 +246,23 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
           </div>
         </div>
 
-        <div class="action-bar"><div class="action-bar-inner">
+        <div class="action-bar" id="order-actionbar"><div class="action-bar-inner">
           <button class="btn btn-danger" id="btn-clear-main">
             <i class="ti ti-x"></i> Clear order
           </button>
           <button class="btn btn-primary" id="btn-review" style="margin-top:2px">
             <i class="ti ti-clipboard-list"></i>Review order
             <span class="sidebar-count zero" id="order-badge" style="margin-left:4px">0</span>
+          </button>
+        </div></div>
+
+        <div class="action-bar" id="st-actionbar" style="display:none"><div class="action-bar-inner">
+          <button class="btn btn-danger" id="btn-st-clear">
+            <i class="ti ti-x"></i> Clear entered counts
+          </button>
+          <button class="btn btn-primary" id="btn-st-review" style="margin-top:2px">
+            <i class="ti ti-clipboard-check"></i>Review &amp; submit
+            <span class="sidebar-count zero" id="st-badge" style="margin-left:4px">0</span>
           </button>
         </div></div>
 
@@ -255,35 +283,6 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
             </button>
             <button class="btn btn-orange" id="btn-submit" style="margin-top:2px">
               <i class="ti ti-send"></i> Submit
-            </button>
-          </div></div>
-        </div>
-
-        <!-- STOCKTAKE PANEL — counts write to material_stock, never to orders -->
-        <div class="panel" id="stocktake-panel">
-          <div class="panel-header">
-            <button class="back-btn" id="btn-close-stocktake"><i class="ti ti-chevron-left"></i>Back</button>
-            <div class="panel-title"><i class="ti ti-clipboard-list"></i>Materials Stocktake</div>
-            <div class="panel-spacer"></div>
-          </div>
-          <div class="st-mode-banner set" id="st-mode-banner"></div>
-          <div class="col" style="padding-top:10px;padding-bottom:6px;flex-shrink:0">
-            <div class="intake-filter-bar" id="st-mode-bar">
-              <div class="intake-filter-chip active" data-st-mode="set"><i class="ti ti-clipboard-check"></i> Set counts</div>
-              <div class="intake-filter-chip" data-st-mode="add"><i class="ti ti-plus"></i> Add</div>
-              <div class="intake-filter-chip" data-st-mode="subtract"><i class="ti ti-minus"></i> Subtract</div>
-            </div>
-          </div>
-          <div id="st-tabs-wrap"></div>
-          <div class="search-bar"><div class="col"><div class="search-wrap">
-            <i class="ti ti-search"></i>
-            <input type="search" id="st-search" placeholder="Search materials…" autocomplete="off">
-          </div></div></div>
-          <div class="app-scroll" id="st-scroll"><div class="col"><div class="mat-list" id="st-mat-list"></div></div></div>
-          <div class="action-bar"><div class="action-bar-inner">
-            <button class="btn btn-danger" id="btn-st-clear"><i class="ti ti-x"></i> Clear counts</button>
-            <button class="btn btn-primary" id="btn-st-review" style="margin-top:2px"><i class="ti ti-clipboard-check"></i> Review &amp; submit
-              <span class="sidebar-count zero" id="st-badge" style="margin-left:4px">0</span>
             </button>
           </div></div>
         </div>
@@ -328,6 +327,7 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
     document.getElementById('search')          .addEventListener('input', () => this.renderList());
 
     document.getElementById('mat-list').addEventListener('click', e => {
+      // Order-mode controls
       const dec = e.target.closest('[data-dec]');
       const inc = e.target.closest('[data-inc]');
       const add = e.target.closest('[data-add]');
@@ -336,10 +336,21 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
       if (inc) { e.stopPropagation(); this.adj(+inc.dataset.inc,  1); }
       if (add) { e.stopPropagation(); this.quickAdd(+add.dataset.add); }
       if (bin) { e.stopPropagation(); this.zeroItem(+bin.dataset.bin); }
+      // Stocktake-mode controls (only present on stocktake cards)
+      const sdec = e.target.closest('[data-st-dec]');
+      const sinc = e.target.closest('[data-st-inc]');
+      const seg  = e.target.closest('[data-st-modeopt]');
+      const tick = e.target.closest('[data-st-tick]');
+      if (sdec) { e.stopPropagation(); this.stAdj(+sdec.dataset.stDec, -1); }
+      if (sinc) { e.stopPropagation(); this.stAdj(+sinc.dataset.stInc,  1); }
+      if (seg)  { e.stopPropagation(); this.stSetMode(+seg.dataset.stModeopt, seg.dataset.mode); }
+      if (tick) { e.stopPropagation(); this.stTickItem(+tick.dataset.stTick); }
     });
     document.getElementById('mat-list').addEventListener('change', e => {
-      const inp = e.target.closest('[data-qid]');
-      if (inp) this.setQty(+inp.dataset.qid, inp.value);
+      const inp  = e.target.closest('[data-qid]');
+      const sinp = e.target.closest('[data-st-qid]');
+      if (inp)  this.setQty(+inp.dataset.qid, inp.value);
+      if (sinp) this.stSetQty(+sinp.dataset.stQid, sinp.value);
     });
 
     document.getElementById('review-contents').addEventListener('click', e => {
@@ -362,45 +373,22 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
       else if (subBtn) { const i=+subBtn.dataset.subIdx; this.setSub(i===-1?null:this._subs[i]); }
     });
 
-    // ── Stocktake panel ──
-    document.getElementById('btn-stocktake')      .addEventListener('click', () => this.openStocktake());
-    document.getElementById('btn-close-stocktake').addEventListener('click', () => this.closePanel('stocktake-panel'));
-    document.getElementById('st-mode-bar').addEventListener('click', e => {
-      const chip = e.target.closest('[data-st-mode]'); if (!chip) return;
-      this._stMode = chip.dataset.stMode;
-      document.querySelectorAll('#st-mode-bar .intake-filter-chip').forEach(c => c.classList.toggle('active', c === chip));
-      this._updateStModeHint();
-    });
-    document.getElementById('st-tabs-wrap').addEventListener('click', e => {
-      const c = e.target.closest('[data-st-cat-idx]');
-      const s = e.target.closest('[data-st-sub-idx]');
-      if (c) { const i=+c.dataset.stCatIdx; this.stSetCat(i===-1?null:this._stCats[i]); }
-      else if (s) { const i=+s.dataset.stSubIdx; this.stSetSub(i===-1?null:this._stSubs[i]); }
-    });
-    document.getElementById('st-mat-list').addEventListener('click', e => {
-      const dec=e.target.closest('[data-st-dec]'), inc=e.target.closest('[data-st-inc]');
-      const add=e.target.closest('[data-st-add]'), bin=e.target.closest('[data-st-bin]');
-      if (dec) { e.stopPropagation(); this.stAdj(+dec.dataset.stDec, -1); }
-      if (inc) { e.stopPropagation(); this.stAdj(+inc.dataset.stInc,  1); }
-      if (add) { e.stopPropagation(); this.stQuickAdd(+add.dataset.stAdd); }
-      if (bin) { e.stopPropagation(); this.stZero(+bin.dataset.stBin); }
-    });
-    document.getElementById('st-mat-list').addEventListener('change', e => {
-      const inp = e.target.closest('[data-st-qid]'); if (inp) this.stSetQty(+inp.dataset.stQid, inp.value);
-    });
-    document.getElementById('st-search').addEventListener('input', () => this.renderStList());
+    // ── Stocktake mode (per-row controls handled in the mat-list listener above) ──
+    document.getElementById('btn-stocktake').addEventListener('click', () => this.toggleStocktakeMode());
     document.getElementById('btn-st-review').addEventListener('click', () => this.stOpenReview());
     document.getElementById('btn-st-clear').addEventListener('click', () => {
       if (!confirm('Clear all entered counts?')) return;
-      this._st._items = {};
-      this._updateStBadge(); this.renderStList();
+      this._st._items = {}; this._stModes = {};
+      this._updateStBadge(); this.renderList();
     });
 
     const _v=document.getElementById('app-version'); if(_v) _v.textContent=APP_VERSION;
     const _r=document.getElementById('order-ref'); if(_r) _r.textContent=this.orderRef;
+    this.applyStocktakeModeUI();   // restore stocktake mode if it was left on
     this.renderTabs();
     this.renderList();
     this.updateBadge();
+    this._updateStBadge();
   },
 
   // ── LIVE STATUS DOT (3-state: Live / Update Available / Offline) ──
@@ -478,7 +466,14 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
     const filtered=Data.filter(this.materials,this.activeCat,this.activeSub,q);
     const list=document.getElementById('mat-list'); if(!list) return;
     if(!filtered.length){list.innerHTML=`<div class="empty-state"><i class="ti ti-package-off"></i><p>No materials found.</p></div>`;return;}
-    list.innerHTML=filtered.map(m=>this._matCard(m)).join('');
+    if (this._stocktakeMode) {
+      const restoreFocus = captureInputFocus(); // live stock updates re-render mid-typing
+      const stockMap = new Map(this._matStock.map(r => [r._id, r]));
+      list.innerHTML = filtered.map(m => this._stCard(m, stockMap)).join('');
+      restoreFocus();
+    } else {
+      list.innerHTML=filtered.map(m=>this._matCard(m)).join('');
+    }
   },
 
   _matCard(m) {
@@ -499,6 +494,40 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
         <button class="add-btn ${inOrder?'in-order':''}" data-add="${m.id}">
           <i class="ti ${inOrder?'ti-check':'ti-plus'}"></i>
         </button>
+      </div>
+    </div>`;
+  },
+
+  // Stocktake card — same frame as an order card, but the controls submit counts.
+  // The tick (right of the stepper) is greyed until a qty is entered, then turns
+  // green; tapping it records that one item immediately (progressive counting).
+  // The =/+/− segment underneath sets this item's mode: = replace, + add, − subtract.
+  _stCard(m, stockMap) {
+    const qty  = this.stGet(m.id), hasQty = qty > 0;
+    const mode = this._stModes[m.id] || 'set';
+    const unit = stocktakeUnit(m);
+    const rec  = stockMap.get(stockId(m));
+    const ci   = CAT_ICONS[m.category] || CAT_ICONS.default;
+    const showCode = m.partCode && !Data.isDummyCode(m.partCode);
+    const recorded = rec && rec.qty != null ? `${rec.qty} ${esc(unit)} recorded` : 'not counted yet';
+    const seg = [['set','='],['add','+'],['subtract','−']].map(([mv,sym]) =>
+      `<button class="st-mode-opt ${mv}${mode===mv?' active':''}" data-st-modeopt="${m.id}" data-mode="${mv}" title="${mv==='set'?'Set counted total':mv==='add'?'Add to recorded':'Subtract from recorded'}">${sym}</button>`
+    ).join('');
+    return `<div class="mat-card ${hasQty?'in-order':''}">
+      <div class="mat-icon" style="background:${ci.bg}"><i class="ti ${ci.icon}" style="color:${ci.color}"></i></div>
+      <div class="mat-info">
+        <div class="mat-name">${esc(m.description)}</div>
+        ${showCode ? `<div class="mat-partcode">${esc(m.partCode)}</div>` : '<div class="mat-partcode"></div>'}
+        <div class="mat-unit">${esc(unit)} · <span class="st-recorded">${recorded}</span></div>
+      </div>
+      <div class="st-controls">
+        <div class="st-ctrl-row">
+          <button class="qty-btn" data-st-dec="${m.id}">−</button>
+          <input class="qty-input" type="number" min="0" step="0.1" value="${hasQty?qty:''}" placeholder="0" data-st-qid="${m.id}">
+          <button class="qty-btn" data-st-inc="${m.id}">+</button>
+          <button class="st-tick ${hasQty?'ready':''}" data-st-tick="${m.id}" ${hasQty?'':'disabled'} title="${hasQty?'Record this count now':'Enter a quantity first'}"><i class="ti ti-check"></i></button>
+        </div>
+        <div class="st-mode-seg">${seg}</div>
       </div>
     </div>`;
   },
@@ -659,40 +688,46 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
   },
 
   // ══════════════════════════════════════════
-  // STOCKTAKE — periodic count for tax purposes. Writes to material_stock and a
-  // material_stocktakes history session, never to orders. Bar/pipe (Length/Metre
-  // items) are counted in metres, sheets/plates per each — see stocktakeUnit().
+  // STOCKTAKE MODE — the whole materials page switches into counting. Writes to
+  // material_stock + a per-device-per-day material_stocktakes session, never to
+  // orders. Bar/pipe (Length/Metre) counted in metres, sheets/plates per each.
   // ══════════════════════════════════════════
   startMatStockListening() {
     if (this._unsubMatStock) this._unsubMatStock();
     this._unsubMatStock = DB.listenMaterialStock(recs => {
       this._matStock = recs;
-      if (document.getElementById('stocktake-panel')?.classList.contains('open')) this.renderStList();
+      if (this._stocktakeMode) this.renderList();  // refresh "recorded" figures live
     });
   },
 
-  openStocktake() {
-    this._stCat = null; this._stSub = null;
-    const s = document.getElementById('st-search'); if (s) s.value = '';
-    this._updateStModeHint();
-    this.renderStTabs(); this.renderStList(); this._updateStBadge();
-    this.openPanel('stocktake-panel');
+  toggleStocktakeMode() {
+    // Leaving with un-submitted counts would lose them (they're local only).
+    if (this._stocktakeMode && this.stCount() > 0) {
+      if (!confirm('You have counts that haven\'t been submitted yet. Leave stocktake mode and discard them?')) return;
+      this._st._items = {}; this._stModes = {};
+    }
+    this._stocktakeMode = !this._stocktakeMode;
+    localStorage.setItem('mo_stocktake_mode', this._stocktakeMode ? '1' : '0');
+    this.applyStocktakeModeUI();
+    this.renderList(); this._updateStBadge();
+    const s = document.getElementById('app-scroll'); if (s) s.scrollTop = 0;
   },
 
-  _updateStModeHint() {
-    const banners = {
-      set:      '<i class="ti ti-clipboard-check"></i> STOCKTAKE — entered quantities REPLACE the recorded stock. Nothing is ordered.',
-      add:      '<i class="ti ti-plus"></i> STOCKTAKE — entered quantities are ADDED to the recorded stock. Nothing is ordered.',
-      subtract: '<i class="ti ti-minus"></i> STOCKTAKE — entered quantities are SUBTRACTED from the recorded stock. Nothing is ordered.',
-    };
-    const el = document.getElementById('st-mode-banner');
-    if (el) {
-      el.className = `st-mode-banner ${this._stMode}`;
-      el.innerHTML = banners[this._stMode] || '';
-    }
+  // Flips the shell chrome (header colour, banner, action bar, button label) to
+  // match the current mode. Called on load too, so a persisted mode restores fully.
+  applyStocktakeModeUI() {
+    const on = this._stocktakeMode;
+    document.getElementById('app-root')?.classList.toggle('stocktake-mode', on);
+    const banner = document.getElementById('st-mode-banner'); if (banner) banner.style.display = on ? 'flex' : 'none';
+    const oab = document.getElementById('order-actionbar'); if (oab) oab.style.display = on ? 'none' : '';
+    const sab = document.getElementById('st-actionbar');    if (sab) sab.style.display = on ? '' : 'none';
+    const lbl = document.getElementById('stocktake-btn-label'); if (lbl) lbl.textContent = on ? 'Exit stocktake' : 'Stocktake';
+    const btn = document.getElementById('btn-stocktake'); if (btn) btn.title = on ? 'Exit stocktake mode' : 'Materials stocktake';
+    const search = document.getElementById('search'); if (search) search.placeholder = on ? 'Search materials to count…' : 'Search part code or description…';
   },
 
   stGet(id)      { return this._st._items[id] || 0; },
+  stModeOf(id)   { return this._stModes[id] || 'set'; },
   stSet(id, qty) {
     // Decimals allowed (metre counts like 2.4) — round to 2dp to absorb float noise.
     qty = Math.round((parseFloat(qty) || 0) * 100) / 100;
@@ -700,87 +735,69 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
   },
   stAdj(id, d)    { this.stSet(id, this.stGet(id) + d); this._stChanged(); },
   stSetQty(id, v) { this.stSet(id, v); this._stChanged(); },
-  stQuickAdd(id)  { if (!this.stGet(id)) this.stSet(id, 1); this._stChanged(); },
-  stZero(id)      { delete this._st._items[id]; this._stChanged(); },
+  stSetMode(id, mode) {
+    if (mode === 'set') delete this._stModes[id]; else this._stModes[id] = mode;
+    this.renderList();
+  },
   stCount()       { return Object.keys(this._st._items).length; },
+  _stPayload(m) {
+    return {
+      sid: stockId(m), partCode: m.partCode || '', description: m.description,
+      category: m.category, subcategory: m.subcategory,
+      unit: stocktakeUnit(m), qty: this.stGet(m.id), mode: this.stModeOf(m.id),
+    };
+  },
   stItems() {
     return Object.keys(this._st._items).map(id => {
       const m = this.materials.find(x => x.id == id);
-      return m ? { ...m, qty: this._st._items[id] } : null;
+      return m ? { ...m, qty: this._st._items[id], stMode: this.stModeOf(id) } : null;
     }).filter(Boolean);
   },
-  _stChanged() { this._updateStBadge(); this.renderStList(); },
+  _stChanged() { this._updateStBadge(); this.renderList(); },
   _updateStBadge() {
     const b = document.getElementById('st-badge'); if (!b) return;
     const n = this.stCount(); b.textContent = n; b.classList.toggle('zero', n === 0);
   },
 
-  renderStTabs() {
-    const wrap = document.getElementById('st-tabs-wrap'); if (!wrap) return;
-    this._stCats = Data.categories(this.materials);
-    this._stSubs = this._stCat ? Data.subcategories(this.materials, this._stCat) : [];
-    const catBtns = this._stCats.map((c,i)=>`<button class="tab ${this._stCat===c?'active':''}" data-st-cat-idx="${i}">${esc(c)}</button>`).join('');
-    let subHtml = '';
-    if (this._stCat && this._stSubs.length) {
-      const subBtns = this._stSubs.map((s,i)=>`<button class="tab ${this._stSub===s?'active':''}" data-st-sub-idx="${i}">${esc(s)}</button>`).join('');
-      subHtml = `<div class="tabs-bar sub-bar"><div class="tabs-inner"><button class="tab ${!this._stSub?'active':''}" data-st-sub-idx="-1">All</button>${subBtns}</div></div>`;
+  // Progressive tick — records ONE item immediately, then clears it from the cart.
+  // The material_stock listener refreshes its "recorded" figure a moment later.
+  async stTickItem(id) {
+    if (this._stTickBusy.has(id)) return;
+    if (this.stGet(id) <= 0) return;
+    if (this._connState.connected === false) {
+      alert("You're currently offline — counts can't be recorded without a connection."); return;
     }
-    wrap.innerHTML = `<div class="tabs-bar"><div class="tabs-inner"><button class="tab ${!this._stCat?'active':''}" data-st-cat-idx="-1">All</button>${catBtns}</div></div>${subHtml}`;
-  },
-  stSetCat(cat) { this._stCat=cat; this._stSub=null; this.renderStTabs(); this.renderStList(); const s=document.getElementById('st-scroll'); if(s)s.scrollTop=0; },
-  stSetSub(sub) { this._stSub=sub; this.renderStTabs(); this.renderStList(); },
-
-  renderStList() {
-    const list = document.getElementById('st-mat-list'); if (!list) return;
-    const q = document.getElementById('st-search')?.value || '';
-    const filtered = Data.filter(this.materials, this._stCat, this._stSub, q);
-    if (!filtered.length) { list.innerHTML = `<div class="empty-state"><i class="ti ti-package-off"></i><p>No materials found.</p></div>`; return; }
-    const restoreFocus = captureInputFocus(); // live stock updates re-render mid-typing
-    const stockMap = new Map(this._matStock.map(r => [r._id, r]));
-    list.innerHTML = filtered.map(m => {
-      const qty = this.stGet(m.id), inCount = qty > 0;
-      const unit = stocktakeUnit(m);
-      const rec = stockMap.get(stockId(m));
-      const ci = CAT_ICONS[m.category] || CAT_ICONS.default;
-      const showCode = m.partCode && !Data.isDummyCode(m.partCode);
-      return `<div class="mat-card ${inCount?'in-order':''}">
-        <button class="mat-bin" data-st-bin="${m.id}" aria-label="Remove"><i class="ti ti-trash"></i></button>
-        <div class="mat-icon" style="background:${ci.bg}"><i class="ti ${ci.icon}" style="color:${ci.color}"></i></div>
-        <div class="mat-info">
-          <div class="mat-name">${esc(m.description)}</div>
-          ${showCode ? `<div class="mat-partcode">${esc(m.partCode)}</div>` : '<div class="mat-partcode"></div>'}
-          <div class="mat-unit">${esc(unit)} · <span class="st-recorded">${rec && rec.qty != null ? rec.qty + ' recorded' : 'not counted yet'}</span></div>
-        </div>
-        <div class="mat-controls">
-          <button class="qty-btn" data-st-dec="${m.id}">−</button>
-          <input class="qty-input" type="number" min="0" step="0.1" value="${qty}" data-st-qid="${m.id}">
-          <button class="qty-btn" data-st-inc="${m.id}">+</button>
-          <button class="add-btn ${inCount?'in-order':''}" data-st-add="${m.id}"><i class="ti ${inCount?'ti-check':'ti-plus'}"></i></button>
-        </div>
-      </div>`;
-    }).join('');
-    restoreFocus();
+    const m = this.materials.find(x => x.id == id); if (!m) return;
+    this._stTickBusy.add(id);
+    try {
+      await DB.recordStocktake([this._stPayload(m)], DeviceName.get());
+      delete this._st._items[id]; delete this._stModes[id];
+      this._updateStBadge(); this.renderList();
+    } catch(e) {
+      alert('Could not record that count — please try again.\n\n' + e.message);
+    } finally { this._stTickBusy.delete(id); }
   },
 
   stOpenReview() {
     if (this.stCount() === 0) { alert('No counts entered yet.'); return; }
     const items = this.stItems();
-    const modeLabels = { set: 'Setting counted totals', add: 'Adding to recorded stock', subtract: 'Subtracting from recorded stock' };
-    const lines = items.map(i => `<div class="signout-item-row">
+    const modeChip = { set: ['=', 'var(--blue-text)'], add: ['+', 'var(--green-text)'], subtract: ['−', 'var(--red-text)'] };
+    const lines = items.map(i => {
+      const [sym, col] = modeChip[i.stMode] || modeChip.set;
+      return `<div class="signout-item-row">
         <div class="signout-item-info">
           <div class="signout-item-name">${esc(i.description)}</div>
-          <div class="signout-item-unit">${i.qty} ${esc(stocktakeUnit(i))}</div>
+          <div class="signout-item-unit"><span style="color:${col};font-weight:600">${sym} ${i.qty} ${esc(stocktakeUnit(i))}</span></div>
         </div>
-      </div>`).join('');
+      </div>`;
+    }).join('');
     const ow = document.getElementById('overlay-wrap');
     ow.innerHTML = `
       <div class="success-overlay">
         <div class="success-card signout-card">
           <div class="success-icon blue"><i class="ti ti-clipboard-check"></i></div>
           <h3>Submit stocktake</h3>
-          <p style="margin-bottom:8px">${modeLabels[this._stMode]} — ${items.length} item${items.length!==1?'s':''}.</p>
-          <input class="checkout-name-input" type="text" id="st-counted-by" placeholder="Counted by (your name)" autocomplete="off"
-            value="${esc(localStorage.getItem('mo_stocktake_name') || '')}" style="margin:4px 0 10px">
+          <p style="margin-bottom:8px">${items.length} item${items.length!==1?'s':''} · recorded as <strong>${esc(DeviceName.get())}</strong></p>
           <div class="signout-item-list">${lines}</div>
           <button class="btn btn-primary" id="btn-st-confirm" style="width:100%;margin-top:12px"><i class="ti ti-check"></i> Confirm stocktake</button>
           <button class="btn btn-outline" id="btn-st-cancel" style="width:100%;margin-top:8px">Cancel</button>
@@ -792,8 +809,6 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
 
   async _doStSubmit() {
     if (this._stBusy) return; // double-tap guard
-    const name = document.getElementById('st-counted-by')?.value.trim();
-    if (!name) { alert('Please enter your name.'); return; }
     const items = this.stItems();
     if (!items.length) { document.getElementById('overlay-wrap').innerHTML=''; return; }
     if (this._connState.connected === false) {
@@ -803,20 +818,16 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
     const btn = document.getElementById('btn-st-confirm');
     if (btn) { btn.disabled = true; btn.innerHTML = '<i class="ti ti-loader" style="animation:spin 1s linear infinite"></i> Submitting…'; }
     try {
-      await DB.applyStocktake(items.map(m => ({
-        sid: stockId(m), partCode: m.partCode || '', description: m.description,
-        category: m.category, subcategory: m.subcategory, unit: stocktakeUnit(m), qty: m.qty,
-      })), this._stMode, name, DeviceName.get());
-      localStorage.setItem('mo_stocktake_name', name);
-      this._st._items = {};
-      this._updateStBadge(); this.renderStList();
+      await DB.recordStocktake(items.map(m => this._stPayload(m)), DeviceName.get());
+      this._st._items = {}; this._stModes = {};
+      this._updateStBadge(); this.renderList();
       const ow = document.getElementById('overlay-wrap');
       ow.innerHTML = `
         <div class="success-overlay">
           <div class="success-card">
             <div class="success-icon green"><i class="ti ti-circle-check"></i></div>
             <h3>Stocktake submitted!</h3>
-            <p>${items.length} item${items.length!==1?'s':''} recorded. Thanks, ${esc(name)}.</p>
+            <p>${items.length} item${items.length!==1?'s':''} recorded.</p>
             <button class="btn btn-primary" id="btn-st-done">Done</button>
           </div>
         </div>`;

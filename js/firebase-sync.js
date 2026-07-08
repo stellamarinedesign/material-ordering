@@ -1,4 +1,4 @@
-// firebase-sync.js — v0.39
+// firebase-sync.js — v0.40
 let _db = null, _configured = false;
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -478,51 +478,56 @@ const DB = {
       );
   },
 
-  // Applies a stocktake submission: adjusts each item's material_stock doc per mode
-  // ('set' = counted absolute qty, 'add'/'subtract' = relative to recorded qty), then
-  // records the whole submission as one session in material_stocktakes for history.
-  // 'set' writes absolute values so it needs no reads — chunked batches keep a full
-  // 150+ item count fast; add/subtract read the current qty in a transaction each.
-  // items: [{ sid, partCode, description, category, subcategory, unit, qty }]
-  async applyStocktake(items, mode, countedBy, deviceName) {
+  // Records a stocktake — one item (progressive tick) or many (Review & submit).
+  // Each item carries its OWN mode: 'set' replaces the recorded qty, 'add'/'subtract'
+  // move it relative to what's there. Adjustments read current qty in a transaction.
+  // The submission is merged into ONE session doc per device per day (id
+  // "<deviceSlug>-<YYYY-MM-DD>", items keyed by sid, latest count wins) so a day of
+  // ticks + submits reads as a single history row rather than flooding it.
+  // items: [{ sid, partCode, description, category, subcategory, unit, qty, mode }]
+  async recordStocktake(items, deviceName) {
     if (!this.isReady()) throw new Error('Firebase not initialised');
-    const docFields = (item, qty) => ({
-      qty,
-      unit:        item.unit || '',
-      partCode:    item.partCode || '',
-      description: item.description || '',
-      category:    item.category || '',
-      subcategory: item.subcategory || '',
-      updatedBy:   countedBy || '',
-      updatedAt:   firebase.firestore.FieldValue.serverTimestamp(),
-    });
-    if (mode === 'set') {
-      for (let i = 0; i < items.length; i += 450) {
-        const batch = _db.batch();
-        for (const item of items.slice(i, i + 450)) {
-          batch.set(_db.collection('material_stock').doc(item.sid), docFields(item, item.qty), { merge: true });
-        }
-        await batch.commit();
-      }
-    } else {
+    for (const item of items) {
+      const ref = _db.collection('material_stock').doc(item.sid);
+      await _db.runTransaction(async tx => {
+        const doc = await tx.get(ref);
+        const current = doc.exists ? (doc.data().qty || 0) : 0;
+        let qty;
+        if (item.mode === 'add')           qty = Math.round((current + item.qty) * 100) / 100;
+        else if (item.mode === 'subtract') qty = Math.max(0, Math.round((current - item.qty) * 100) / 100);
+        else                               qty = item.qty;
+        tx.set(ref, {
+          qty,
+          unit:        item.unit || '',
+          partCode:    item.partCode || '',
+          description: item.description || '',
+          category:    item.category || '',
+          subcategory: item.subcategory || '',
+          updatedBy:   deviceName || '',
+          updatedAt:   firebase.firestore.FieldValue.serverTimestamp(),
+        }, { merge: true });
+      });
+    }
+    const d = new Date();
+    const dateStr = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    const slug = String(deviceName || 'device').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '').slice(0, 30) || 'device';
+    const sessRef = _db.collection('material_stocktakes').doc(`${slug}-${dateStr}`);
+    await _db.runTransaction(async tx => {
+      const doc = await tx.get(sessRef);
+      const bySid = new Map((doc.exists ? (doc.data().items || []) : []).map(i => [i.sid, i]));
       for (const item of items) {
-        const ref = _db.collection('material_stock').doc(item.sid);
-        await _db.runTransaction(async tx => {
-          const doc = await tx.get(ref);
-          const current = doc.exists ? (doc.data().qty || 0) : 0;
-          const qty = mode === 'add'
-            ? Math.round((current + item.qty) * 100) / 100
-            : Math.max(0, Math.round((current - item.qty) * 100) / 100);
-          tx.set(ref, docFields(item, qty), { merge: true });
+        bySid.set(item.sid, {
+          sid: item.sid, partCode: item.partCode || '', description: item.description || '',
+          category: item.category || '', subcategory: item.subcategory || '',
+          unit: item.unit || '', qty: item.qty, mode: item.mode || 'set',
         });
       }
-    }
-    await _db.collection('material_stocktakes').add({
-      mode,
-      countedBy:   countedBy || '',
-      deviceName:  deviceName || '',
-      items:       items.map(({ sid, ...rest }) => rest),
-      submittedAt: firebase.firestore.FieldValue.serverTimestamp(),
+      // submittedAt tracks last activity so history sorts newest-first without an index.
+      tx.set(sessRef, {
+        deviceName: deviceName || '', date: dateStr,
+        items: [...bySid.values()],
+        submittedAt: firebase.firestore.FieldValue.serverTimestamp(),
+      }, { merge: true });
     });
   },
 
