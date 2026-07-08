@@ -84,8 +84,8 @@ const Manager = {
   _opBusy:            new Set(),
 
   // Materials stocktake tab state
-  _stocktakeView:     'qty',   // 'qty' | 'history'
-  _stActiveCat:       null,    // category/subcategory tabs on the Quantities view
+  _stocktakeView:     'qty',   // 'qty' | 'count' | 'history'
+  _stActiveCat:       null,    // category/subcategory tabs (shared by Quantities + Count)
   _stActiveSub:       null,
   _stCats:            [],
   _stSubs:            [],
@@ -95,6 +95,11 @@ const Manager = {
   _stSessionsLoaded:  false,
   _stSessionsLoading: false,
   _openStSessions:    new Set(),
+  // Manager-side counting cart (Count sub-tab) — mirrors the worker page's stocktake
+  _mstCart:           {},      // id -> counted qty (float)
+  _mstModes:          {},      // id -> 'add' | 'subtract' (absent = 'set')
+  _mstBusy:           false,   // bulk-submit guard
+  _mstTickBusy:       new Set(),
 
   // Receive Stock panel state
   _receive:           { _items: {} },
@@ -443,6 +448,7 @@ const Manager = {
           <div class="col" style="padding-top:10px;padding-bottom:0;flex-shrink:0">
             <div class="intake-filter-bar" id="stocktake-filter">
               <div class="intake-filter-chip active" data-st-view="qty"><i class="ti ti-list-numbers"></i> Quantities</div>
+              <div class="intake-filter-chip" data-st-view="count"><i class="ti ti-clipboard-check"></i> Count</div>
               <div class="intake-filter-chip" data-st-view="history"><i class="ti ti-history"></i> History</div>
             </div>
             <div id="stocktake-export-bar" style="display:flex;align-items:center;gap:12px;padding:8px 0 2px;flex-wrap:wrap">
@@ -453,6 +459,13 @@ const Manager = {
                 Group by category &amp; subcategory
               </label>
             </div>
+            <div id="stocktake-count-bar" style="display:none;align-items:center;gap:12px;padding:8px 0 2px;flex-wrap:wrap">
+              <button class="btn-sm btn-sm-save" id="btn-mst-review"><i class="ti ti-clipboard-check"></i> Review &amp; submit
+                <span class="sidebar-count zero" id="mst-badge" style="margin-left:4px">0</span>
+              </button>
+              <button class="btn-sm" id="btn-mst-clear"><i class="ti ti-x"></i> Clear counts</button>
+              <span style="font-size:12px;color:var(--text3)">Tick each item as you count · = set · + add · − subtract</span>
+            </div>
           </div>
           <div id="stocktake-tabs-wrap"></div>
           <div class="search-bar" id="stocktake-search-bar"><div class="col"><div class="search-wrap">
@@ -461,6 +474,7 @@ const Manager = {
           </div></div></div>
           <div class="app-scroll"><div class="col">
             <div id="stocktake-qty-list"></div>
+            <div class="mat-list" id="stocktake-count-list" style="display:none"></div>
             <div id="stocktake-history-list" style="display:none"></div>
           </div></div>
         </div>
@@ -626,7 +640,7 @@ const Manager = {
       document.querySelectorAll('#stocktake-filter .intake-filter-chip').forEach(c => c.classList.toggle('active', c === chip));
       this.renderStocktakeView();
     });
-    document.getElementById('stocktake-search').addEventListener('input', () => this.renderStocktakeQty());
+    document.getElementById('stocktake-search').addEventListener('input', () => this._renderStActiveList());
     document.getElementById('stocktake-tabs-wrap').addEventListener('click', e => {
       const c = e.target.closest('[data-st-cat-idx]');
       const s = e.target.closest('[data-st-sub-idx]');
@@ -640,6 +654,26 @@ const Manager = {
       const id = sess.dataset.stSession;
       if (this._openStSessions.has(id)) this._openStSessions.delete(id); else this._openStSessions.add(id);
       this.renderStocktakeHistory();
+    });
+    // Manager Count sub-tab — per-item set/add/subtract + progressive tick (mirrors worker)
+    document.getElementById('stocktake-count-list').addEventListener('click', e => {
+      const dec  = e.target.closest('[data-mst-dec]');
+      const inc  = e.target.closest('[data-mst-inc]');
+      const seg  = e.target.closest('[data-mst-modeopt]');
+      const tick = e.target.closest('[data-mst-tick]');
+      if (dec)  { e.stopPropagation(); this.mstAdj(+dec.dataset.mstDec, -1); }
+      if (inc)  { e.stopPropagation(); this.mstAdj(+inc.dataset.mstInc,  1); }
+      if (seg)  { e.stopPropagation(); this.mstSetMode(+seg.dataset.mstModeopt, seg.dataset.mode); }
+      if (tick) { e.stopPropagation(); this.mstTickItem(+tick.dataset.mstTick); }
+    });
+    document.getElementById('stocktake-count-list').addEventListener('change', e => {
+      const inp = e.target.closest('[data-mst-qid]'); if (inp) this.mstSetQty(+inp.dataset.mstQid, inp.value);
+    });
+    document.getElementById('btn-mst-review').addEventListener('click', () => this.mstOpenReview());
+    document.getElementById('btn-mst-clear').addEventListener('click', () => {
+      if (!confirm('Clear all entered counts?')) return;
+      this._mstCart = {}; this._mstModes = {};
+      this._updateMstBadge(); this.renderStocktakeCount();
     });
 
     // Filter chips for intake views
@@ -1379,31 +1413,38 @@ const Manager = {
   },
 
   // ══════════════════════════════════════════
-  // MATERIALS STOCKTAKE — Quantities / History sub-tabs + Excel exports.
-  // Quantities come from material_stock (written only by stocktake submissions
-  // from the materials page); History lists material_stocktakes sessions.
+  // MATERIALS STOCKTAKE — Quantities / Count / History sub-tabs + Excel exports.
+  // Quantities + Count come from material_stock (Count also writes it, like the
+  // worker page); History lists material_stocktakes sessions.
   // ══════════════════════════════════════════
   startMatStockListening() {
     if (this._unsubMatStockMgr) this._unsubMatStockMgr();
     this._unsubMatStockMgr = DB.listenMaterialStock(recs => {
       this._matStock = recs;
-      if (this.mainTab === 'stocktake' && this._stocktakeView === 'qty') this.renderStocktakeQty();
+      if (this.mainTab === 'stocktake' && this._stocktakeView !== 'history') this._renderStActiveList();
     });
   },
 
   renderStocktakeView() {
-    const qtyEl     = document.getElementById('stocktake-qty-list');
-    const histEl    = document.getElementById('stocktake-history-list');
-    const searchBar = document.getElementById('stocktake-search-bar');
-    const exportBar = document.getElementById('stocktake-export-bar');
-    const tabsWrap  = document.getElementById('stocktake-tabs-wrap');
-    const isQty = this._stocktakeView === 'qty';
-    if (qtyEl)     qtyEl.style.display     = isQty ? '' : 'none';
-    if (histEl)    histEl.style.display    = isQty ? 'none' : '';
-    if (searchBar) searchBar.style.display = isQty ? '' : 'none';
-    if (exportBar) exportBar.style.display = isQty ? 'flex' : 'none';
-    if (tabsWrap)  tabsWrap.style.display  = isQty ? '' : 'none';
-    if (isQty) { this.renderStocktakeTabs(); this.renderStocktakeQty(); } else this.renderStocktakeHistory();
+    const view = this._stocktakeView;
+    const isQty = view === 'qty', isCount = view === 'count', isHist = view === 'history';
+    const set = (id, show, disp='') => { const el = document.getElementById(id); if (el) el.style.display = show ? disp : 'none'; };
+    set('stocktake-qty-list',     isQty);
+    set('stocktake-count-list',   isCount);
+    set('stocktake-history-list', isHist);
+    set('stocktake-export-bar',   isQty, 'flex');
+    set('stocktake-count-bar',    isCount, 'flex');
+    set('stocktake-search-bar',   !isHist);   // tabs + search on both Quantities and Count
+    set('stocktake-tabs-wrap',    !isHist);
+    if (isHist) { this.renderStocktakeHistory(); }
+    else { this.renderStocktakeTabs(); this._renderStActiveList(); }
+  },
+
+  // Renders whichever list (Quantities or Count) is active — shared by tabs, search
+  // and the live material_stock listener so all three stay in sync.
+  _renderStActiveList() {
+    if (this._stocktakeView === 'count') this.renderStocktakeCount();
+    else this.renderStocktakeQty();
   },
 
   _stStockMap() { return new Map(this._matStock.map(r => [r._id, r])); },
@@ -1422,8 +1463,8 @@ const Manager = {
     wrap.innerHTML = `<div class="tabs-bar"><div class="tabs-inner"><button class="tab ${!this._stActiveCat?'active':''}" data-st-cat-idx="-1">All</button>${catBtns}</div></div>${subHtml}`;
   },
 
-  stqSetCat(cat) { this._stActiveCat=cat; this._stActiveSub=null; this.renderStocktakeTabs(); this.renderStocktakeQty(); },
-  stqSetSub(sub) { this._stActiveSub=sub; this.renderStocktakeTabs(); this.renderStocktakeQty(); },
+  stqSetCat(cat) { this._stActiveCat=cat; this._stActiveSub=null; this.renderStocktakeTabs(); this._renderStActiveList(); },
+  stqSetSub(sub) { this._stActiveSub=sub; this.renderStocktakeTabs(); this._renderStActiveList(); },
 
   renderStocktakeQty() {
     const el = document.getElementById('stocktake-qty-list'); if (!el) return;
@@ -1447,6 +1488,146 @@ const Manager = {
         <div class="stocktake-qty${counted ? '' : ' uncounted'}">${counted ? rec.qty + ' ' + esc(unit) : '—'}</div>
       </div>`;
     }).join('');
+  },
+
+  // ── COUNT sub-tab (manager does the counting, same as the worker page) ──
+  // Recorded against the manager name; per-item set/add/subtract; a green tick
+  // records one item immediately, Review & submit posts several at once.
+  _mstCountedBy() { const s = Settings.get(); return (s.managerName || 'Manager').trim() || 'Manager'; },
+  mstGet(id)    { return this._mstCart[id] || 0; },
+  mstModeOf(id) { return this._mstModes[id] || 'set'; },
+  mstSet(id, qty) {
+    qty = Math.round((parseFloat(qty) || 0) * 100) / 100; // decimals allowed (metres)
+    if (qty <= 0) delete this._mstCart[id]; else this._mstCart[id] = qty;
+  },
+  mstAdj(id, d)    { this.mstSet(id, this.mstGet(id) + d); this._mstChanged(); },
+  mstSetQty(id, v) { this.mstSet(id, v); this._mstChanged(); },
+  mstSetMode(id, mode) { if (mode === 'set') delete this._mstModes[id]; else this._mstModes[id] = mode; this.renderStocktakeCount(); },
+  mstCount()    { return Object.keys(this._mstCart).length; },
+  _mstPayload(m) {
+    return {
+      sid: stockId(m), partCode: m.partCode || '', description: m.description,
+      category: m.category, subcategory: m.subcategory,
+      unit: stocktakeUnit(m), qty: this.mstGet(m.id), mode: this.mstModeOf(m.id),
+    };
+  },
+  mstItems() {
+    return Object.keys(this._mstCart).map(id => {
+      const m = this.materials.find(x => x.id == id);
+      return m ? { ...m, qty: this._mstCart[id], stMode: this.mstModeOf(id) } : null;
+    }).filter(Boolean);
+  },
+  _mstChanged() { this._updateMstBadge(); this.renderStocktakeCount(); },
+  _updateMstBadge() {
+    const b = document.getElementById('mst-badge'); if (!b) return;
+    const n = this.mstCount(); b.textContent = n; b.classList.toggle('zero', n === 0);
+  },
+
+  renderStocktakeCount() {
+    const el = document.getElementById('stocktake-count-list'); if (!el) return;
+    const q = document.getElementById('stocktake-search')?.value || '';
+    const stockMap = this._stStockMap();
+    const filtered = Data.filter(this.materials, this._stActiveCat, this._stActiveSub, q);
+    if (!filtered.length) { el.innerHTML = `<div class="empty-state"><i class="ti ti-package-off"></i><p>No materials found.</p></div>`; return; }
+    const restoreFocus = captureInputFocus(); // live stock updates re-render mid-typing
+    el.innerHTML = filtered.map(m => {
+      const qty = this.mstGet(m.id), hasQty = qty > 0;
+      const mode = this.mstModeOf(m.id);
+      const unit = stocktakeUnit(m);
+      const rec = stockMap.get(stockId(m));
+      const showCode = m.partCode && !Data.isDummyCode(m.partCode);
+      const recorded = rec && rec.qty != null ? `${rec.qty} ${esc(unit)} recorded` : 'not counted yet';
+      const seg = [['set','='],['add','+'],['subtract','−']].map(([mv,sym]) =>
+        `<button class="st-mode-opt ${mv}${mode===mv?' active':''}" data-mst-modeopt="${m.id}" data-mode="${mv}" title="${mv==='set'?'Set counted total':mv==='add'?'Add to recorded':'Subtract from recorded'}">${sym}</button>`
+      ).join('');
+      return `<div class="mat-card ${hasQty?'in-order':''}">
+        <div class="mat-icon" style="background:${(CAT_ICONS[m.category]||CAT_ICONS.default).bg}"><i class="ti ${(CAT_ICONS[m.category]||CAT_ICONS.default).icon}" style="color:${(CAT_ICONS[m.category]||CAT_ICONS.default).color}"></i></div>
+        <div class="mat-info">
+          <div class="mat-name">${esc(m.description)}</div>
+          ${showCode ? `<div class="mat-partcode">${esc(m.partCode)}</div>` : '<div class="mat-partcode"></div>'}
+          <div class="mat-unit">${esc(unit)} · <span class="st-recorded">${recorded}</span></div>
+        </div>
+        <div class="st-controls">
+          <div class="st-ctrl-row">
+            <button class="qty-btn" data-mst-dec="${m.id}">−</button>
+            <input class="qty-input" type="number" min="0" step="0.1" value="${hasQty?qty:''}" placeholder="0" data-mst-qid="${m.id}">
+            <button class="qty-btn" data-mst-inc="${m.id}">+</button>
+            <button class="st-tick ${hasQty?'ready':''}" data-mst-tick="${m.id}" ${hasQty?'':'disabled'} title="${hasQty?'Record this count now':'Enter a quantity first'}"><i class="ti ti-check"></i></button>
+          </div>
+          <div class="st-mode-seg">${seg}</div>
+        </div>
+      </div>`;
+    }).join('');
+    restoreFocus();
+  },
+
+  async mstTickItem(id) {
+    if (this._mstTickBusy.has(id)) return;
+    if (this.mstGet(id) <= 0) return;
+    if (this._connState.connected === false) { alert("You're currently offline — counts can't be recorded without a connection."); return; }
+    const m = this.materials.find(x => x.id == id); if (!m) return;
+    this._mstTickBusy.add(id);
+    try {
+      await DB.recordStocktake([this._mstPayload(m)], this._mstCountedBy());
+      delete this._mstCart[id]; delete this._mstModes[id];
+      this._updateMstBadge(); this.renderStocktakeCount();
+    } catch(e) {
+      alert('Could not record that count — please try again.\n\n' + e.message);
+    } finally { this._mstTickBusy.delete(id); }
+  },
+
+  mstOpenReview() {
+    if (this.mstCount() === 0) { alert('No counts entered yet.'); return; }
+    const items = this.mstItems();
+    const modeChip = { set: ['=', 'var(--blue-text)'], add: ['+', 'var(--green-text)'], subtract: ['−', 'var(--red-text)'] };
+    const lines = items.map(i => {
+      const [sym, col] = modeChip[i.stMode] || modeChip.set;
+      return `<div class="stocktake-row"><div class="stocktake-row-info"><div class="stocktake-row-name">${esc(i.description)}</div></div>
+        <div class="stocktake-qty" style="color:${col}">${sym} ${i.qty} ${esc(stocktakeUnit(i))}</div></div>`;
+    }).join('');
+    const ow = document.getElementById('overlay-wrap');
+    ow.innerHTML = `
+      <div class="success-overlay">
+        <div class="success-card" style="max-width:420px">
+          <div class="success-icon blue"><i class="ti ti-clipboard-check"></i></div>
+          <h3>Submit stocktake</h3>
+          <p style="margin-bottom:8px">${items.length} item${items.length!==1?'s':''} · recorded as <strong>${esc(this._mstCountedBy())}</strong></p>
+          <div style="display:flex;flex-direction:column;gap:6px;max-height:300px;overflow-y:auto;text-align:left;margin-bottom:12px">${lines}</div>
+          <button class="btn btn-primary" id="btn-mst-confirm" style="width:100%"><i class="ti ti-check"></i> Confirm stocktake</button>
+          <button class="btn btn-outline" id="btn-mst-cancel" style="width:100%;margin-top:8px">Cancel</button>
+        </div>
+      </div>`;
+    document.getElementById('btn-mst-confirm').addEventListener('click', () => this._mstSubmit());
+    document.getElementById('btn-mst-cancel').addEventListener('click', () => { ow.innerHTML=''; });
+  },
+
+  async _mstSubmit() {
+    if (this._mstBusy) return;
+    const items = this.mstItems();
+    if (!items.length) { document.getElementById('overlay-wrap').innerHTML=''; return; }
+    if (this._connState.connected === false) { alert("You're currently offline — stocktakes can't be submitted without a connection."); return; }
+    this._mstBusy = true;
+    const btn = document.getElementById('btn-mst-confirm');
+    if (btn) { btn.disabled = true; btn.innerHTML = '<i class="ti ti-loader" style="animation:spin 1s linear infinite"></i> Submitting…'; }
+    try {
+      await DB.recordStocktake(items.map(m => this._mstPayload(m)), this._mstCountedBy());
+      this._mstCart = {}; this._mstModes = {};
+      this._updateMstBadge(); this.renderStocktakeCount();
+      const ow = document.getElementById('overlay-wrap');
+      ow.innerHTML = `
+        <div class="success-overlay">
+          <div class="success-card">
+            <div class="success-icon green"><i class="ti ti-circle-check"></i></div>
+            <h3>Stocktake submitted!</h3>
+            <p>${items.length} item${items.length!==1?'s':''} recorded.</p>
+            <button class="btn btn-primary" id="btn-mst-done">Done</button>
+          </div>
+        </div>`;
+      document.getElementById('btn-mst-done').addEventListener('click', () => { ow.innerHTML=''; });
+    } catch(e) {
+      if (btn) { btn.disabled = false; btn.innerHTML = '<i class="ti ti-check"></i> Confirm stocktake'; }
+      alert('Submit failed — please try again.\n\n' + e.message);
+    } finally { this._mstBusy = false; }
   },
 
   async renderStocktakeHistory() {

@@ -671,6 +671,29 @@ button { cursor: pointer; }
   background: var(--bg2); color: var(--text2); cursor: pointer;
 }
 
+/* ═══ STOCKTAKE COUNTING CONTROLS (manager Count sub-tab; worker page has its
+   own inline copy) — stepper + green progressive tick, and =/+/− mode segment ═══ */
+.st-recorded { font-family: var(--mono); }
+.st-controls { display: flex; flex-direction: column; align-items: flex-end; gap: 5px; }
+.st-ctrl-row { display: flex; align-items: center; gap: 4px; }
+.st-tick {
+  width: 36px; height: 32px; margin-left: 4px; border-radius: var(--radius);
+  border: 1px solid var(--border); background: var(--bg2); color: var(--text3);
+  display: flex; align-items: center; justify-content: center; font-size: 16px;
+}
+.st-tick.ready { background: var(--green); border-color: var(--green); color: #fff; }
+.st-tick:disabled { opacity: 0.45; }
+.st-mode-seg { display: flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.st-mode-opt {
+  width: 36px; height: 24px; background: var(--surface); border: none;
+  border-right: 1px solid var(--border); font-size: 13px; color: var(--text3);
+  font-family: var(--mono); display: flex; align-items: center; justify-content: center; cursor: pointer;
+}
+.st-mode-opt:last-child { border-right: none; }
+.st-mode-opt.active.set      { background: var(--blue-bg);  color: var(--blue-text);  font-weight: 700; }
+.st-mode-opt.active.add      { background: var(--green-bg); color: var(--green-text); font-weight: 700; }
+.st-mode-opt.active.subtract { background: var(--red-bg);   color: var(--red-text);   font-weight: 700; }
+
 /* ═══ MATERIALS STOCKTAKE (manager tab) ═══ */
 .stocktake-section {
   font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase;

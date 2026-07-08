@@ -1,0 +1,56 @@
+rules_version = '2';
+
+// ─────────────────────────────────────────────────────────────────────────
+// Firestore security rules — reference copy, kept in the repo so the rules
+// are versioned alongside the code. This file does NOT auto-deploy: after
+// editing it, paste the contents into the Firebase console (Firestore
+// Database → Rules → Publish), or deploy with the Firebase CLI
+// (`firebase deploy --only firestore:rules`).
+//
+// SECURITY MODEL: these collections use `allow read, write: if true` because
+// the app has no per-user login — access is gated by Firebase App Check
+// (reCAPTCHA v3, enforced; see APPCHECK_SITE_KEY in js/firebase-sync.js) plus
+// the Firebase config being distributed only to authorised workshop devices.
+// App Check is the real gate here, not the rules. Every collection the app
+// uses must be listed explicitly; the catch-all at the bottom denies the rest.
+// ─────────────────────────────────────────────────────────────────────────
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Material orders — app reads and writes these
+    match /orders/{orderId} {
+      allow read, write: if true;
+    }
+
+    // Consumables stock levels — app reads and writes these
+    match /stock/{itemId} {
+      allow read, write: if true;
+    }
+
+    // Consumables stock history — app reads and writes these
+    match /stock_history/{recordId} {
+      allow read, write: if true;
+    }
+
+    // Materials stock levels (stocktake counts) — app reads and writes these
+    match /material_stock/{id} {
+      allow read, write: if true;
+    }
+
+    // Materials stocktake session history — app reads and writes these
+    match /material_stocktakes/{id} {
+      allow read, write: if true;
+    }
+
+    // App version tracking (live status dot / update banner)
+    match /meta/{docId} {
+      allow read, write: if true;
+    }
+
+    // Block everything else
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
