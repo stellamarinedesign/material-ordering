@@ -1,4 +1,4 @@
-// intake.js — v0.41
+// intake.js — v0.42
 // Shared intake rendering module used by warehouse.html and manager.html.
 
 const Intake = {
@@ -411,7 +411,7 @@ const Intake = {
               <div class="intake-item-name">${esc(item.description)}</div>
               ${showCode ? `<div class="intake-item-code">${esc(item.partCode)}</div>` : ''}
               ${orderLabel ? `<div class="intake-item-order-label">${esc(orderLabel)}</div>` : ''}
-              <div class="intake-item-ordered">Ordered: <strong>${item.qty}</strong>${item.qtyType ? ' ' + esc(item.qtyType) : ''}</div>
+              <div class="intake-item-ordered">Ordered: <strong>${esc(orderQtyDisplay(item, item.qty))}</strong></div>
             </div>
           </div>
           ${notes ? `<div class="intake-notes-row"><div class="intake-notes-readonly">${esc(notes)}</div></div>` : ''}
@@ -425,7 +425,7 @@ const Intake = {
             <div class="intake-item-name">${esc(item.description)}</div>
             ${showCode ? `<div class="intake-item-code">${esc(item.partCode)}</div>` : ''}
             ${orderLabel ? `<div class="intake-item-order-label">${esc(orderLabel)}</div>` : ''}
-            <div class="intake-item-ordered">Ordered: <strong>${item.qty}</strong>${item.qtyType ? ' ' + esc(item.qtyType) : ''}</div>
+            <div class="intake-item-ordered">Ordered: <strong>${esc(orderQtyDisplay(item, item.qty))}</strong></div>
           </div>
           <div class="intake-item-btns">
             <button class="intake-btn intake-ok${status === 'ok' ? ' active' : ''}"
@@ -456,7 +456,7 @@ const Intake = {
           <input class="intake-partial-input" type="number" min="0" step="1"
             value="${qtyRecv != null ? qtyRecv : ''}" placeholder="qty"
             data-partial-item="${esc(String(item.id))}" data-partial-order="${esc(order._id)}">
-          <span class="intake-of-label">of ${item.qty}${item.qtyType ? ' ' + esc(item.qtyType) : ''}</span>
+          <span class="intake-of-label">of ${esc(orderQtyDisplay(item, item.qty))}</span>
         </div>` : ''}
         ${notesOpen ? `
         <div class="intake-notes-row">

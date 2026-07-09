@@ -2694,6 +2694,8 @@ const Manager = {
           id: i.id, partCode: i.partCode, description: i.description,
           category: i.category, subcategory: i.subcategory,
           qtyType: i.qtyType || '', qty: i.qty,
+          // Carry box info so the delivery + stock steps count boxed items in boxes.
+          boxSize: i.boxSize || 0, boxUnit: i.boxUnit || '',
         }));
         try {
           this._coOrderId = await DB.submitConsumablesOrder({ ref, deviceName, items: allItems });
@@ -2982,13 +2984,16 @@ const Manager = {
       const ci = CAT_ICONS[m.category] || CAT_ICONS.default;
       const showCode = m.partCode && !Data.isDummyCode(m.partCode);
       const isUntracked = !this._stockFor(stockId(m))?.tracked;
+      const isBoxed = hasBoxTracking(m);
+      // Boxed items are ordered in boxes — label the unit and note the box size.
+      const unitLabel = isBoxed ? `Ordered in ${esc(m.boxUnit||'Box')}es · ${m.boxSize} per ${esc((m.boxUnit||'Box').toLowerCase())}` : esc(m.qtyType||'');
       return `<div class="mat-card ${inOrder?'in-order':''} ${isUntracked?'untracked-item':''}">
         <button class="mat-bin" data-bin="${m.id}"><i class="ti ti-trash"></i></button>
         <div class="mat-icon" style="background:${ci.bg}"><i class="ti ${ci.icon}" style="color:${ci.color}"></i></div>
         <div class="mat-info">
           <div class="mat-name">${esc(m.description)}</div>
           ${showCode ? `<div class="mat-partcode">${esc(m.partCode)}</div>` : '<div class="mat-partcode"></div>'}
-          <div class="mat-unit">${esc(m.qtyType||'')}${isUntracked?' · Not tracked':''}</div>
+          <div class="mat-unit">${unitLabel}${isUntracked?' · Not tracked':''}</div>
         </div>
         <div class="mat-controls">
           <button class="qty-btn" data-dec="${m.id}">−</button>
@@ -3017,9 +3022,9 @@ const Manager = {
           <div>
             <div class="order-item-name">${esc(i.description)}</div>
             ${showCode ? `<div class="order-item-code">${esc(i.partCode)}</div>` : ''}
-            <div class="order-item-unit">${esc(i.qtyType||'')}</div>
+            <div class="order-item-unit">${esc(orderQtyUnit(i))}</div>
           </div>
-          <div class="order-item-qty">× ${i.qty}</div>
+          <div class="order-item-qty">${esc(orderQtyDisplay(i, i.qty))}</div>
         </div>
         <div class="order-item-foot">
           <button class="qty-btn" data-rdec="${i.id}">−</button>
@@ -3641,7 +3646,10 @@ const Manager = {
     if (!lowItems.length) { alert('No low-stock items have a reorder quantity set.'); return; }
     for (const m of lowItems) {
       const rec = this._stockFor(stockId(m));
-      this.coSet(m.id, rec.reorderQty);
+      // reorderQty is a stock threshold in individual units; boxed items are ordered
+      // in boxes, so round the shortfall UP to whole boxes (never under-order).
+      const qty = hasBoxTracking(m) ? Math.max(1, Math.ceil(rec.reorderQty / m.boxSize)) : rec.reorderQty;
+      this.coSet(m.id, qty);
     }
     this._updateCoBadge();
     this.renderCoList();

@@ -1,6 +1,6 @@
-// shared.js — v0.41
+// shared.js — v0.42
 
-const APP_VERSION = 'v0.41';
+const APP_VERSION = 'v0.42';
 
 // Numeric version comparison (handles "v0.9" vs "v0.10" correctly, unlike
 // plain string comparison). Returns true if `a` is strictly newer than `b`.
@@ -424,6 +424,18 @@ function boxSuffix(item) {
   return hasBoxTracking(item) ? ` (Box of ${item.boxSize} ${item.qtyType||'Each'})` : '';
 }
 
+// Ordering/delivery quantity unit for a consumables item. Boxed items are counted in
+// BOXES (the qty field means number of boxes) end-to-end through ordering, the email
+// and delivery intake; everything else uses its qtyType. Stock is still stored in
+// individual units — multiply by boxSize when receiving (see stock intake).
+function orderQtyUnit(item) { return hasBoxTracking(item) ? (item.boxUnit || 'Box') : (item.qtyType || ''); }
+function orderQtyDisplay(item, qty) {
+  if (!hasBoxTracking(item)) return `${qty}${item.qtyType ? ' ' + item.qtyType : ''}`;
+  const u = item.boxUnit || 'Box';
+  const plural = qty === 1 ? u : (/box$/i.test(u) ? u + 'es' : u + 's');
+  return `${qty} ${plural}`;
+}
+
 const ConsumablesDeviceName = {
   _key: 'cons_device_name',
   get()      { return localStorage.getItem(this._key) || ''; },
@@ -538,7 +550,7 @@ function buildCategoryEmail(items, category, orderType) {
   const itemsStr = items.map(i => {
     const showCode = i.partCode && !Data.isDummyCode(i.partCode);
     const codePart = showCode ? `${i.partCode} - ` : '';
-    return `${codePart}${i.description}${boxSuffix(i)}\r\n  Qty: ${i.qty} ${i.qtyType||''}`;
+    return `${codePart}${i.description}${boxSuffix(i)}\r\n  Qty: ${orderQtyDisplay(i, i.qty)}`;
   }).join('\r\n\r\n');
 
   const subject = applyPlaceholders(
@@ -573,7 +585,7 @@ function buildBulkConsumablesEmail(items) {
     const lines = catItems.map(i => {
       const showCode = i.partCode && !Data.isDummyCode(i.partCode);
       const codePart = showCode ? `${i.partCode} - ` : '';
-      return `  ${codePart}${i.description}${boxSuffix(i)}\r\n    Qty: ${i.qty} ${i.qtyType||''}`;
+      return `  ${codePart}${i.description}${boxSuffix(i)}\r\n    Qty: ${orderQtyDisplay(i, i.qty)}`;
     }).join('\r\n\r\n');
     return `── ${cat} ──\r\n\r\n${lines}`;
   }).join('\r\n\r\n');
