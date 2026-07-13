@@ -1,4 +1,4 @@
-// firebase-sync.js — v0.42
+// firebase-sync.js — v0.43
 let _db = null, _configured = false;
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -612,6 +612,55 @@ const DB = {
       timestamp:  firebase.firestore.FieldValue.serverTimestamp(),
     }).catch(e => console.warn('History write failed:', e));
     return newQty;
+  },
+
+  // Applies delivery stock CHANGES (deltas) to consumables stock. Positive deltas add
+  // received stock; negative deltas correct an earlier over-count (floored at zero).
+  // Creates the stock doc and turns tracking on if needed (receiving an untracked item
+  // starts tracking it). Safe to call from the warehouse page, which holds no local
+  // stock state. items: [{ sid, description, units }] where units is the delta to apply.
+  async receiveDeliveryStock(items, by, sessionId) {
+    if (!this.isReady()) throw new Error('Firebase not initialised');
+    for (const it of items) {
+      if (!it.units) continue; // zero delta — nothing to change
+      const ref = _db.collection('stock').doc(it.sid);
+      let newQty, delta;
+      await _db.runTransaction(async tx => {
+        const doc = await tx.get(ref);
+        const current = doc.exists ? (doc.data().qty || 0) : 0;
+        newQty = Math.max(0, current + it.units);
+        delta  = newQty - current; // actual change after flooring at zero
+        tx.set(ref, { qty: newQty, tracked: true }, { merge: true });
+      });
+      if (delta === 0) continue;
+      _db.collection('stock_history').add({
+        stockId:   it.sid,
+        itemName:  it.description || '',
+        delta,
+        newQty,
+        action:    'intake',
+        subtype:   'delivery_intake',
+        by:        by || '',
+        sessionId: sessionId || null,
+        reverted:  false,
+        timestamp: firebase.firestore.FieldValue.serverTimestamp(),
+      }).catch(e => console.warn('History write failed:', e));
+    }
+  },
+
+  // Records how many individual units of each item have been pushed to stock, stored on
+  // the item's own intake record (intake.items.<id>.stockAppliedUnits). A later edit to
+  // the delivery compares current-received against this to post only the difference.
+  // stamp: [{ orderId, itemId, units }].
+  async stampDeliveryStockApplied(stamp) {
+    if (!this.isReady()) throw new Error('Firebase not initialised');
+    const byOrder = new Map();
+    for (const s of stamp) {
+      if (!byOrder.has(s.orderId)) byOrder.set(s.orderId, {});
+      byOrder.get(s.orderId)[`intake.items.${s.itemId}.stockAppliedUnits`] = s.units;
+    }
+    await Promise.all([...byOrder.entries()].map(([orderId, update]) =>
+      _db.collection('orders').doc(orderId).update({ ...update, updatedAt: firebase.firestore.FieldValue.serverTimestamp() })));
   },
 
   // Absolute set (for physical stocktake override).

@@ -728,6 +728,7 @@ const Manager = {
       onConfirm:   (cardKey)                 => this.intakeConfirm(cardKey),
       onSave:      (cardKey)                 => this.intakeSave(cardKey),
       onRestore:   (orderId)                 => this.intakeRestore(orderId),
+      onApplyStock:(cardKey)                 => this.intakeApplyStock(cardKey),
     });
     document.getElementById('btn-no-review')      .addEventListener('click', () => this.noOpenReview());
     document.getElementById('btn-close-no-review').addEventListener('click', () => this.closePanel('no-review-panel'));
@@ -1221,6 +1222,8 @@ const Manager = {
       else this._intakeDrafts.delete(groupKey);
       const isMat = !group.entries[0].order.type || group.entries[0].order.type === 'materials';
       if (isMat) this.renderIntakeMat(); else this.renderIntakeCons();
+      // On a full Confirm of a consumables delivery, offer to add what was received to stock.
+      if (requireFullyActioned) await this._maybeApplyDeliveryStock(group, merged);
     } catch (e) {
       console.error('Save failed:', e);
       alert('Save failed — please try again.');
@@ -1229,6 +1232,44 @@ const Manager = {
 
   async intakeConfirm(cardKey) { await this._intakeWrite(cardKey, true); },
   async intakeSave(cardKey)    { await this._intakeWrite(cardKey, false); },
+
+  // After confirming a CONSUMABLES delivery (or via the "Add/Update to stock" tag),
+  // reconcile stock with the received quantities: OK → full ordered qty, Partial → the
+  // received qty, Missing/Backorder → nothing. Boxed items convert boxes → units. Each
+  // item remembers how much it last pushed to stock, so this posts only the DIFFERENCE —
+  // a first apply adds the full amount, a later miscount fix posts just the correction
+  // (positive or negative). Silent no-op when already in sync. Materials have no stock.
+  async _maybeApplyDeliveryStock(group, merged) {
+    const isMat = !group.entries[0].order.type || group.entries[0].order.type === 'materials';
+    if (isMat) return;
+    const changes = Intake.deliveryStockDeltas(group.entries, merged); // per-sid {item, current, prev, delta}
+    const stamp   = Intake.deliveryStockStamp(group.entries, merged);  // per-item applied units to record
+    const toPost  = changes.filter(c => c.delta !== 0);
+    if (!toPost.length) return; // nothing received, or already in sync
+    const firstTime = changes.every(c => c.prev === 0);
+    const lines = toPost.map(c => `• ${c.item.description}: ${c.delta > 0 ? '+' : ''}${c.delta} ${c.item.qtyType||'units'}`).join('\n');
+    const title = firstTime ? 'Add received quantities to consumables stock?' : 'Update consumables stock to match this delivery?';
+    if (!confirm(`${title}\n\n${lines}`)) return;
+    const s  = Settings.get();
+    const by = `${(s.managerName||'Manager').trim()||'Manager'} — Delivery: ${group.category}`;
+    try {
+      await DB.receiveDeliveryStock(toPost.map(c => ({ sid: stockId(c.item), description: c.item.description, units: c.delta })), by, genRef());
+      await DB.stampDeliveryStockApplied(stamp);
+    } catch (e) {
+      console.error('Stock update failed:', e);
+      alert('Stock update failed: ' + e.message);
+    }
+  },
+
+  // "Add to stock" from a resolved delivery card — applies the already-saved received
+  // quantities to stock later, without touching confirmation status.
+  async intakeApplyStock(cardKey) {
+    let groupKey = cardKey; if (groupKey.endsWith('|||bo')) groupKey = groupKey.slice(0, -5);
+    const group = this._intakeFindGroup(groupKey); if (!group) return;
+    const merged = Intake.mergeDraftEntries(group.entries, null);
+    await this._maybeApplyDeliveryStock(group, merged);
+    this.renderIntakeCons();
+  },
 
   // Restores a cancelled DELIVERY (by groupKey) — clears the cancelled marker on every
   // contributing order, not just the first one, so multi-order deliveries restore whole.
@@ -1354,7 +1395,12 @@ const Manager = {
   async cancelSelectedDeliveries(type) {
     const groups = this._editSelectedGroups(type);
     if (!groups.length) return;
-    if (!confirm(`Cancel ${groups.length} deliver${groups.length === 1 ? 'y' : 'ies'}? They'll move to the Cancelled tab and stop being tracked for receiving. Other deliveries from the same orders are not affected. You can restore them later.`)) return;
+    // Warn if any selected delivery has already had its received quantities added to
+    // stock — cancelling won't pull that stock back out.
+    const nStocked = groups.filter(g => Intake.appliedStockTotal(g.entries) > 0).length;
+    const stockWarn = nStocked > 0
+      ? `\n\nWARNING: ${nStocked} of these deliver${nStocked === 1 ? 'y has' : 'ies have'} already had received quantities added to consumables stock. Cancelling will NOT remove that stock — adjust it manually in the Stock tab if needed.` : '';
+    if (!confirm(`Cancel ${groups.length} deliver${groups.length === 1 ? 'y' : 'ies'}? They'll move to the Cancelled tab and stop being tracked for receiving. Other deliveries from the same orders are not affected. You can restore them later.${stockWarn}`)) return;
     try {
       const ops = [];
       for (const g of groups) {
@@ -2257,7 +2303,11 @@ const Manager = {
     const group = [...matGroups, ...consGroups].find(g => g.groupKey === groupKey);
     if (!group) return;
     const orderIds = [...new Set(group.entries.map(e => e.order._id))];
-    if (!confirm(`Reset this entire delivery (${orderIds.length} order${orderIds.length !== 1 ? 's' : ''}) back to pending?`)) return;
+    // Resetting clears the intake — including the record of how much was pushed to stock —
+    // but does NOT pull that stock back out. Warn so it can be corrected manually.
+    const stockWarn = Intake.appliedStockTotal(group.entries) > 0
+      ? `\n\nWARNING: this delivery's received quantities have already been added to consumables stock. Resetting will NOT remove that stock — you'll need to adjust it manually in the Stock tab.` : '';
+    if (!confirm(`Reset this entire delivery (${orderIds.length} order${orderIds.length !== 1 ? 's' : ''}) back to pending?${stockWarn}`)) return;
     try {
       await Promise.all(orderIds.map(id => DB.resetCategoryEmailed(id, category)));
     } catch(e) { alert('Reset failed: ' + e.message); }

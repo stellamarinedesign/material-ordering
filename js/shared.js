@@ -1,6 +1,6 @@
-// shared.js — v0.42
+// shared.js — v0.43
 
-const APP_VERSION = 'v0.42';
+const APP_VERSION = 'v0.43';
 
 // Numeric version comparison (handles "v0.9" vs "v0.10" correctly, unlike
 // plain string comparison). Returns true if `a` is strictly newer than `b`.

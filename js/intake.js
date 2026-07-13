@@ -1,4 +1,4 @@
-// intake.js — v0.42
+// intake.js — v0.43
 // Shared intake rendering module used by warehouse.html and manager.html.
 
 const Intake = {
@@ -164,6 +164,53 @@ const Intake = {
     return true;
   },
 
+  // ── DELIVERY → STOCK (consumables) ────────────────────────────────────
+  // Individual stock units an item represents as RECEIVED, from a merged status map:
+  // ok → full ordered qty, partial → qtyReceived, else 0. Boxed → boxes × boxSize.
+  recvUnits(order, item, merged) {
+    const st = merged[`${order._id}::${item.id}`] || {};
+    let recv = 0;
+    if (st.status === 'ok') recv = item.qty || 0;
+    else if (st.status === 'partial') recv = st.qtyReceived || 0;
+    return hasBoxTracking(item) ? recv * (item.boxSize || 0) : recv;
+  },
+  // Units of an item already pushed to stock (0 if never, undefined-safe).
+  appliedUnits(order, item) {
+    const it = ((order.intake && order.intake.items) || {})[String(item.id)] || {};
+    return it.stockAppliedUnits || 0;
+  },
+  // Whether ANY item in the delivery has been stock-applied at least once.
+  stockEverApplied(entries) {
+    return entries.some(({ order, item }) => {
+      const it = ((order.intake && order.intake.items) || {})[String(item.id)] || {};
+      return it.stockAppliedUnits !== undefined;
+    });
+  },
+  // Per-stock-item deltas: current received units vs units last pushed to stock.
+  // Returns [{ sid, item, current, prev, delta }] (summed across the delivery's orders).
+  deliveryStockDeltas(entries, merged) {
+    const bySid = new Map();
+    for (const { item, order } of entries) {
+      const sid = stockId(item);
+      if (!bySid.has(sid)) bySid.set(sid, { sid, item, current: 0, prev: 0 });
+      const b = bySid.get(sid);
+      b.current += this.recvUnits(order, item, merged);
+      b.prev    += this.appliedUnits(order, item);
+    }
+    return [...bySid.values()].map(b => ({ ...b, delta: b.current - b.prev }));
+  },
+  // Per-item applied-units to record after posting (every entry, keyed by order+item).
+  deliveryStockStamp(entries, merged) {
+    return entries.map(({ item, order }) => ({
+      orderId: order._id, itemId: String(item.id), units: this.recvUnits(order, item, merged),
+    }));
+  },
+  // Total individual units this delivery has pushed to stock (0 if none) — used to warn
+  // before resetting/cancelling a delivery whose stock was already banked.
+  appliedStockTotal(entries) {
+    return entries.reduce((s, { order, item }) => s + this.appliedUnits(order, item), 0);
+  },
+
   // ── CATEGORY-BASED RENDERING (Deliveries page + Sent tab) ─────────────
   // Each "unit" is one delivery — everything emailed together in one real send, which
   // may span multiple orders. Grouped by item.deliveryId (stamped when an item is marked
@@ -295,6 +342,27 @@ const Intake = {
     const hasDraft   = !readOnly && draftForCard && Object.keys(draftForCard).length > 0;
     const canConfirm = hasDraft && this.canConfirmEntries(entries, draftForCard);
 
+    // Consumables stock tag — three states: nothing applied yet ("Add to stock"),
+    // applied and matching ("In stock"), or applied but the received quantities have
+    // since changed ("Update stock" — a later apply posts just the difference). Only on
+    // resolved consumables deliveries; not on cancelled or back-order-derived cards.
+    let stockTag = '';
+    if (type === 'consumables' && !isDerived && !isCancelledCard && this.TAB_RESOLVED.has(status)) {
+      const deltas       = this.deliveryStockDeltas(entries, this.mergeDraftEntries(entries, null));
+      const totalCurrent = deltas.reduce((s, d) => s + d.current, 0);
+      const anyApplied   = this.stockEverApplied(entries);
+      const drifted      = deltas.some(d => d.delta !== 0);
+      if (!anyApplied && totalCurrent === 0) {
+        stockTag = ''; // nothing was received — nothing to add
+      } else if (!anyApplied) {
+        stockTag = `<button class="intake-stock-btn" data-apply-stock="${esc(cardKey)}" title="Add the received quantities to stock now"><i class="ti ti-box-seam"></i> Add to stock</button>`;
+      } else if (!drifted) {
+        stockTag = `<span class="intake-stock-tag applied" title="Received quantities have been added to stock"><i class="ti ti-circle-check"></i> In stock</span>`;
+      } else {
+        stockTag = `<button class="intake-stock-btn update" data-apply-stock="${esc(cardKey)}" title="Received quantities changed since stock was updated — apply the difference"><i class="ti ti-refresh"></i> Update stock</button>`;
+      }
+    }
+
     // For resolved deliveries, show intake completion time instead of order submission date.
     const metaTs = (() => {
       if (!this.TAB_RESOLVED.has(status)) return ts;
@@ -318,6 +386,7 @@ const Intake = {
             ${readOnly && showRestore ? `<button class="intake-restore-btn" data-restore="${esc(groupKey)}" title="Restore to active tracking"><i class="ti ti-arrow-back-up"></i> Restore</button>` : ''}
             ${isOpen && hasDraft && !canConfirm ? `<button class="intake-save-btn" data-save="${esc(cardKey)}" title="Save progress — some items still need a status"><i class="ti ti-device-floppy"></i> Save</button>` : ''}
             ${isOpen && hasDraft && canConfirm ? `<button class="intake-confirm-btn" data-confirm="${esc(cardKey)}" title="Confirm and save changes"><i class="ti ti-check"></i> Confirm</button>` : ''}
+            ${stockTag}
             ${this.statusBadge(badgeStatus)}
             <i class="ti ${isOpen ? 'ti-chevron-up' : 'ti-chevron-down'} intake-chevron"></i>
           </div>
@@ -520,6 +589,13 @@ const Intake = {
       const saveBtn = e.target.closest('[data-save]');
       if (saveBtn) {
         if (callbacks.onSave) callbacks.onSave(saveBtn.dataset.save);
+        return;
+      }
+
+      // "Add to stock" tag-button on a resolved consumables delivery.
+      const applyStockBtn = e.target.closest('[data-apply-stock]');
+      if (applyStockBtn) {
+        if (callbacks.onApplyStock) callbacks.onApplyStock(applyStockBtn.dataset.applyStock);
         return;
       }
 

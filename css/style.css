@@ -663,6 +663,19 @@ button { cursor: pointer; }
 }
 .intake-confirm-btn:disabled { opacity: .4; cursor: not-allowed; border-color: var(--border); background: var(--bg2); color: var(--text3); }
 
+/* Consumables delivery stock tag / "Add to stock" button (in the card header) */
+.intake-stock-tag {
+  display: inline-flex; align-items: center; gap: 4px; white-space: nowrap;
+  font-size: 10px; font-weight: 600; padding: 3px 8px; border-radius: 20px;
+}
+.intake-stock-tag.applied { color: var(--green-text); background: var(--green-bg); }
+.intake-stock-btn {
+  display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; cursor: pointer;
+  font-size: 10px; font-weight: 600; padding: 4px 9px; border-radius: var(--radius);
+  border: 1px solid var(--amber-text); background: var(--amber-bg); color: var(--amber-text);
+}
+.intake-stock-btn.update { border-color: var(--blue-text); background: var(--blue-bg); color: var(--blue-text); }
+
 /* Save button (open card with partial progress, before all items are actioned) */
 .intake-save-btn {
   display: inline-flex; align-items: center; gap: 4px;

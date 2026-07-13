@@ -282,6 +282,7 @@ const Warehouse = {
       onRerender: (orderId)                 => this.rerenderCard(orderId, type),
       onConfirm:  (cardKey)                 => this.onConfirm(cardKey),
       onSave:     (cardKey)                 => this.onSave(cardKey),
+      onApplyStock:(cardKey)                => this.applyStock(cardKey),
     });
   },
 
@@ -514,6 +515,8 @@ const Warehouse = {
       else this._drafts.delete(groupKey);
       const isMat = !group.entries[0].order.type || group.entries[0].order.type === 'materials';
       this.renderList(isMat ? 'materials' : 'consumables');
+      // On a full Confirm of a consumables delivery, offer to add received stock.
+      if (requireFullyActioned) await this._maybeApplyDeliveryStock(group, merged);
     } catch (e) {
       console.error('Save failed:', e);
       alert('Save failed — please try again.');
@@ -522,6 +525,40 @@ const Warehouse = {
 
   async onConfirm(cardKey) { await this._write(cardKey, true); },
   async onSave(cardKey)    { await this._write(cardKey, false); },
+
+  // "Add to stock" from a resolved delivery card — applies the already-saved received
+  // quantities to stock later, without touching confirmation status.
+  async applyStock(cardKey) {
+    let groupKey = cardKey; if (groupKey.endsWith('|||bo')) groupKey = groupKey.slice(0, -5);
+    const group = this._findGroup(groupKey); if (!group) return;
+    const merged = Intake.mergeDraftEntries(group.entries, null);
+    await this._maybeApplyDeliveryStock(group, merged);
+    this.renderList('consumables');
+  },
+
+  // Offer to add a confirmed consumables delivery's received quantities to stock.
+  // Mirrors the manager version (see manager.html _maybeApplyDeliveryStock); recorded
+  // against the warehouse device name so it reads clearly in the manager's stock history.
+  async _maybeApplyDeliveryStock(group, merged) {
+    const isMat = !group.entries[0].order.type || group.entries[0].order.type === 'materials';
+    if (isMat) return;
+    const changes = Intake.deliveryStockDeltas(group.entries, merged);
+    const stamp   = Intake.deliveryStockStamp(group.entries, merged);
+    const toPost  = changes.filter(c => c.delta !== 0);
+    if (!toPost.length) return; // nothing received, or already in sync
+    const firstTime = changes.every(c => c.prev === 0);
+    const lines = toPost.map(c => `• ${c.item.description}: ${c.delta > 0 ? '+' : ''}${c.delta} ${c.item.qtyType||'units'}`).join('\n');
+    const title = firstTime ? 'Add received quantities to consumables stock?' : 'Update consumables stock to match this delivery?';
+    if (!confirm(`${title}\n\n${lines}`)) return;
+    const by = `${WarehouseDeviceName.get() || 'Warehouse'} — Delivery: ${group.category}`;
+    try {
+      await DB.receiveDeliveryStock(toPost.map(c => ({ sid: stockId(c.item), description: c.item.description, units: c.delta })), by, genRef());
+      await DB.stampDeliveryStockApplied(stamp);
+    } catch (e) {
+      console.error('Stock update failed:', e);
+      alert('Stock update failed: ' + e.message);
+    }
+  },
 };
 
 Warehouse.init();
