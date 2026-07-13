@@ -22,6 +22,31 @@
     .cons-stock-badge.zero     { background: var(--bg2);      color: var(--text3); }
     .mat-card.out-of-stock     { opacity: 0.5; pointer-events: none; }
     .mat-card.out-of-stock .mat-controls { opacity: 0.4; }
+    /* ── Image grid (tradesmen pick by photo) ── */
+    .cons-grid {
+      display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+      gap: 10px; padding: 12px 0;
+    }
+    .cons-tile {
+      background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg);
+      overflow: hidden; display: flex; flex-direction: column;
+    }
+    .cons-tile.in-order { border-color: var(--green); box-shadow: 0 0 0 1px var(--green); }
+    .cons-tile.out-of-stock { opacity: 0.55; }
+    .cons-tile-img { position: relative; width: 100%; aspect-ratio: 1 / 1; background: var(--bg2); }
+    .cons-tile-img img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+    .cons-tile-icon { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 46px; }
+    .cons-tile-badge { position: absolute; top: 6px; right: 6px; }
+    .cons-tile-body { padding: 8px 9px 9px; display: flex; flex-direction: column; gap: 7px; flex: 1; }
+    .cons-tile-name { font-size: 12.5px; font-weight: 500; line-height: 1.3; color: var(--text); }
+    .cons-tile-controls { display: flex; align-items: center; gap: 4px; margin-top: auto; }
+    .cons-tile-controls .qty-input { flex: 1; min-width: 0; height: 32px; text-align: center; }
+    .cons-box-btn {
+      display: flex; align-items: center; justify-content: center; gap: 5px; width: 100%; height: 30px;
+      border: 1px solid var(--border2); border-radius: var(--radius); background: var(--bg2); color: var(--text2);
+      font-size: 11px; font-weight: 600; cursor: pointer;
+    }
+    .cons-box-btn:active { background: var(--border); }
     .checkout-name-bar {
       background: var(--surface); border-top: 1px solid var(--border);
       padding: 10px 16px; flex-shrink: 0;
@@ -71,6 +96,7 @@ const ConsApp = {
   _items:      {},       // id -> qty in current checkout
   _stockReady: false,
   _checkoutBusy: false,  // in-flight guard — Enter key bypasses the disabled button
+  _noImage: new Set(),   // stock keys whose photo 404'd this session — don't re-request
 
   async init() {
     const cfg = FirebaseConfig.get();
@@ -210,14 +236,22 @@ const ConsApp = {
     document.getElementById('cons-mat-list').addEventListener('click', e => {
       const dec=e.target.closest('[data-dec]'), inc=e.target.closest('[data-inc]');
       const add=e.target.closest('[data-add]'), bin=e.target.closest('[data-bin]');
+      const box=e.target.closest('[data-box]');
       if (dec) { e.stopPropagation(); this.adj(+dec.dataset.dec, -1); }
       if (inc) { e.stopPropagation(); this.adj(+inc.dataset.inc,  1); }
       if (add) { e.stopPropagation(); this.quickAdd(+add.dataset.add); }
       if (bin) { e.stopPropagation(); this.zero(+bin.dataset.bin); }
+      if (box) { e.stopPropagation(); this.addBox(+box.dataset.box); }
     });
     document.getElementById('cons-mat-list').addEventListener('change', e => {
       const inp = e.target.closest('[data-qid]'); if (inp) this.setQty(+inp.dataset.qid, inp.value);
     });
+    // A tile photo that 404s: remember its key so it's not requested again, and drop the
+    // <img> so the category icon beneath shows through. Error events don't bubble — capture.
+    document.getElementById('cons-mat-list').addEventListener('error', e => {
+      const img = e.target;
+      if (img.tagName === 'IMG' && img.dataset.sid) { this._noImage.add(img.dataset.sid); img.remove(); }
+    }, true);
     document.getElementById('cons-search').addEventListener('input', () => this.renderList());
     document.getElementById('btn-cons-review').addEventListener('click', () => this.openSignOutOverlay());
     document.getElementById('btn-cons-clear-main').addEventListener('click', () => {
@@ -327,6 +361,9 @@ const ConsApp = {
   adj(id,d)      { this.set(id, this.get(id)+d); this._changed(); },
   setQty(id,v)   { this.set(id, parseInt(v)||0); this._changed(); },
   quickAdd(id)   { if(!this.get(id)) this.set(id,1); this._changed(); },
+  // Secondary "take a box" action for boxed items — adds a whole box's worth of
+  // individual units (clamped to available stock by set()). Individual +/− stays primary.
+  addBox(id)     { const m = this.consumables.find(x=>x.id==id); if (!hasBoxTracking(m)) return; this.set(id, this.get(id) + m.boxSize); this._changed(); },
   zero(id)       { delete this._items[id]; this._changed(); },
   count()        { return Object.keys(this._items).length; },
   items()        {
@@ -379,37 +416,45 @@ const ConsApp = {
       return;
     }
 
-    list.innerHTML = filtered.map(m => {
+    const tiles = filtered.map(m => {
       const qty    = this.get(m.id);
       const inOrder= qty > 0;
       const avail  = this._availableQty(m);
       const status = this._stockStatus(m);
       const ci     = CAT_ICONS[m.category] || CAT_ICONS.default;
-      const showCode = m.partCode && !Data.isDummyCode(m.partCode);
       const isZero = status === 'zero';
+      const isBoxed = hasBoxTracking(m);
+      const sid    = stockId(m);
 
-      const stockBadgeClass = status==='ok' ? 'ok' : status==='low' ? 'low' : status==='zero' ? 'zero' : 'zero';
+      const stockBadgeClass = status==='low' ? 'low' : status==='zero' ? 'zero' : 'ok';
       const stockLabel = avail === null ? '' : isZero ? 'Out of stock' : `${avail} in stock`;
       const stockBadge = avail !== null
-        ? `<span class="cons-stock-badge ${stockBadgeClass}">${stockLabel}</span>`
+        ? `<span class="cons-stock-badge ${stockBadgeClass} cons-tile-badge">${stockLabel}</span>`
         : '';
 
-      return `<div class="mat-card ${inOrder?'in-order':''} ${isZero?'out-of-stock':''}">
-        <button class="mat-bin" data-bin="${m.id}"><i class="ti ti-trash"></i></button>
-        <div class="mat-icon" style="background:${ci.bg}"><i class="ti ${ci.icon}" style="color:${ci.color}"></i></div>
-        <div class="mat-info">
-          <div class="mat-name">${esc(m.description)}</div>
-          ${showCode ? `<div class="mat-partcode">${esc(m.partCode)}</div>` : '<div class="mat-partcode"></div>'}
-          <div class="mat-unit">${esc(m.qtyType||'')} ${stockBadge}</div>
+      // Photo if present (images/consumables/<key>.jpg); the category icon sits beneath
+      // and shows through if the photo is missing. A failed photo is remembered for the
+      // session (_noImage) so it isn't re-requested on every re-render.
+      const imgTag = this._noImage.has(sid) ? ''
+        : `<img src="images/consumables/${esc(sid)}.jpg" alt="" loading="lazy" data-sid="${esc(sid)}">`;
+      return `<div class="cons-tile ${inOrder?'in-order':''} ${isZero?'out-of-stock':''}">
+        <div class="cons-tile-img">
+          <div class="cons-tile-icon" style="background:${ci.bg}"><i class="ti ${ci.icon}" style="color:${ci.color}"></i></div>
+          ${imgTag}
+          ${stockBadge}
         </div>
-        <div class="mat-controls">
-          <button class="qty-btn" data-dec="${m.id}">−</button>
-          <input class="qty-input" type="number" min="0" ${avail!==null?`max="${avail}"`:''}  step="1" value="${qty}" data-qid="${m.id}">
-          <button class="qty-btn" data-inc="${m.id}">+</button>
-          <button class="add-btn ${inOrder?'in-order':''}" data-add="${m.id}"><i class="ti ${inOrder?'ti-check':'ti-plus'}"></i></button>
+        <div class="cons-tile-body">
+          <div class="cons-tile-name">${esc(m.description)}</div>
+          <div class="cons-tile-controls">
+            <button class="qty-btn" data-dec="${m.id}">−</button>
+            <input class="qty-input" type="number" min="0" ${avail!==null?`max="${avail}"`:''} step="1" value="${qty}" data-qid="${m.id}">
+            <button class="qty-btn" data-inc="${m.id}">+</button>
+          </div>
+          ${isBoxed ? `<button class="cons-box-btn" data-box="${m.id}"><i class="ti ti-box-seam"></i> Take a ${esc(m.boxUnit||'Box')} (${m.boxSize})</button>` : ''}
         </div>
       </div>`;
     }).join('');
+    list.innerHTML = `<div class="cons-grid">${tiles}</div>`;
   },
 
   openPanel(id)  { document.getElementById(id)?.classList.add('open'); },
