@@ -278,6 +278,9 @@ const Warehouse = {
     Intake.attachListeners(container, {
       onAction:   (orderId, itemId, action) => this.setItemStatus(orderId, itemId, action),
       onQtyChange:(orderId, itemId, qty)    => this.setPartialQty(orderId, itemId, qty),
+      onOutstandingChange:(orderId, itemId, qty) => this.setOutstanding(orderId, itemId, qty),
+      onArrived:  (orderId, itemId)         => this.markArrived(orderId, itemId),
+      onFollowUp: (orderId, itemId, action) => this.resolveFollowUp(orderId, itemId, action),
       onNoteChange:(orderId, itemId, text)  => this.setNote(orderId, itemId, text),
       onRerender: (orderId)                 => this.rerenderCard(orderId, type),
       onConfirm:  (cardKey)                 => this.onConfirm(cardKey),
@@ -369,7 +372,7 @@ const Warehouse = {
     const isMat = !group.entries[0].order.type || group.entries[0].order.type === 'materials';
     const t     = type || (isMat ? 'materials' : 'consumables');
     let entries = group.entries;
-    if (isDerived) entries = entries.filter(({ order, item }) => Intake._itemStatus(order, item) === 'backorder');
+    if (isDerived) entries = entries.filter(({ order, item }) => Intake.outstandingOf(order, item) > 0);
 
     const safeId = cardKey.replace(/[^a-zA-Z0-9]/g, '_');
     const cardEl = document.getElementById(`intake-card-${safeId}`);
@@ -395,9 +398,19 @@ const Warehouse = {
     const draftItem = draft[key] || {};
     const currentStatus = draftItem.status !== undefined ? draftItem.status : (saved.status || null);
     if (currentStatus === action) {
-      draft[key] = { ...draftItem, status: null, qtyReceived: null };
+      draft[key] = { ...draftItem, status: null, qtyReceived: null, outstandingQty: null };
     } else {
-      draft[key] = { ...draftItem, status: action, qtyReceived: action === 'partial' ? (draftItem.qtyReceived ?? saved.qtyReceived ?? null) : null };
+      // See manager.html intakeSetStatus — B/O means the whole line is still coming.
+      const prevOut = draftItem.outstandingQty ?? saved.outstandingQty;
+      let outstandingQty = 0;
+      if (action === 'backorder')    outstandingQty = (prevOut > 0) ? prevOut : (item.qty || 0);
+      else if (action === 'partial') outstandingQty = prevOut || 0;
+      draft[key] = {
+        ...draftItem,
+        status: action,
+        qtyReceived: action === 'partial' ? (draftItem.qtyReceived ?? saved.qtyReceived ?? null) : null,
+        outstandingQty,
+      };
     }
     this._rerenderCardOnly(orderId, item.category, groupKey);
   },
@@ -410,6 +423,60 @@ const Warehouse = {
     const draft = this._drafts.get(groupKey);
     const key = `${orderId}::${itemId}`;
     draft[key] = { ...(draft[key] || {}), qtyReceived: qty };
+    this._rerenderCardOnly(orderId, item.category, groupKey);
+  },
+
+  // How many of this line the supplier is still sending (see manager.html).
+  setOutstanding(orderId, itemId, qty) {
+    const order = this.orders.find(o => o._id === orderId); if (!order) return;
+    const item = (order.items || []).find(i => String(i.id) === String(itemId)); if (!item) return;
+    const groupKey = item.deliveryId || `legacy:${orderId}:${item.category}`;
+    if (!this._drafts.has(groupKey)) this._drafts.set(groupKey, {});
+    const draft = this._drafts.get(groupKey);
+    const key = `${orderId}::${itemId}`;
+    draft[key] = { ...(draft[key] || {}), outstandingQty: qty };
+    this._rerenderCardOnly(orderId, item.category, groupKey);
+  },
+
+  // Resolving a short-delivery follow-up (see manager.html intakeResolveFollowUp).
+  resolveFollowUp(orderId, itemId, action) {
+    const order = this.orders.find(o => o._id === orderId); if (!order) return;
+    const item = (order.items || []).find(i => String(i.id) === String(itemId)); if (!item) return;
+    const groupKey = item.deliveryId || `legacy:${orderId}:${item.category}`;
+    if (!this._drafts.has(groupKey)) this._drafts.set(groupKey, {});
+    const draft = this._drafts.get(groupKey);
+    const key = `${orderId}::${itemId}`;
+    const saved = ((order.intake && order.intake.items) || {})[String(itemId)] || {};
+    const cur = { ...saved, ...(draft[key] || {}) };
+    if (action === 'coming') {
+      draft[key] = { ...(draft[key] || {}), outstandingQty: Math.max(0, (item.qty || 0) - (cur.qtyReceived || 0)) };
+    } else {
+      draft[key] = { ...(draft[key] || {}), followUpDone: true };
+    }
+    this._rerenderCardOnly(orderId, item.category, groupKey);
+  },
+
+  // "Arrived" — books the outstanding amount as received in one tap (see manager.html).
+  markArrived(orderId, itemId) {
+    const order = this.orders.find(o => o._id === orderId); if (!order) return;
+    const item = (order.items || []).find(i => String(i.id) === String(itemId)); if (!item) return;
+    const groupKey = item.deliveryId || `legacy:${orderId}:${item.category}`;
+    if (!this._drafts.has(groupKey)) this._drafts.set(groupKey, {});
+    const draft = this._drafts.get(groupKey);
+    const key = `${orderId}::${itemId}`;
+    const saved = ((order.intake && order.intake.items) || {})[String(itemId)] || {};
+    const cur   = { ...saved, ...(draft[key] || {}) };
+    const outstanding = Intake.outstandingOf(order, item, { [key]: cur });
+    if (outstanding <= 0) return;
+    const already    = cur.status === 'ok' ? (item.qty || 0) : (cur.qtyReceived || 0);
+    const nowRecv    = already + outstanding;
+    const isComplete = nowRecv >= (item.qty || 0);
+    draft[key] = {
+      ...(draft[key] || {}),
+      status: isComplete ? 'ok' : 'partial',
+      qtyReceived: isComplete ? null : nowRecv,
+      outstandingQty: 0,
+    };
     this._rerenderCardOnly(orderId, item.category, groupKey);
   },
 
@@ -443,7 +510,7 @@ const Warehouse = {
       return;
     }
 
-    const boEntries = group.entries.filter(({ order: o, item }) => Intake._itemStatus(o, item) === 'backorder');
+    const boEntries = group.entries.filter(({ order: o, item }) => Intake.outstandingOf(o, item) > 0);
     const boSafe  = `${groupKey}|||bo`.replace(/[^a-zA-Z0-9]/g, '_');
     const boEl    = document.getElementById(`intake-card-${boSafe}`);
     if (boEl) {
@@ -464,8 +531,8 @@ const Warehouse = {
     const merged = Intake.mergeDraftEntries(group.entries, draft);
 
     // Entries sharing a mergeKey display as one row — propagate the representative's
-    // STATUS (not its qtyReceived/notes, which describe the delivery total rather than
-    // each order's share) to the other same-material entries. See manager _intakeWrite.
+    // STATUS, outstanding and follow-up state (not its qtyReceived/notes, which describe
+    // the delivery total rather than each order's share). See manager _intakeWrite.
     const byMergeKey = new Map();
     const propagated = new Set();
     for (const e of group.entries) {
@@ -475,11 +542,16 @@ const Warehouse = {
     }
     for (const itemEntries of byMergeKey.values()) {
       if (itemEntries.length < 2) continue;
-      const repStatus = merged[`${itemEntries[0].order._id}::${itemEntries[0].item.id}`];
-      if (!repStatus || repStatus.status === undefined) continue;
+      const rep = merged[`${itemEntries[0].order._id}::${itemEntries[0].item.id}`];
+      if (!rep || rep.status === undefined) continue;
       for (const { order, item } of itemEntries.slice(1)) {
         const ck = `${order._id}::${item.id}`;
-        merged[ck] = { ...(merged[ck] || {}), status: repStatus.status };
+        merged[ck] = {
+          ...(merged[ck] || {}),
+          status: rep.status,
+          outstandingQty: rep.outstandingQty ?? 0,
+          followUpDone: rep.followUpDone ?? false,
+        };
         propagated.add(ck);
       }
     }

@@ -304,6 +304,7 @@ const Manager = {
                   <button class="main-tab" id="main-tab-intake-mat">
                     <i class="ti ti-truck-delivery"></i>Deliveries
                     <span class="sidebar-count zero" id="deliveries-mat-badge">0</span>
+                    <span class="followup-badge" id="followup-mat-badge" style="display:none" title="Short deliveries to check with purchasing">0</span>
                   </button>
                   <button class="main-tab" id="main-tab-stocktake">
                     <i class="ti ti-clipboard-list"></i>Stocktake
@@ -324,6 +325,7 @@ const Manager = {
                   <button class="main-tab" id="main-tab-intake-cons">
                     <i class="ti ti-truck-delivery"></i>Deliveries
                     <span class="sidebar-count zero" id="deliveries-cons-badge">0</span>
+                    <span class="followup-badge" id="followup-cons-badge" style="display:none" title="Short deliveries to check with purchasing">0</span>
                   </button>
                 </div>
               </div>
@@ -714,6 +716,9 @@ const Manager = {
     Intake.attachListeners(document.getElementById('intake-list-mat'), {
       onAction:    (orderId, itemId, action) => this.intakeSetStatus(orderId, itemId, action),
       onQtyChange: (orderId, itemId, qty)    => this.intakeSetPartialQty(orderId, itemId, qty),
+      onOutstandingChange: (orderId, itemId, qty) => this.intakeSetOutstanding(orderId, itemId, qty),
+      onArrived:   (orderId, itemId)         => this.intakeMarkArrived(orderId, itemId),
+      onFollowUp:  (orderId, itemId, action) => this.intakeResolveFollowUp(orderId, itemId, action),
       onNoteChange:(orderId, itemId, text)   => this.intakeSetNote(orderId, itemId, text),
       onRerender:  (orderId)                 => this.intakeRerenderCard(orderId, 'materials'),
       onConfirm:   (cardKey)                 => this.intakeConfirm(cardKey),
@@ -723,6 +728,9 @@ const Manager = {
     Intake.attachListeners(document.getElementById('intake-list-cons'), {
       onAction:    (orderId, itemId, action) => this.intakeSetStatus(orderId, itemId, action),
       onQtyChange: (orderId, itemId, qty)    => this.intakeSetPartialQty(orderId, itemId, qty),
+      onOutstandingChange: (orderId, itemId, qty) => this.intakeSetOutstanding(orderId, itemId, qty),
+      onArrived:   (orderId, itemId)         => this.intakeMarkArrived(orderId, itemId),
+      onFollowUp:  (orderId, itemId, action) => this.intakeResolveFollowUp(orderId, itemId, action),
       onNoteChange:(orderId, itemId, text)   => this.intakeSetNote(orderId, itemId, text),
       onRerender:  (orderId)                 => this.intakeRerenderCard(orderId, 'consumables'),
       onConfirm:   (cardKey)                 => this.intakeConfirm(cardKey),
@@ -1069,7 +1077,7 @@ const Manager = {
     const isMat = !group.entries[0].order.type || group.entries[0].order.type === 'materials';
     const t     = type || (isMat ? 'materials' : 'consumables');
     let entries = group.entries;
-    if (isDerived) entries = entries.filter(({ order, item }) => Intake._itemStatus(order, item) === 'backorder');
+    if (isDerived) entries = entries.filter(({ order, item }) => Intake.outstandingOf(order, item) > 0);
 
     const safeId = cardKey.replace(/[^a-zA-Z0-9]/g, '_');
     const cardEl = document.getElementById(`intake-card-${safeId}`);
@@ -1095,9 +1103,21 @@ const Manager = {
     const draftItem = draft[key] || {};
     const currentStatus = draftItem.status !== undefined ? draftItem.status : (saved.status || null);
     if (currentStatus === action) {
-      draft[key] = { ...draftItem, status: null, qtyReceived: null };
+      draft[key] = { ...draftItem, status: null, qtyReceived: null, outstandingQty: null };
     } else {
-      draft[key] = { ...draftItem, status: action, qtyReceived: action === 'partial' ? (draftItem.qtyReceived ?? saved.qtyReceived ?? null) : null };
+      // "Still to come" defaults: B/O means the supplier is sending the whole line later;
+      // Partial keeps whatever's already recorded (0 until someone says the rest is coming);
+      // OK / Missing leave nothing outstanding.
+      const prevOut = draftItem.outstandingQty ?? saved.outstandingQty;
+      let outstandingQty = 0;
+      if (action === 'backorder')    outstandingQty = (prevOut > 0) ? prevOut : (item.qty || 0);
+      else if (action === 'partial') outstandingQty = prevOut || 0;
+      draft[key] = {
+        ...draftItem,
+        status: action,
+        qtyReceived: action === 'partial' ? (draftItem.qtyReceived ?? saved.qtyReceived ?? null) : null,
+        outstandingQty,
+      };
     }
     this._intakeRerenderCardOnly(orderId, item.category, groupKey);
   },
@@ -1110,6 +1130,65 @@ const Manager = {
     const draft = this._intakeDrafts.get(groupKey);
     const key = `${orderId}::${itemId}`;
     draft[key] = { ...(draft[key] || {}), qtyReceived: qty };
+    this._intakeRerenderCardOnly(orderId, item.category, groupKey);
+  },
+
+  // How many of this line the supplier is still sending (a known future shipment).
+  intakeSetOutstanding(orderId, itemId, qty) {
+    const order = this.orders.find(o => o._id === orderId); if (!order) return;
+    const item = (order.items || []).find(i => String(i.id) === String(itemId)); if (!item) return;
+    const groupKey = item.deliveryId || `legacy:${orderId}:${item.category}`;
+    if (!this._intakeDrafts.has(groupKey)) this._intakeDrafts.set(groupKey, {});
+    const draft = this._intakeDrafts.get(groupKey);
+    const key = `${orderId}::${itemId}`;
+    draft[key] = { ...(draft[key] || {}), outstandingQty: qty };
+    this._intakeRerenderCardOnly(orderId, item.category, groupKey);
+  },
+
+  // Resolving a short-delivery follow-up. 'coming' = purchasing confirmed the rest is on
+  // its way, so it becomes a tracked back order; 'dismiss' = nothing more is coming, close
+  // the line. Staged like any other edit — still needs Confirm.
+  intakeResolveFollowUp(orderId, itemId, action) {
+    const order = this.orders.find(o => o._id === orderId); if (!order) return;
+    const item = (order.items || []).find(i => String(i.id) === String(itemId)); if (!item) return;
+    const groupKey = item.deliveryId || `legacy:${orderId}:${item.category}`;
+    if (!this._intakeDrafts.has(groupKey)) this._intakeDrafts.set(groupKey, {});
+    const draft = this._intakeDrafts.get(groupKey);
+    const key = `${orderId}::${itemId}`;
+    const saved = ((order.intake && order.intake.items) || {})[String(itemId)] || {};
+    const cur = { ...saved, ...(draft[key] || {}) };
+    if (action === 'coming') {
+      draft[key] = { ...(draft[key] || {}), outstandingQty: Math.max(0, (item.qty || 0) - (cur.qtyReceived || 0)) };
+    } else {
+      draft[key] = { ...(draft[key] || {}), followUpDone: true };
+    }
+    this._intakeRerenderCardOnly(orderId, item.category, groupKey);
+  },
+
+  // "Arrived" on a back-ordered line — books the outstanding amount as received in one
+  // tap: adds it to what came before, fills the line to OK if that completes it, and
+  // clears the outstanding so it drops off the Back Orders tab. Staged like any other
+  // edit, so it still needs Confirm (and consumables stock follows via the stock tag).
+  intakeMarkArrived(orderId, itemId) {
+    const order = this.orders.find(o => o._id === orderId); if (!order) return;
+    const item = (order.items || []).find(i => String(i.id) === String(itemId)); if (!item) return;
+    const groupKey = item.deliveryId || `legacy:${orderId}:${item.category}`;
+    if (!this._intakeDrafts.has(groupKey)) this._intakeDrafts.set(groupKey, {});
+    const draft = this._intakeDrafts.get(groupKey);
+    const key = `${orderId}::${itemId}`;
+    const saved = ((order.intake && order.intake.items) || {})[String(itemId)] || {};
+    const cur   = { ...saved, ...(draft[key] || {}) };
+    const outstanding = Intake.outstandingOf(order, item, { [key]: cur });
+    if (outstanding <= 0) return;
+    const already   = cur.status === 'ok' ? (item.qty || 0) : (cur.qtyReceived || 0);
+    const nowRecv   = already + outstanding;
+    const isComplete = nowRecv >= (item.qty || 0);
+    draft[key] = {
+      ...(draft[key] || {}),
+      status: isComplete ? 'ok' : 'partial',
+      qtyReceived: isComplete ? null : nowRecv,
+      outstandingQty: 0,
+    };
     this._intakeRerenderCardOnly(orderId, item.category, groupKey);
   },
 
@@ -1143,7 +1222,7 @@ const Manager = {
       return;
     }
 
-    const boEntries = group.entries.filter(({ order: o, item }) => Intake._itemStatus(o, item) === 'backorder');
+    const boEntries = group.entries.filter(({ order: o, item }) => Intake.outstandingOf(o, item) > 0);
     const boSafe  = `${groupKey}|||bo`.replace(/[^a-zA-Z0-9]/g, '_');
     const boEl    = document.getElementById(`intake-card-${boSafe}`);
     if (boEl) {
@@ -1167,9 +1246,11 @@ const Manager = {
     const merged = Intake.mergeDraftEntries(group.entries, draft);
 
     // Flat display: entries sharing the same mergeKey (same material across orders) show
-    // as one row keyed to the first entry's order. Propagate that representative's STATUS
-    // to all other same-material entries — but not its qtyReceived or notes, which
-    // describe the delivery total, not each order's share.
+    // as one row keyed to the first entry's order. Propagate that representative's STATUS,
+    // outstanding and follow-up state to all other same-material entries — but not its
+    // qtyReceived or notes, which describe the delivery total, not each order's share.
+    // (Without propagating outstanding/follow-up, clearing them on a merged row would
+    // leave the other orders' lines still flagged on the Back Orders / follow-up views.)
     const byMergeKey = new Map();
     const propagated = new Set();
     for (const e of group.entries) {
@@ -1179,11 +1260,16 @@ const Manager = {
     }
     for (const itemEntries of byMergeKey.values()) {
       if (itemEntries.length < 2) continue;
-      const repStatus = merged[`${itemEntries[0].order._id}::${itemEntries[0].item.id}`];
-      if (!repStatus || repStatus.status === undefined) continue;
+      const rep = merged[`${itemEntries[0].order._id}::${itemEntries[0].item.id}`];
+      if (!rep || rep.status === undefined) continue;
       for (const { order, item } of itemEntries.slice(1)) {
         const ck = `${order._id}::${item.id}`;
-        merged[ck] = { ...(merged[ck] || {}), status: repStatus.status };
+        merged[ck] = {
+          ...(merged[ck] || {}),
+          status: rep.status,
+          outstandingQty: rep.outstandingQty ?? 0,
+          followUpDone: rep.followUpDone ?? false,
+        };
         propagated.add(ck);
       }
     }
@@ -1860,7 +1946,7 @@ const Manager = {
       for (const g of groups) {
         const status = Intake.computeCategoryStatusEntries(g.entries);
         if (!Intake.TAB_RESOLVED.has(status)) { count++; continue; }
-        const hasBO = g.entries.some(({ order, item }) => Intake._itemStatus(order, item) === 'backorder');
+        const hasBO = g.entries.some(({ order, item }) => Intake.outstandingOf(order, item) > 0);
         if (hasBO) count++;
       }
       return count;
@@ -1871,6 +1957,17 @@ const Manager = {
     const cb = document.getElementById('deliveries-cons-badge');
     if (mb) { mb.textContent = matN;  mb.classList.toggle('zero', matN  === 0); }
     if (cb) { cb.textContent = consN; cb.classList.toggle('zero', consN === 0); }
+
+    // Short deliveries with no explanation — surfaced separately from the outstanding
+    // count, since they're a "chase purchasing" job rather than something to receive.
+    const countFollowUp = type => Intake.buildCategoryGroups(this.orders, type)
+      .filter(g => Intake.deliveryNeedsFollowUp(g.entries)).length;
+    [['materials', 'followup-mat-badge'], ['consumables', 'followup-cons-badge']].forEach(([type, id]) => {
+      const el = document.getElementById(id); if (!el) return;
+      const n = countFollowUp(type);
+      el.textContent = n;
+      el.style.display = n > 0 ? '' : 'none';
+    });
   },
 
   renderQueue() {

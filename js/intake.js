@@ -1,4 +1,4 @@
-// intake.js — v0.44
+// intake.js — v0.45
 // Shared intake rendering module used by warehouse.html and manager.html.
 
 const Intake = {
@@ -121,13 +121,48 @@ const Intake = {
   // for the same one). Only fall back to id when there's no part code at all.
   mergeKey(item) { return item.partCode ? `pc:${item.partCode}` : `id:${item.id}`; },
 
+  // ── BACK ORDER REMAINDERS ────────────────────────────────────────────
+  // A back order is a KNOWN future shipment — the supplier has said the rest is coming —
+  // so it's tracked as a quantity ("4 of 10 still to come"), not just a flag, and stays
+  // on the Back Orders tab until it's received. This is independent of `status`: an item
+  // can be part-received (status 'partial', 6 arrived) AND have 4 outstanding.
+  // A short PARTIAL with nothing outstanding is a different thing — an unexplained
+  // shortfall the manager chases with purchasing (see needsFollowUp).
+
+  // How many of an item are still expected. Reads a merged/draft map when given one so
+  // staged edits show live, otherwise the saved intake.
+  outstandingOf(order, item, merged) {
+    const it = merged ? (merged[`${order._id}::${item.id}`] || {})
+                      : (((order.intake && order.intake.items) || {})[String(item.id)] || {});
+    if (it.outstandingQty !== undefined && it.outstandingQty !== null) return it.outstandingQty || 0;
+    // Legacy data: a back-ordered item recorded before quantities existed means the
+    // whole line is still outstanding.
+    return it.status === 'backorder' ? (item.qty || 0) : 0;
+  },
+
+  // An UNEXPLAINED shortfall: less arrived than was ordered and nothing has been declared
+  // as still coming — nobody has said why. That's a question for purchasing, which is a
+  // different thing from a back order (a known future shipment). Cleared either by
+  // flagging the rest as coming (it becomes a back order) or by writing it off.
+  needsFollowUp(order, item, merged) {
+    const it = merged ? (merged[`${order._id}::${item.id}`] || {})
+                      : (((order.intake && order.intake.items) || {})[String(item.id)] || {});
+    if (it.status !== 'partial' || it.followUpDone) return false;
+    if ((it.qtyReceived || 0) >= (item.qty || 0)) return false;   // nothing short
+    return this.outstandingOf(order, item, merged) <= 0;          // a back order isn't a follow-up
+  },
+  deliveryNeedsFollowUp(entries) {
+    return entries.some(({ order, item }) => this.needsFollowUp(order, item));
+  },
+
   computeCategoryStatusEntries(entries) {
     if (!entries.length) return 'pending';
     const statuses = entries.map(({ order, item }) => this._itemStatus(order, item));
     if (statuses.every(s => s === 'pending')) return 'pending';
     if (!statuses.every(s => this.RESOLVED_STATUSES.has(s))) return 'in_progress';
+    // Anything still expected keeps the delivery on Back Order, even if some arrived.
+    if (entries.some(({ order, item }) => this.outstandingOf(order, item) > 0)) return 'backorder';
     if (statuses.every(s => s === 'ok')) return 'received';
-    if (statuses.some(s => s === 'backorder')) return 'backorder';
     return 'completed';
   },
 
@@ -279,7 +314,7 @@ const Intake = {
       for (const g of groups) {
         const status   = this.computeCategoryStatusEntries(g.entries);
         const resolved = this.TAB_RESOLVED.has(status);
-        const boEntries = resolved ? g.entries.filter(({ order, item }) => this._itemStatus(order, item) === 'backorder') : [];
+        const boEntries = resolved ? g.entries.filter(({ order, item }) => this.outstandingOf(order, item) > 0) : [];
 
         if (filter === 'all') {
           cards.push(g);
@@ -342,6 +377,13 @@ const Intake = {
     const hasDraft   = !readOnly && draftForCard && Object.keys(draftForCard).length > 0;
     const canConfirm = hasDraft && this.canConfirmEntries(entries, draftForCard);
 
+    // Follow-up tag — any line short with no explanation (see needsFollowUp). Reflects
+    // staged edits too, so resolving it on the card clears the tag immediately.
+    const fuMerged    = this.mergeDraftEntries(entries, draftForCard);
+    const hasFollowUp = !isCancelledCard && entries.some(({ order, item }) => this.needsFollowUp(order, item, fuMerged));
+    const followUpTag = hasFollowUp
+      ? `<span class="intake-followup-tag" title="Short delivery with no explanation — check with purchasing"><i class="ti ti-alert-triangle"></i> Follow up</span>` : '';
+
     // Consumables stock tag — three states: nothing applied yet ("Add to stock"),
     // applied and matching ("In stock"), or applied but the received quantities have
     // since changed ("Update stock" — a later apply posts just the difference). Only on
@@ -386,6 +428,7 @@ const Intake = {
             ${readOnly && showRestore ? `<button class="intake-restore-btn" data-restore="${esc(groupKey)}" title="Restore to active tracking"><i class="ti ti-arrow-back-up"></i> Restore</button>` : ''}
             ${isOpen && hasDraft && !canConfirm ? `<button class="intake-save-btn" data-save="${esc(cardKey)}" title="Save progress — some items still need a status"><i class="ti ti-device-floppy"></i> Save</button>` : ''}
             ${isOpen && hasDraft && canConfirm ? `<button class="intake-confirm-btn" data-confirm="${esc(cardKey)}" title="Confirm and save changes"><i class="ti ti-check"></i> Confirm</button>` : ''}
+            ${followUpTag}
             ${stockTag}
             ${this.statusBadge(badgeStatus)}
             <i class="ti ${isOpen ? 'ti-chevron-up' : 'ti-chevron-down'} intake-chevron"></i>
@@ -471,6 +514,16 @@ const Intake = {
     const notesOpen  = !readOnly && (this._openNotes.has(noteKey) || (!!notes && !this._closedNotes.has(noteKey)));
     const showCode   = item.partCode && !Data.isDummyCode(item.partCode);
     const orderLabel = showOrderLabel ? (order.deviceName || order.ref || order._id) : '';
+    // "Still to come" (a known future shipment) applies once the line is short: B/O means
+    // the whole line is coming, a short Partial can have some of it coming. Defaults are
+    // set when the status button is pressed (see the host pages' intakeSetStatus).
+    const outstanding     = istate.outstandingQty != null ? istate.outstandingQty : 0;
+    const showOutstanding = !readOnly && (status === 'backorder' || status === 'partial');
+    // A short Partial with nothing declared as coming is an unexplained shortfall —
+    // flag it for the manager to chase purchasing (see needsFollowUp).
+    const shortBy       = (item.qty || 0) - (qtyRecv || 0);
+    const needsFollowUp = !readOnly && status === 'partial' && !istate.followUpDone
+      && shortBy > 0 && outstanding <= 0;
 
     if (readOnly) {
       return `
@@ -526,6 +579,22 @@ const Intake = {
             value="${qtyRecv != null ? qtyRecv : ''}" placeholder="qty"
             data-partial-item="${esc(String(item.id))}" data-partial-order="${esc(order._id)}">
           <span class="intake-of-label">of ${esc(orderQtyDisplay(item, item.qty))}</span>
+        </div>` : ''}
+        ${showOutstanding ? `
+        <div class="intake-partial-row intake-outstanding-row">
+          <label>Still to come:</label>
+          <input class="intake-partial-input" type="number" min="0" step="1"
+            value="${outstanding || ''}" placeholder="0"
+            data-outstanding-item="${esc(String(item.id))}" data-outstanding-order="${esc(order._id)}">
+          <span class="intake-of-label">of ${esc(orderQtyDisplay(item, item.qty))}</span>
+          ${outstanding > 0 ? `<button class="intake-arrived-btn" data-arrived-item="${esc(String(item.id))}" data-arrived-order="${esc(order._id)}" title="The outstanding amount has now arrived"><i class="ti ti-check"></i> Arrived</button>` : ''}
+        </div>` : ''}
+        ${needsFollowUp ? `
+        <div class="intake-followup-row">
+          <i class="ti ti-alert-triangle"></i>
+          <span>Short by ${shortBy} — check with purchasing</span>
+          <button class="intake-fu-btn coming" data-followup-action="coming" data-followup-item="${esc(String(item.id))}" data-followup-order="${esc(order._id)}" title="Purchasing confirmed the rest is on its way — track it as a back order">Rest is coming</button>
+          <button class="intake-fu-btn" data-followup-action="dismiss" data-followup-item="${esc(String(item.id))}" data-followup-order="${esc(order._id)}" title="Nothing more is coming — close this line">No more coming</button>
         </div>` : ''}
         ${notesOpen ? `
         <div class="intake-notes-row">
@@ -599,6 +668,20 @@ const Intake = {
         return;
       }
 
+      // "Arrived" on a back-ordered line — books the outstanding amount as received.
+      const arrivedBtn = e.target.closest('[data-arrived-item]');
+      if (arrivedBtn) {
+        if (callbacks.onArrived) callbacks.onArrived(arrivedBtn.dataset.arrivedOrder, arrivedBtn.dataset.arrivedItem);
+        return;
+      }
+
+      // Resolving a short-delivery follow-up: 'coming' (becomes a back order) or 'dismiss'.
+      const fuBtn = e.target.closest('[data-followup-action]');
+      if (fuBtn) {
+        if (callbacks.onFollowUp) callbacks.onFollowUp(fuBtn.dataset.followupOrder, fuBtn.dataset.followupItem, fuBtn.dataset.followupAction);
+        return;
+      }
+
       // Restore button (cancelled cards) — also sits inside the header.
       const restoreBtn = e.target.closest('[data-restore]');
       if (restoreBtn) {
@@ -639,6 +722,10 @@ const Intake = {
       const inp = e.target.closest('[data-partial-item]');
       if (inp && callbacks.onQtyChange) {
         callbacks.onQtyChange(inp.dataset.partialOrder, inp.dataset.partialItem, parseInt(inp.value) || 0);
+      }
+      const out = e.target.closest('[data-outstanding-item]');
+      if (out && callbacks.onOutstandingChange) {
+        callbacks.onOutstandingChange(out.dataset.outstandingOrder, out.dataset.outstandingItem, parseInt(out.value) || 0);
       }
     });
 
