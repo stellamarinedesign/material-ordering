@@ -1,4 +1,4 @@
-// firebase-sync.js — v0.46
+// firebase-sync.js — v0.47
 let _db = null, _configured = false;
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -562,6 +562,40 @@ const DB = {
       reorderQty: 0,
       warningQty: 0,
       tracked:    true,
+    }, { merge: true });
+  },
+
+  // Remembers a scanned barcode against a consumable, so the next scan of that box
+  // resolves straight to the item. Built up by scanning rather than data entry — the
+  // codes are whatever the manufacturer printed, and an item can have several (brands
+  // and pack sizes differ). Guards against the same code being linked to two different
+  // items (throws BARCODE_IN_USE with the other item's stock id attached). Every link
+  // is logged with who/when in barcodeLog — the item's own audit trail, deliberately
+  // separate from the stock movement history.
+  async linkBarcode(stockId, code, by) {
+    if (!this.isReady()) throw new Error('Firebase not initialised');
+    const c = String(code).trim();
+    const dup = await _db.collection('stock').where('barcodes', 'array-contains', c).get();
+    const other = dup.docs.find(d => d.id !== stockId);
+    if (other) {
+      const e = new Error('BARCODE_IN_USE');
+      e.existingId = other.id;
+      throw e;
+    }
+    await _db.collection('stock').doc(stockId).set({
+      barcodes:   firebase.firestore.FieldValue.arrayUnion(c),
+      // serverTimestamp() isn't allowed inside arrayUnion — client time is fine for audit
+      barcodeLog: firebase.firestore.FieldValue.arrayUnion({ code: c, action: 'linked', by: by || '', at: Date.now() }),
+    }, { merge: true });
+  },
+
+  // Removes a wrongly-linked barcode (kept in the log so the mistake is traceable).
+  async unlinkBarcode(stockId, code, by) {
+    if (!this.isReady()) throw new Error('Firebase not initialised');
+    const c = String(code).trim();
+    await _db.collection('stock').doc(stockId).set({
+      barcodes:   firebase.firestore.FieldValue.arrayRemove(c),
+      barcodeLog: firebase.firestore.FieldValue.arrayUnion({ code: c, action: 'unlinked', by: by || '', at: Date.now() }),
     }, { merge: true });
   },
 

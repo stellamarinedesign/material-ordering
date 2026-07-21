@@ -1,6 +1,6 @@
-// shared.js — v0.46
+// shared.js — v0.47
 
-const APP_VERSION = 'v0.46';
+const APP_VERSION = 'v0.47';
 
 // Numeric version comparison (handles "v0.9" vs "v0.10" correctly, unlike
 // plain string comparison). Returns true if `a` is strictly newer than `b`.
@@ -435,6 +435,49 @@ function orderQtyDisplay(item, qty) {
   const plural = qty === 1 ? u : (/box$/i.test(u) ? u + 'es' : u + 's');
   return `${qty} ${plural}`;
 }
+
+// ── BARCODE SCANNER (HID keyboard-wedge) ─────────────────────────────────
+// Bluetooth scanners like the Tecor IS-5700LB pair as a keyboard and "type" the
+// decoded barcode, normally ending with Enter — no driver or API involved. We spot
+// them by the burst pattern: several characters arriving far faster than anyone can
+// type. That means a scan is picked up wherever you are on the page, with no need to
+// tap into a field first.
+//
+// When the cursor IS in a text field the scan is left alone to type normally, so the
+// existing "tap the search box and scan" behaviour still works and we never double up.
+const BarcodeScanner = {
+  MAX_GAP:  60,   // ms between keys — slower than this reads as human typing
+  MIN_LEN:  4,    // shorter bursts are ignored
+  END_WAIT: 90,   // ms of quiet that ends a scan when the scanner sends no Enter
+  _buf: '', _last: 0, _timer: null,
+
+  start(onScan) {
+    document.addEventListener('keydown', e => {
+      const el = document.activeElement;
+      if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) {
+        this._buf = ''; return;   // typing into a field — leave it be
+      }
+      const now = Date.now();
+      if (now - this._last > this.MAX_GAP) this._buf = '';
+      this._last = now;
+      clearTimeout(this._timer);
+
+      if (e.key === 'Enter') {
+        if (this._buf.trim().length >= this.MIN_LEN) e.preventDefault();
+        this._flush(onScan);
+      } else if (e.key.length === 1) {
+        this._buf += e.key;
+        this._timer = setTimeout(() => this._flush(onScan), this.END_WAIT);
+      }
+    });
+  },
+
+  _flush(onScan) {
+    const code = this._buf.trim();
+    this._buf = '';
+    if (code.length >= this.MIN_LEN) onScan(code);
+  },
+};
 
 const ConsumablesDeviceName = {
   _key: 'cons_device_name',

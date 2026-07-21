@@ -20,6 +20,9 @@
 <script src="js/intake.js"></script>
 <!-- Vendored xlsx-js-style (SheetJS fork with cell styling) — stocktake Excel exports -->
 <script src="js/xlsx-style.min.js"></script>
+<!-- Vendored ExcelJS — used only for the consumables export, which embeds drawn
+     barcode images (xlsx-js-style can't embed images) -->
+<script src="js/exceljs.min.js"></script>
 <script>
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.getRegistrations().then(rs => rs.forEach(r => r.unregister()));
@@ -82,6 +85,9 @@ const Manager = {
   // In-flight keys for async buttons without a confirm dialog — a double-tap would
   // otherwise apply the action twice (e.g. add stock twice, submit a duplicate order).
   _opBusy:            new Set(),
+
+  // Consumable barcodes panel filter ('all' | 'missing' | 'has')
+  _bcFilter:          'all',
 
   // Materials stocktake tab state
   _stocktakeView:     'qty',   // 'qty' | 'count' | 'history'
@@ -383,6 +389,8 @@ const Manager = {
           <div class="stock-action-buttons">
             <button class="btn-sm btn-sm-save" id="btn-receive-stock"><i class="ti ti-truck-delivery"></i> Receive Stock</button>
             <button class="btn-sm" id="btn-new-cons-order"><i class="ti ti-plus"></i> New Consumables Order</button>
+            <button class="btn-sm" id="btn-cons-barcodes"><i class="ti ti-barcode"></i> Barcodes</button>
+            <button class="btn-sm" id="btn-export-cons"><i class="ti ti-file-spreadsheet"></i> Export consumables</button>
             <button class="btn-sm" id="btn-reorder-all" style="display:none"><i class="ti ti-refresh"></i> Reorder All</button>
           </div>
           <div id="stock-low-banner" style="display:none" class="low-stock-banner">
@@ -602,6 +610,24 @@ const Manager = {
               <span class="sidebar-count zero" id="receive-badge" style="margin-left:4px">0</span>
             </button>
           </div></div>
+        </div>
+
+        <!-- CONSUMABLES BARCODES PANEL — which items are barcoded, by whom, unlink -->
+        <div class="panel" id="barcodes-panel">
+          <div class="panel-header">
+            <button class="back-btn" id="btn-close-barcodes"><i class="ti ti-chevron-left"></i>Back</button>
+            <div class="panel-title">Consumable Barcodes</div>
+            <div class="panel-spacer"></div>
+          </div>
+          <div class="col" style="padding-top:10px;padding-bottom:0;flex-shrink:0">
+            <div style="font-size:12px;color:var(--text2);margin-bottom:8px" id="barcodes-summary"></div>
+            <div class="intake-filter-bar" id="barcodes-filter">
+              <div class="intake-filter-chip active" data-bc-filter="all">All</div>
+              <div class="intake-filter-chip" data-bc-filter="missing"><i class="ti ti-barcode-off"></i> No barcode yet</div>
+              <div class="intake-filter-chip" data-bc-filter="has"><i class="ti ti-barcode"></i> Barcoded</div>
+            </div>
+          </div>
+          <div class="app-scroll"><div class="col" id="barcodes-list" style="padding-top:10px"></div></div>
         </div>
 
         <!-- SETTINGS PANEL -->
@@ -961,6 +987,23 @@ const Manager = {
     });
     document.getElementById('btn-reorder-all').addEventListener('click', () => this.stockReorderAll());
 
+    // Consumable barcodes panel
+    document.getElementById('btn-cons-barcodes').addEventListener('click', () => { this.renderBarcodesPanel(); this.openPanel('barcodes-panel'); });
+    document.getElementById('btn-close-barcodes').addEventListener('click', () => this.closePanel('barcodes-panel'));
+    document.getElementById('barcodes-filter').addEventListener('click', e => {
+      const chip = e.target.closest('[data-bc-filter]'); if (!chip) return;
+      this._bcFilter = chip.dataset.bcFilter;
+      document.querySelectorAll('#barcodes-filter .intake-filter-chip').forEach(c => c.classList.toggle('active', c === chip));
+      this.renderBarcodesPanel();
+    });
+    document.getElementById('barcodes-list').addEventListener('click', e => {
+      const unlink = e.target.closest('[data-bc-unlink]');
+      const add    = e.target.closest('[data-bc-add]');
+      if (unlink) this.bcUnlink(unlink.dataset.sid, unlink.dataset.bcUnlink);
+      if (add)    this.bcManualAdd(add.dataset.bcAdd);
+    });
+    document.getElementById('btn-export-cons').addEventListener('click', () => this.exportConsumables());
+
     // History delegated listener
     document.getElementById('history-list').addEventListener('click', e => {
       const more       = e.target.closest('[data-hist-more]');
@@ -999,6 +1042,15 @@ const Manager = {
     this.renderCoList();
     this.renderReceiveTabs();
     this.renderReceiveList();
+
+    // Scanner support for the Barcodes panel — the manager page can be opened on the
+    // consumables iPad (where the scanner is paired), which makes setup fast: filter
+    // to "No barcode yet", scan a box, pick the item. Scans are ignored unless the
+    // panel is open, so they can't do anything surprising elsewhere on this page.
+    if (!this._scannerStarted) {
+      this._scannerStarted = true;
+      BarcodeScanner.start(code => this._onScanMgr(code));
+    }
   },
 
   openPanel(id)  { document.getElementById(id)?.classList.add('open'); },
@@ -3371,6 +3423,7 @@ const Manager = {
       // whenever stock data changes too — not just the Stock tab itself.
       this.renderCoList();
       this.renderReceiveList();
+      if (document.getElementById('barcodes-panel')?.classList.contains('open')) this.renderBarcodesPanel();
     });
   },
 
@@ -3802,6 +3855,270 @@ const Manager = {
     this.renderCoList();
     this.openPanel('cons-order-panel');
     this.coOpenReview();
+  },
+
+  // ══════════════════════════════════════════
+  // CONSUMABLE BARCODES — oversight panel + Excel export with drawn barcodes.
+  // Linking happens on the consumables iPad (setup mode) where the scanner lives;
+  // this panel is for keeping track: coverage, who linked what and when, unlinking
+  // mistakes, and typing a code in manually as a fallback.
+  // ══════════════════════════════════════════
+  // Scans only matter here while the Barcodes panel is open (this page is normally on
+  // the PC with no scanner; on the consumables iPad it turns the panel into the setup
+  // tool). Known code → flash its row so you can verify the link; unknown → pick the
+  // item it belongs to and it's linked on the spot.
+  _onScanMgr(code) {
+    if (!document.getElementById('barcodes-panel')?.classList.contains('open')) return;
+    const rec = this._stock.find(r => (r.barcodes || []).some(b => String(b).toLowerCase() === String(code).trim().toLowerCase()));
+    if (rec) {
+      const m = this.consumables.find(x => stockId(x) === rec._id);
+      this._toast(`Linked to: ${m ? m.description : rec._id}`);
+      const row = document.getElementById(`bc-row-${rec._id}`);
+      if (row) {
+        row.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        row.classList.remove('bc-hit'); void row.offsetWidth; // restart the flash animation
+        row.classList.add('bc-hit');
+      }
+      return;
+    }
+    this._bcPromptLink(code);
+  },
+
+  _toast(msg, isWarning) {
+    let el = document.getElementById('scan-toast');
+    if (!el) { el = document.createElement('div'); el.id = 'scan-toast'; document.body.appendChild(el); }
+    el.className = `scan-toast${isWarning ? ' warn' : ''} show`;
+    el.innerHTML = `<i class="ti ${isWarning ? 'ti-alert-triangle' : 'ti-circle-check'}"></i> ${esc(msg)}`;
+    clearTimeout(this._toastTimer);
+    this._toastTimer = setTimeout(() => el.classList.remove('show'), 2600);
+  },
+
+  // Unknown barcode scanned with the panel open: choose which item it belongs to.
+  _bcPromptLink(code) {
+    const items = [...this.consumables].sort((a,b) => descCompare(a.description, b.description));
+    const ow = document.getElementById('overlay-wrap');
+    const rows = items.map(m => `<button class="scan-link-row" data-link-sid="${esc(stockId(m))}">${esc(m.description)}</button>`).join('');
+    ow.innerHTML = `
+      <div class="success-overlay">
+        <div class="success-card" style="max-width:420px">
+          <div class="success-icon blue"><i class="ti ti-barcode"></i></div>
+          <h3>New barcode</h3>
+          <p style="margin-bottom:8px">Which item is this? It'll be remembered for next time.<br>
+            <span style="font-family:var(--mono);font-size:12px">${esc(code)}</span></p>
+          <input class="checkout-name-input" type="search" id="bc-link-search" placeholder="Search items…" autocomplete="off"
+            style="width:100%;border:1px solid var(--border);background:var(--bg);border-radius:var(--radius);padding:8px 12px;font-size:14px;outline:none;margin-bottom:8px">
+          <div class="scan-link-list" id="bc-link-list">${rows}</div>
+          <button class="btn btn-outline" id="btn-bc-link-cancel" style="width:100%;margin-top:10px">Cancel</button>
+        </div>
+      </div>`;
+    const search = document.getElementById('bc-link-search');
+    search.addEventListener('input', () => {
+      const q = search.value.toLowerCase();
+      document.querySelectorAll('#bc-link-list .scan-link-row').forEach(r => {
+        r.style.display = r.textContent.toLowerCase().includes(q) ? '' : 'none';
+      });
+    });
+    document.getElementById('bc-link-list').addEventListener('click', async e => {
+      const row = e.target.closest('[data-link-sid]'); if (!row) return;
+      const sid = row.dataset.linkSid;
+      const m = this.consumables.find(x => stockId(x) === sid);
+      ow.innerHTML = '';
+      const s = Settings.get();
+      try {
+        await DB.linkBarcode(sid, code, `${(s.managerName || 'Manager').trim() || 'Manager'} — setup`);
+        this._toast(`Linked to: ${m ? m.description : sid}`);
+        setTimeout(() => this.renderBarcodesPanel(), 300);
+      } catch (err) {
+        if (err.message === 'BARCODE_IN_USE') {
+          const other = this.consumables.find(x => stockId(x) === err.existingId);
+          this._toast(`Already linked to: ${other ? other.description : 'another item'}`, true);
+        } else alert('Failed to link: ' + err.message);
+      }
+    });
+    document.getElementById('btn-bc-link-cancel').addEventListener('click', () => { ow.innerHTML = ''; });
+  },
+
+  renderBarcodesPanel() {
+    const el = document.getElementById('barcodes-list'); if (!el) return;
+    const items = [...this.consumables].sort((a,b) =>
+      naturalCompare(a.category, b.category) || descCompare(a.description, b.description));
+    const withBc = items.filter(m => (this._stockFor(stockId(m))?.barcodes || []).length > 0);
+    const summary = document.getElementById('barcodes-summary');
+    if (summary) summary.textContent = `${withBc.length} of ${items.length} consumables have a barcode linked.`;
+
+    const filtered = items.filter(m => {
+      const n = (this._stockFor(stockId(m))?.barcodes || []).length;
+      return this._bcFilter === 'missing' ? n === 0 : this._bcFilter === 'has' ? n > 0 : true;
+    });
+    if (!filtered.length) { el.innerHTML = `<div class="empty-state"><i class="ti ti-barcode-off"></i><p>Nothing here.</p></div>`; return; }
+
+    let html = '', lastCat = null;
+    for (const m of filtered) {
+      if (m.category !== lastCat) { html += `<div class="stocktake-section">${esc(m.category)}</div>`; lastCat = m.category; }
+      const sid = stockId(m);
+      const rec = this._stockFor(sid);
+      const codes = rec?.barcodes || [];
+      // Show the last few log entries so a wrong link is traceable to a device and time.
+      const log = (rec?.barcodeLog || []).slice(-3).reverse().map(l =>
+        `<div class="stocktake-row-meta">${l.action === 'unlinked' ? 'Removed' : 'Linked'} ${esc(l.code)} · ${esc(l.by || 'unknown')}${l.at ? ' · ' + fmtTime(new Date(l.at)) : ''}</div>`).join('');
+      html += `<div class="stocktake-row" style="flex-wrap:wrap" id="bc-row-${esc(sid)}">
+        <div class="stocktake-row-info">
+          <div class="stocktake-row-name">${esc(m.description)}</div>
+          <div style="display:flex;flex-wrap:wrap;gap:5px;margin-top:5px">
+            ${codes.map(c => `<span class="bc-chip">${esc(c)} <button class="bc-chip-x" data-bc-unlink="${esc(c)}" data-sid="${esc(sid)}" title="Remove this barcode">✕</button></span>`).join('')}
+            ${codes.length ? '' : '<span class="bc-chip none">no barcode yet</span>'}
+            <button class="btn-sm" data-bc-add="${esc(sid)}" style="font-size:10px;padding:2px 8px"><i class="ti ti-plus"></i> Add</button>
+          </div>
+          ${log}
+        </div>
+      </div>`;
+    }
+    el.innerHTML = html;
+  },
+
+  async bcUnlink(sid, code) {
+    const m = this.consumables.find(x => stockId(x) === sid);
+    if (!confirm(`Remove barcode ${code} from "${m ? m.description : sid}"? Scanning it will no longer match this item.`)) return;
+    const s = Settings.get();
+    try {
+      await DB.unlinkBarcode(sid, code, (s.managerName || 'Manager').trim() || 'Manager');
+      // The stock listener will re-render, but do it now so it feels immediate.
+      setTimeout(() => this.renderBarcodesPanel(), 300);
+    } catch (e) { alert('Failed to remove: ' + e.message); }
+  },
+
+  // Add a barcode to a specific item. On the consumables iPad you can just SCAN into
+  // this dialog — the scanner types the code and its Enter submits the prompt. On the
+  // PC (no scanner), type or paste the number off the box.
+  async bcManualAdd(sid) {
+    const m = this.consumables.find(x => stockId(x) === sid);
+    const code = prompt(`Scan the barcode now, or type the number, for:\n${m ? m.description : sid}`);
+    if (!code || !code.trim()) return;
+    const s = Settings.get();
+    try {
+      await DB.linkBarcode(sid, code.trim(), (s.managerName || 'Manager').trim() || 'Manager');
+      setTimeout(() => this.renderBarcodesPanel(), 300);
+    } catch (e) {
+      if (e.message === 'BARCODE_IN_USE') {
+        const other = this.consumables.find(x => stockId(x) === e.existingId);
+        alert(`That barcode is already linked to: ${other ? other.description : 'another item'}\n\nRemove it there first if it's wrong.`);
+      } else alert('Failed to link: ' + e.message);
+    }
+  },
+
+  // Draws a Code 128 barcode onto a canvas and returns a PNG data URL. Pure-digit
+  // even-length values use code set C (compact), everything else set B. Returns null
+  // for values that can't be encoded. Standard 107-symbol width table.
+  code128DataUrl(text, opts = {}) {
+    const P = [
+      '212222','222122','222221','121223','121322','131222','122213','122312','132212','221213',
+      '221312','231212','112232','122132','122231','113222','123122','123221','223211','221132',
+      '221231','213212','223112','312131','311222','321122','321221','312212','322112','322211',
+      '212123','212321','232121','111323','131123','131321','112313','132113','132311','211313',
+      '231113','231311','112133','112331','132131','113123','113321','133121','313121','211331',
+      '231131','213113','213311','213131','311123','311321','331121','312113','312311','332111',
+      '314111','221411','431111','111224','111422','121124','121421','141122','141221','112214',
+      '112412','122114','122411','142112','142211','241211','221114','413111','241112','134111',
+      '111242','121142','121241','114212','124112','124211','411212','421112','421211','212141',
+      '214121','412121','111143','111341','131141','114113','114311','411113','411311','113141',
+      '114131','311141','411131','211412','211214','211232','2331112',
+    ];
+    const s = String(text).trim();
+    if (!s) return null;
+    let vals;
+    if (/^\d+$/.test(s) && s.length % 2 === 0 && s.length >= 4) {
+      vals = [105];
+      for (let i = 0; i < s.length; i += 2) vals.push(+s.slice(i, i + 2));
+    } else {
+      vals = [104];
+      for (const ch of s) {
+        const c = ch.charCodeAt(0);
+        if (c < 32 || c > 126) return null;
+        vals.push(c - 32);
+      }
+    }
+    let sum = vals[0];
+    for (let i = 1; i < vals.length; i++) sum += vals[i] * i;
+    vals.push(sum % 103, 106);
+
+    const scale = opts.scale || 2, h = opts.height || 60, quiet = 10 * scale;
+    let modules = 0;
+    for (const v of vals) for (const d of P[v]) modules += +d;
+    const canvas = document.createElement('canvas');
+    canvas.width = modules * scale + quiet * 2;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = '#000';
+    let x = quiet;
+    for (const v of vals) {
+      let bar = true;
+      for (const d of P[v]) { const w = +d * scale; if (bar) ctx.fillRect(x, 0, w, h); x += w; bar = !bar; }
+    }
+    return { url: canvas.toDataURL('image/png'), width: canvas.width, height: canvas.height };
+  },
+
+  // Consumables list export (.xlsx via ExcelJS — the only export needing embedded
+  // images). One row per consumable, grouped into category sections, with recorded
+  // stock, a blank Counted column for a manual stocktake, the latest barcode DRAWN
+  // as a scannable image, and the code as text (doubles as a backup of the barcode
+  // data outside Firestore). Same template styling as the materials export.
+  async exportConsumables() {
+    if (typeof ExcelJS === 'undefined') { alert('Export library failed to load — refresh the page and try again.'); return; }
+    const thin = { style: 'thin', color: { argb: 'FF000000' } };
+    const BORDER    = { top: thin, left: thin, bottom: thin, right: thin };
+    const F_HEADER  = { name: 'Calibri', size: 11, bold: true, color: { argb: 'FFFFFFFF' } };
+    const F_SECTION = { name: 'Calibri', size: 11, bold: true };
+    const F_CELL    = { name: 'Calibri', size: 11, bold: true };
+    const F_QTY     = { name: 'Tahoma', size: 9 };
+    const FILL_HEADER  = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF000080' } };
+    const FILL_SECTION = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD9D9D9' } };
+
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Consumables');
+    ws.columns = [{ width: 12 }, { width: 42 }, { width: 10 }, { width: 10 }, { width: 10 }, { width: 34 }, { width: 16 }];
+
+    const header = ws.addRow(['Code', 'Description', 'Base Unit', 'In Stock', 'Counted', 'Barcode', 'Barcode #']);
+    header.eachCell(c => { c.font = F_HEADER; c.fill = FILL_HEADER; c.border = BORDER; });
+
+    const items = [...this.consumables].sort((a,b) =>
+      naturalCompare(a.category, b.category) || naturalCompare(a.subcategory, b.subcategory) || descCompare(a.description, b.description));
+
+    let lastSection = null;
+    for (const m of items) {
+      const section = `${m.category}${m.subcategory && m.subcategory !== 'General' ? ' — ' + m.subcategory : ''}`;
+      if (section !== lastSection) {
+        const r = ws.addRow([section, '', '', '', '', '', '']);
+        r.eachCell({ includeEmpty: true }, c => { c.font = F_SECTION; c.fill = FILL_SECTION; c.border = BORDER; });
+        ws.mergeCells(r.number, 1, r.number, 7);
+        lastSection = section;
+      }
+      const rec   = this._stockFor(stockId(m));
+      const codes = rec?.barcodes || [];
+      const last  = codes.length ? codes[codes.length - 1] : null;
+      const code  = m.partCode && !Data.isDummyCode(m.partCode) ? m.partCode : '';
+      const row = ws.addRow([code, m.description, m.qtyType || 'Each', rec?.tracked ? (rec.qty ?? 0) : '', '', '', last || '']);
+      row.getCell(1).font = F_CELL; row.getCell(2).font = F_CELL; row.getCell(3).font = F_CELL;
+      row.getCell(4).font = F_QTY;  row.getCell(5).font = F_QTY;  row.getCell(7).font = F_QTY;
+      row.eachCell({ includeEmpty: true }, c => { c.border = BORDER; });
+      if (last) {
+        const bc = this.code128DataUrl(last, { scale: 2, height: 60 });
+        if (bc) {
+          row.height = 34;
+          const imgId = wb.addImage({ base64: bc.url, extension: 'png' });
+          // ext is in pixels; halve the scale-2 canvas so module ratios stay exact.
+          ws.addImage(imgId, { tl: { col: 5.05, row: row.number - 1 + 0.06 }, ext: { width: Math.round(bc.width / 2), height: 38 } });
+        }
+      }
+    }
+
+    const buf  = await wb.xlsx.writeBuffer();
+    const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `Consumables_${new Date().toISOString().slice(0, 10)}.xlsx`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
   },
 
   // ══════════════════════════════════════════

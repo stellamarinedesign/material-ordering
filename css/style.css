@@ -707,6 +707,44 @@ button { cursor: pointer; }
 .st-mode-opt.active.add      { background: var(--green-bg); color: var(--green-text); font-weight: 700; }
 .st-mode-opt.active.subtract { background: var(--red-bg);   color: var(--red-text);   font-weight: 700; }
 
+/* ═══ BARCODE SCANNING (shared: consumables page + manager barcodes panel) ═══ */
+/* Scan confirmation toast — the scanner gives no feedback of its own */
+.scan-toast {
+  position: fixed; left: 50%; bottom: 88px; transform: translate(-50%, 12px);
+  display: flex; align-items: center; gap: 8px; max-width: 88vw;
+  background: var(--green-text); color: #fff; padding: 11px 16px;
+  border-radius: var(--radius-lg); font-size: 14px; font-weight: 600;
+  box-shadow: 0 6px 20px rgba(0,0,0,0.3); z-index: 200;
+  opacity: 0; pointer-events: none; transition: opacity 0.18s, transform 0.18s;
+}
+.scan-toast.show { opacity: 1; transform: translate(-50%, 0); }
+.scan-toast.warn { background: var(--red-text); }
+.scan-toast .ti { font-size: 18px; flex-shrink: 0; }
+/* Item picker shown when an unrecognised barcode is scanned during setup */
+.scan-link-list { display: flex; flex-direction: column; gap: 4px; max-height: 300px; overflow-y: auto; text-align: left; }
+.scan-link-row {
+  width: 100%; text-align: left; padding: 10px 12px; cursor: pointer;
+  border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--bg); color: var(--text); font-size: 13px; line-height: 1.3;
+}
+.scan-link-row:active { background: var(--bg2); }
+/* Flash a barcode-panel row when its code is scanned (verification) */
+@keyframes bc-hit-flash { 0% { background: var(--amber-bg); } 100% { background: var(--surface); } }
+.bc-hit { animation: bc-hit-flash 1.6s ease-out; }
+
+/* ═══ CONSUMABLE BARCODES (manager panel) ═══ */
+.bc-chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 11px; font-family: var(--mono); padding: 3px 6px 3px 9px;
+  border-radius: 20px; background: var(--blue-bg); color: var(--blue-text);
+  border: 1px solid var(--blue);
+}
+.bc-chip.none { background: var(--bg2); color: var(--text3); border-color: var(--border); padding-right: 9px; }
+.bc-chip-x {
+  border: none; background: none; color: var(--red-text); cursor: pointer;
+  font-size: 12px; line-height: 1; padding: 2px 3px;
+}
+
 /* ═══ MATERIALS STOCKTAKE (manager tab) ═══ */
 .stocktake-section {
   font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase;
