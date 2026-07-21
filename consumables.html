@@ -30,13 +30,24 @@
     .cons-tile {
       background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg);
       overflow: hidden; display: flex; flex-direction: column;
+      cursor: pointer; -webkit-tap-highlight-color: transparent;
+      transition: transform 0.06s;
     }
+    .cons-tile:active { transform: scale(0.97); }   /* tap feedback — the tile is the button */
     .cons-tile.in-order { border-color: var(--green); box-shadow: 0 0 0 1px var(--green); }
-    .cons-tile.out-of-stock { opacity: 0.55; }
+    .cons-tile.out-of-stock { opacity: 0.55; pointer-events: none; }
     .cons-tile-img { position: relative; width: 100%; aspect-ratio: 1 / 1; background: var(--bg2); }
     .cons-tile-img img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
     .cons-tile-icon { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 46px; }
     .cons-tile-badge { position: absolute; top: 6px; right: 6px; }
+    /* Count bubble — how many of this you've picked, readable at a glance */
+    .cons-tile-qty {
+      position: absolute; top: 6px; left: 6px; min-width: 26px; height: 26px; padding: 0 7px;
+      border-radius: 13px; background: var(--green); color: #fff;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 13px; font-weight: 700; font-family: var(--mono);
+      box-shadow: 0 1px 4px rgba(0,0,0,0.25);
+    }
     .cons-tile-body { padding: 8px 9px 9px; display: flex; flex-direction: column; gap: 7px; flex: 1; }
     .cons-tile-name { font-size: 12.5px; font-weight: 500; line-height: 1.3; color: var(--text); }
     .cons-tile-controls { display: flex; align-items: center; gap: 4px; margin-top: auto; }
@@ -235,13 +246,14 @@ const ConsApp = {
     });
     document.getElementById('cons-mat-list').addEventListener('click', e => {
       const dec=e.target.closest('[data-dec]'), inc=e.target.closest('[data-inc]');
-      const add=e.target.closest('[data-add]'), bin=e.target.closest('[data-bin]');
       const box=e.target.closest('[data-box]');
-      if (dec) { e.stopPropagation(); this.adj(+dec.dataset.dec, -1); }
-      if (inc) { e.stopPropagation(); this.adj(+inc.dataset.inc,  1); }
-      if (add) { e.stopPropagation(); this.quickAdd(+add.dataset.add); }
-      if (bin) { e.stopPropagation(); this.zero(+bin.dataset.bin); }
-      if (box) { e.stopPropagation(); this.addBox(+box.dataset.box); }
+      if (dec) { this.adj(+dec.dataset.dec, -1); return; }
+      if (inc) { this.adj(+inc.dataset.inc,  1); return; }
+      if (box) { this.addBox(+box.dataset.box); return; }
+      if (e.target.closest('.qty-input')) return; // typing an exact qty — don't also add one
+      // Tap anywhere else on a tile adds one: the fast path for walking the shelf.
+      const tile = e.target.closest('[data-tile]');
+      if (tile) this.adj(+tile.dataset.tile, 1);
     });
     document.getElementById('cons-mat-list').addEventListener('change', e => {
       const inp = e.target.closest('[data-qid]'); if (inp) this.setQty(+inp.dataset.qid, inp.value);
@@ -360,7 +372,6 @@ const ConsApp = {
   },
   adj(id,d)      { this.set(id, this.get(id)+d); this._changed(); },
   setQty(id,v)   { this.set(id, parseInt(v)||0); this._changed(); },
-  quickAdd(id)   { if(!this.get(id)) this.set(id,1); this._changed(); },
   // Secondary "take a box" action for boxed items — adds a whole box's worth of
   // individual units (clamped to available stock by set()). Individual +/− stays primary.
   addBox(id)     { const m = this.consumables.find(x=>x.id==id); if (!hasBoxTracking(m)) return; this.set(id, this.get(id) + m.boxSize); this._changed(); },
@@ -437,11 +448,15 @@ const ConsApp = {
       // session (_noImage) so it isn't re-requested on every re-render.
       const imgTag = this._noImage.has(sid) ? ''
         : `<img src="images/consumables/${esc(sid)}.jpg" alt="" loading="lazy" data-sid="${esc(sid)}">`;
-      return `<div class="cons-tile ${inOrder?'in-order':''} ${isZero?'out-of-stock':''}">
+      // The whole tile is the tap target — tap adds one, so you can walk the shelf and
+      // tap what you need. The stepper/box controls below opt out of that (they stop the
+      // click), and the count bubble shows what's picked at a glance.
+      return `<div class="cons-tile ${inOrder?'in-order':''} ${isZero?'out-of-stock':''}" data-tile="${m.id}">
         <div class="cons-tile-img">
           <div class="cons-tile-icon" style="background:${ci.bg}"><i class="ti ${ci.icon}" style="color:${ci.color}"></i></div>
           ${imgTag}
           ${stockBadge}
+          ${qty > 0 ? `<span class="cons-tile-qty">${qty}</span>` : ''}
         </div>
         <div class="cons-tile-body">
           <div class="cons-tile-name">${esc(m.description)}</div>
