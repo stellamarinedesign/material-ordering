@@ -895,6 +895,8 @@ const Manager = {
       if (rejectOrd)   { e.stopPropagation(); this.rejectOrder(rejectOrd.dataset.rejectOrder); return; }
       const rejectItem = e.target.closest('[data-reject-item]');
       if (rejectItem)  { e.stopPropagation(); this.rejectItem(rejectItem.dataset.rejectItem, rejectItem.dataset.partcode); return; }
+      const unrejItem  = e.target.closest('[data-unreject-item]');
+      if (unrejItem)   { e.stopPropagation(); this.unrejectItem(unrejItem.dataset.unrejectItem, unrejItem.dataset.partcode); return; }
       const resetCat   = e.target.closest('[data-reset-cat]');
       if (resetCat)    { e.stopPropagation(); this.resetCategoryEmailed(resetCat.dataset.resetCat, resetCat.dataset.category); return; }
       const resetGroup = e.target.closest('[data-reset-group]');
@@ -2117,7 +2119,7 @@ const Manager = {
                   <div class="combined-sub-device"><i class="ti ti-device-ipad" style="font-size:11px"></i><span>${esc(line.deviceName||line.orderRef||'Unknown')}</span><span style="margin-left:4px;opacity:0.6;font-size:10px">${line.submittedAt?fmtTime(line.submittedAt):''}</span><span style="font-size:10px;color:var(--text3);margin-left:4px">(excluded)</span></div>
                   <div style="display:flex;gap:4px">
                     <button class="btn-sm" data-unexclude="${esc(cat)}" data-order-id="${esc(line.orderId)}" data-partcode="${esc(pGroup.partCode)}" style="font-size:10px;padding:2px 6px">Restore</button>
-                    <button class="btn-sm btn-sm-danger" data-reject-item="${esc(line.orderId)}" data-partcode="${esc(pGroup.partCode)}" style="font-size:10px;padding:2px 6px" title="Reject item"><i class="ti ti-ban"></i></button>
+                    <button class="btn-sm btn-sm-danger" data-reject-item="${esc(line.orderId)}" data-partcode="${esc(pGroup.partCode)}" style="font-size:10px;padding:2px 6px" title="Reject this line — it leaves the combined list but the rest of the order stays; restore it from the order card below"><i class="ti ti-ban"></i> Reject</button>
                   </div>
                 </div>`).join('')}`;
             }
@@ -2151,7 +2153,7 @@ const Manager = {
                 ${isExc
                   ? `<div style="display:flex;gap:4px;flex-shrink:0">
                       <button class="btn-sm" data-unexclude="${esc(cat)}" data-order-id="${esc(line.orderId)}" data-partcode="${esc(pGroup.partCode)}" style="font-size:10px;padding:2px 6px">Restore</button>
-                      <button class="btn-sm btn-sm-danger" data-reject-item="${esc(line.orderId)}" data-partcode="${esc(pGroup.partCode)}" style="font-size:10px;padding:2px 6px" title="Reject item"><i class="ti ti-ban"></i></button>
+                      <button class="btn-sm btn-sm-danger" data-reject-item="${esc(line.orderId)}" data-partcode="${esc(pGroup.partCode)}" style="font-size:10px;padding:2px 6px" title="Reject this line — it leaves the combined list but the rest of the order stays; restore it from the order card below"><i class="ti ti-ban"></i> Reject</button>
                     </div>`
                   : `<div class="qty-row" style="flex-shrink:0">
                       <button class="qty-btn" data-cqdec="${esc(cat)}" data-order-id="${esc(line.orderId)}" data-partcode="${esc(pGroup.partCode)}">−</button>
@@ -2209,7 +2211,7 @@ const Manager = {
                   </div>
                   <div style="display:flex;gap:4px">
                     <button class="btn-sm" data-unexclude="${esc(cat)}" data-order-id="${esc(line.orderId)}" data-partcode="${esc(pGroup.partCode)}" style="font-size:10px;padding:2px 6px">Restore</button>
-                    <button class="btn-sm btn-sm-danger" data-reject-item="${esc(line.orderId)}" data-partcode="${esc(pGroup.partCode)}" style="font-size:10px;padding:2px 6px" title="Reject item"><i class="ti ti-ban"></i></button>
+                    <button class="btn-sm btn-sm-danger" data-reject-item="${esc(line.orderId)}" data-partcode="${esc(pGroup.partCode)}" style="font-size:10px;padding:2px 6px" title="Reject this line — it leaves the combined list but the rest of the order stays; restore it from the order card below"><i class="ti ti-ban"></i> Reject</button>
                   </div>
                 </div>`).join('');
               return mainRow + subRows + excludedRowsHtml;
@@ -2455,6 +2457,12 @@ const Manager = {
     try { await DB.rejectItem(orderId, partCode); } catch(e) { alert('Reject failed: ' + e.message); }
   },
 
+  // Undo for rejectItem — restoring is safe (the line just goes back to pending and
+  // reappears in the combined list), so no confirm dialog.
+  async unrejectItem(orderId, partCode) {
+    try { await DB.unrejectItem(orderId, partCode); } catch(e) { alert('Restore failed: ' + e.message); }
+  },
+
   async resetCategoryEmailed(orderId, category) {
     try { await DB.resetCategoryEmailed(orderId, category); } catch(e) { alert('Reset failed: ' + e.message); }
   },
@@ -2562,7 +2570,11 @@ const Manager = {
         </div>
         <div class="order-line-right">
           ${item.rejected
-            ? `<span class="status-pill status-rejected" style="font-size:10px;padding:2px 8px"><i class="ti ti-ban"></i> Rejected</span>`
+            ? `<span class="status-pill status-rejected" style="font-size:10px;padding:2px 8px"><i class="ti ti-ban"></i> Rejected</span>
+               <button class="btn-sm" data-unreject-item="${esc(o._id)}" data-partcode="${esc(item.partCode)}"
+                 style="font-size:10px;padding:2px 6px" title="Restore this item — it goes back to pending and reappears in the combined list">
+                 <i class="ti ti-refresh"></i> Restore
+               </button>`
             : item.emailed
               ? `<span class="emailed-badge"><i class="ti ti-mail-check"></i> Emailed</span>
                  <button class="btn-sm" data-reset-item="${o._id}" data-category="${esc(item.category)}" data-partcode="${esc(item.partCode)}"

@@ -1,4 +1,4 @@
-// firebase-sync.js — v0.48
+// firebase-sync.js — v0.49
 let _db = null, _configured = false;
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -172,8 +172,12 @@ const DB = {
       const doc = await tx.get(ref);
       if (!doc.exists) return;
       const excludeSet = new Set(excludePartCodes);
+      // !item.rejected: rejected lines are skipped when the email body is built, so
+      // stamping them emailed here would record a send that never happened — and a
+      // later per-line unreject would surface the item as "Emailed" in a delivery
+      // it was never part of.
       const items = (doc.data().items||[]).map(item =>
-        item.category === category && !excludeSet.has(item.partCode) && !item.emailed
+        item.category === category && !excludeSet.has(item.partCode) && !item.emailed && !item.rejected
           ? { ...item, emailed: true, deliveryId }
           : item
       );
@@ -200,6 +204,30 @@ const DB = {
       if (!doc.exists) return;
       const items = (doc.data().items || []).map(item =>
         item.partCode === partCode ? { ...item, rejected: true } : item
+      );
+      const nonRejected = items.filter(i => !i.rejected);
+      let newStatus = 'pending';
+      if (nonRejected.length === 0)               newStatus = 'rejected';
+      else if (nonRejected.every(i => i.emailed)) newStatus = 'sent';
+      tx.update(ref, {
+        items, status: newStatus,
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+      });
+    });
+  },
+
+  // Per-line undo of rejectItem: clears the flag and recomputes the order status
+  // with the same rules — so unrejecting the only live line of a fully-rejected
+  // order brings the whole order back to pending (or sent, if everything else
+  // was already emailed).
+  async unrejectItem(orderId, partCode) {
+    if (!this.isReady()) throw new Error('Firebase not initialised');
+    const ref = _db.collection('orders').doc(orderId);
+    await _db.runTransaction(async tx => {
+      const doc = await tx.get(ref);
+      if (!doc.exists) return;
+      const items = (doc.data().items || []).map(item =>
+        item.partCode === partCode ? { ...item, rejected: false } : item
       );
       const nonRejected = items.filter(i => !i.rejected);
       let newStatus = 'pending';
