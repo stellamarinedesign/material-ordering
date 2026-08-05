@@ -1,6 +1,6 @@
-// shared.js — v0.47
+// shared.js — v0.48
 
-const APP_VERSION = 'v0.47';
+const APP_VERSION = 'v0.48';
 
 // Numeric version comparison (handles "v0.9" vs "v0.10" correctly, unlike
 // plain string comparison). Returns true if `a` is strictly newer than `b`.
@@ -400,6 +400,54 @@ function stockId(item) {
   // Fallback: first 40 chars of slugified description
   return item.description.toLowerCase().replace(/[^a-z0-9]+/g, '_').slice(0, 40);
 }
+
+// ── GHOST ITEMS (created on-device, not yet in consumables.csv) ──────────
+// A "ghost" is a consumable created during setup on the manager page. It lives
+// entirely on its stock document — stock.<sid>.ghost holds what the CSV row will
+// eventually say — until that row is actually added to consumables.csv, at which
+// point the manager page reconciles it (clears the flag, migrating the stock doc
+// if the description was edited) and the CSV takes over as the source of truth.
+//
+// merge() folds ghosts into a page's catalog list so every surface (checkout grid,
+// stock tab, ordering, stocktake) treats them as real items immediately. Their SC
+// part codes are dummy codes, so they're already hidden from order emails.
+//
+// Ids: catalog ids are CSV row indexes, and carts/order lines reference items by
+// id — so ghost ids are assigned from a high base (no collision possible) and
+// kept session-stable via _idMap (an id that shifted mid-session would silently
+// re-point cart entries at the wrong item).
+const GhostItems = {
+  _idBase: 100000,
+  _idMap:  new Map(),   // stock doc id -> session-stable numeric id
+  merge(catalog, stockRecords) {
+    const ghosts = (stockRecords || []).filter(r => r.ghost);
+    if (!ghosts.length) return catalog;
+    const codes = new Set(catalog.map(m => (m.partCode || '').toLowerCase()).filter(Boolean));
+    const sids  = new Set(catalog.map(m => stockId(m)));
+    // Deterministic assignment order (oldest first) so devices agree on ids
+    ghosts.sort((a, b) => ((a.ghost.createdAt || 0) - (b.ghost.createdAt || 0)) || a._id.localeCompare(b._id));
+    const out = [...catalog];
+    for (const rec of ghosts) {
+      const g = rec.ghost;
+      // CSV row now exists (matched by code or by doc id) — the catalog row wins;
+      // the manager page clears the leftover flag separately (reconciliation).
+      if (sids.has(rec._id) || (g.partCode && codes.has(g.partCode.toLowerCase()))) continue;
+      if (!this._idMap.has(rec._id)) this._idMap.set(rec._id, this._idBase + this._idMap.size + 1);
+      out.push({
+        id:          this._idMap.get(rec._id),
+        partCode:    g.partCode || '',
+        description: g.description || rec._id,
+        category:    g.category || 'Uncategorised',
+        subcategory: g.subcategory || 'General',
+        qtyType:     g.qtyType || 'Each',
+        boxSize:     g.boxSize || 0,
+        boxUnit:     g.boxUnit || 'Box',
+        _ghost:      true,
+      });
+    }
+    return out;
+  },
+};
 
 // Stocktake counting unit — hard-coded rule for now: anything bought by the length
 // (round bar, box section, pipe/tube etc., i.e. qtyType Length or Metre) is counted

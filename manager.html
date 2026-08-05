@@ -88,6 +88,11 @@ const Manager = {
 
   // Consumable barcodes panel filter ('all' | 'missing' | 'has')
   _bcFilter:          'all',
+  // CSV-backed consumables only — this.consumables = _baseConsumables + ghosts
+  // (items created on-device that don't have their CSV row yet), re-merged on
+  // every stock snapshot. Ghost reconciliation runs once per session.
+  _baseConsumables:   [],
+  _ghostsReconciled:  false,
 
   // Materials stocktake tab state
   _stocktakeView:     'qty',   // 'qty' | 'count' | 'history'
@@ -137,7 +142,8 @@ const Manager = {
     const ok = await DB.init(cfg);
     if (!ok) { this.showSetup('Could not connect. Check your Firebase config.'); return; }
     this.materials    = await Data.load('./materials.csv');
-    this.consumables  = await Data.loadConsumables('./consumables.csv');
+    this._baseConsumables = await Data.loadConsumables('./consumables.csv');
+    this.consumables  = this._baseConsumables;
     this.orderRef  = genRef();
     this.renderShell();
     const verEl = document.getElementById('app-version');
@@ -254,7 +260,8 @@ const Manager = {
     if (!ok) { this.showSetup('Connection failed.'); return; }
     FirebaseConfig.save(cfg);
     this.materials    = await Data.load('./materials.csv');
-    this.consumables  = await Data.loadConsumables('./consumables.csv');
+    this._baseConsumables = await Data.loadConsumables('./consumables.csv');
+    this.consumables  = this._baseConsumables;
     this.orderRef=genRef();
     this.renderShell();
     const verEl=document.getElementById('app-version'); if(verEl) verEl.textContent=APP_VERSION;
@@ -621,10 +628,15 @@ const Manager = {
           </div>
           <div class="col" style="padding-top:10px;padding-bottom:0;flex-shrink:0">
             <div style="font-size:12px;color:var(--text2);margin-bottom:8px" id="barcodes-summary"></div>
+            <div style="display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap">
+              <button class="btn-sm" id="btn-bc-new-item"><i class="ti ti-plus"></i> New item</button>
+              <button class="btn-sm" id="btn-bc-export-ghosts" style="display:none"><i class="ti ti-file-download"></i> Export new items (CSV)</button>
+            </div>
             <div class="intake-filter-bar" id="barcodes-filter">
               <div class="intake-filter-chip active" data-bc-filter="all">All</div>
               <div class="intake-filter-chip" data-bc-filter="missing"><i class="ti ti-barcode-off"></i> No barcode yet</div>
               <div class="intake-filter-chip" data-bc-filter="has"><i class="ti ti-barcode"></i> Barcoded</div>
+              <div class="intake-filter-chip" data-bc-filter="new"><i class="ti ti-sparkles"></i> New items</div>
             </div>
           </div>
           <div class="app-scroll"><div class="col" id="barcodes-list" style="padding-top:10px"></div></div>
@@ -999,9 +1011,13 @@ const Manager = {
     document.getElementById('barcodes-list').addEventListener('click', e => {
       const unlink = e.target.closest('[data-bc-unlink]');
       const add    = e.target.closest('[data-bc-add]');
+      const count  = e.target.closest('[data-bc-count]');
       if (unlink) this.bcUnlink(unlink.dataset.sid, unlink.dataset.bcUnlink);
       if (add)    this.bcManualAdd(add.dataset.bcAdd);
+      if (count)  this._bcCountPrompt(count.dataset.bcCount);
     });
+    document.getElementById('btn-bc-new-item').addEventListener('click', () => this._bcNewItemPrompt(null));
+    document.getElementById('btn-bc-export-ghosts').addEventListener('click', () => this.exportGhostRows());
     document.getElementById('btn-export-cons').addEventListener('click', () => this.exportConsumables());
 
     // History delegated listener
@@ -3416,6 +3432,10 @@ const Manager = {
     if (this._unsubStock) this._unsubStock();
     this._unsubStock = DB.listenStock(records => {
       this._stock = records;
+      // Fold in ghosts (items created on-device, CSV row pending) so every panel
+      // — stock, ordering, barcodes — treats them as real consumables.
+      this.consumables = GhostItems.merge(this._baseConsumables, records);
+      this._reconcileGhosts(records);
       this.renderStockTabs();
       this.renderStockList();
       this._updateStockBadge();
@@ -3425,6 +3445,35 @@ const Manager = {
       this.renderReceiveList();
       if (document.getElementById('barcodes-panel')?.classList.contains('open')) this.renderBarcodesPanel();
     });
+  },
+
+  // One-shot per session: any ghost whose consumables.csv row has since been added
+  // gets folded into the catalog — matched by SC code first (survives a description
+  // edit in the CSV), then by doc id (description kept verbatim) — clearing the
+  // ghost marker and, where the description or code changed, migrating the stock
+  // doc so quantity/barcodes/log follow the item. If BOTH the code and the
+  // description were changed in the CSV, the ghost can't be matched automatically
+  // and stays listed until cleaned up by hand.
+  async _reconcileGhosts(records) {
+    if (this._ghostsReconciled) return;
+    const jobs = [];
+    for (const rec of records) {
+      const g = rec.ghost; if (!g) continue;
+      const byCode = g.partCode
+        ? this._baseConsumables.find(m => (m.partCode || '').toLowerCase() === g.partCode.toLowerCase())
+        : null;
+      const match = byCode || this._baseConsumables.find(m => stockId(m) === rec._id);
+      if (match) jobs.push({ oldSid: rec._id, newSid: stockId(match) });
+    }
+    if (!jobs.length) return;
+    this._ghostsReconciled = true;
+    try {
+      for (const j of jobs) await DB.resolveGhost(j.oldSid, j.newSid);
+      this._toast(`${jobs.length} new item${jobs.length > 1 ? 's' : ''} merged into the catalog`);
+    } catch (e) {
+      console.warn('Ghost reconcile failed:', e);
+      this._ghostsReconciled = false; // retry on the next snapshot
+    }
   },
 
   // Returns the stock record for a given stockId, or null
@@ -3646,7 +3695,7 @@ const Manager = {
       <div class="stock-card-header" data-stock-hdr="${esc(sid)}">
         <div class="stock-card-icon" style="background:${ci.bg}"><i class="ti ${ci.icon}" style="color:${ci.color}"></i></div>
         <div class="stock-card-info">
-          <div class="stock-card-name">${esc(m.description)}</div>
+          <div class="stock-card-name">${esc(m.description)}${m._ghost ? ' <span class="ghost-chip"><i class="ti ti-sparkles" style="font-size:10px"></i> New — not in CSV yet</span>' : ''}</div>
           <div class="stock-card-meta">${showCode ? esc(m.partCode)+' · ' : ''}${esc(m.category)} · ${esc(m.subcategory)}</div>
         </div>
         ${qtyBadge}
@@ -3879,6 +3928,9 @@ const Manager = {
         row.classList.remove('bc-hit'); void row.offsetWidth; // restart the flash animation
         row.classList.add('bc-hit');
       }
+      // Setup loop: a known item that's never been counted rolls straight into the
+      // starting-count prompt, so scan → count → next scan covers the whole shelf.
+      if (m && (!rec.tracked || (rec.qty || 0) === 0)) this._bcCountPrompt(rec._id);
       return;
     }
     this._bcPromptLink(code);
@@ -3893,7 +3945,8 @@ const Manager = {
     this._toastTimer = setTimeout(() => el.classList.remove('show'), 2600);
   },
 
-  // Unknown barcode scanned with the panel open: choose which item it belongs to.
+  // Unknown barcode scanned with the panel open: choose which item it belongs to —
+  // or create the item on the spot if it doesn't have a CSV row yet (ghost).
   _bcPromptLink(code) {
     const items = [...this.consumables].sort((a,b) => descCompare(a.description, b.description));
     const ow = document.getElementById('overlay-wrap');
@@ -3908,7 +3961,8 @@ const Manager = {
           <input class="checkout-name-input" type="search" id="bc-link-search" placeholder="Search items…" autocomplete="off"
             style="width:100%;border:1px solid var(--border);background:var(--bg);border-radius:var(--radius);padding:8px 12px;font-size:14px;outline:none;margin-bottom:8px">
           <div class="scan-link-list" id="bc-link-list">${rows}</div>
-          <button class="btn btn-outline" id="btn-bc-link-cancel" style="width:100%;margin-top:10px">Cancel</button>
+          <button class="btn btn-outline" id="btn-bc-link-new" style="width:100%;margin-top:10px"><i class="ti ti-plus"></i> It's not in the list — create new item</button>
+          <button class="btn btn-outline" id="btn-bc-link-cancel" style="width:100%;margin-top:8px">Cancel</button>
         </div>
       </div>`;
     const search = document.getElementById('bc-link-search');
@@ -3928,6 +3982,9 @@ const Manager = {
         await DB.linkBarcode(sid, code, `${(s.managerName || 'Manager').trim() || 'Manager'} — setup`);
         this._toast(`Linked to: ${m ? m.description : sid}`);
         setTimeout(() => this.renderBarcodesPanel(), 300);
+        // Roll into the starting count if this item's never been counted.
+        const rec = this._stockFor(sid);
+        if (!rec?.tracked || (rec?.qty || 0) === 0) this._bcCountPrompt(sid, m);
       } catch (err) {
         if (err.message === 'BARCODE_IN_USE') {
           const other = this.consumables.find(x => stockId(x) === err.existingId);
@@ -3935,7 +3992,191 @@ const Manager = {
         } else alert('Failed to link: ' + err.message);
       }
     });
+    document.getElementById('btn-bc-link-new').addEventListener('click', () => this._bcNewItemPrompt(code));
     document.getElementById('btn-bc-link-cancel').addEventListener('click', () => { ow.innerHTML = ''; });
+  },
+
+  // Starting-count overlay: what's actually on the shelf right now. Boxed items are
+  // counted the way shelves are counted — full boxes plus loose units. Writes an
+  // absolute set with its own 'setup' history subtype (reads as "initial count",
+  // not a fake delivery), and turns tracking on. Skip leaves everything untouched.
+  _bcCountPrompt(sid, fallbackItem) {
+    // fallbackItem covers the just-created ghost: the merged catalog only picks it
+    // up when the stock snapshot lands, which may be a beat after this opens.
+    const m = this.consumables.find(x => stockId(x) === sid) || fallbackItem;
+    if (!m) return;
+    const rec   = this._stockFor(sid);
+    const boxed = hasBoxTracking(m);
+    const ow = document.getElementById('overlay-wrap');
+    const fields = boxed ? `
+          <div style="display:flex;gap:8px;align-items:center;justify-content:center;margin-bottom:6px">
+            <input class="qty-input" type="number" min="0" step="1" id="bc-count-boxes" placeholder="0" style="width:80px;height:40px;font-size:16px">
+            <span style="font-size:12px;color:var(--text3)">full ${esc((m.boxUnit||'Box').toLowerCase())}es +</span>
+            <input class="qty-input" type="number" min="0" step="1" id="bc-count-loose" placeholder="0" style="width:80px;height:40px;font-size:16px">
+            <span style="font-size:12px;color:var(--text3)">loose</span>
+          </div>
+          <div style="font-size:12px;color:var(--text2);margin-bottom:10px" id="bc-count-total">= 0 ${esc(m.qtyType||'Each')} (1 ${esc(m.boxUnit||'Box')} = ${m.boxSize} ${esc(m.qtyType||'Each')})</div>`
+      : `
+          <div style="display:flex;gap:8px;align-items:center;justify-content:center;margin-bottom:10px">
+            <input class="qty-input" type="number" min="0" step="1" id="bc-count-qty" placeholder="0" style="width:110px;height:40px;font-size:16px">
+            <span style="font-size:12px;color:var(--text3)">${esc(m.qtyType||'Each')}</span>
+          </div>`;
+    ow.innerHTML = `
+      <div class="success-overlay">
+        <div class="success-card" style="max-width:400px">
+          <div class="success-icon blue"><i class="ti ti-list-numbers"></i></div>
+          <h3>Starting count</h3>
+          <p style="margin-bottom:10px">${esc(m.description)}${rec?.tracked ? `<br><span style="font-size:12px;color:var(--text3)">currently recorded: ${rec.qty||0} ${esc(m.qtyType||'Each')}</span>` : ''}</p>
+          ${fields}
+          <button class="btn btn-primary" id="btn-bc-count-save" style="width:100%">Save count</button>
+          <button class="btn btn-outline" id="btn-bc-count-skip" style="width:100%;margin-top:8px">Skip — count later</button>
+        </div>
+      </div>`;
+    const total = () => {
+      if (!boxed) return Math.max(0, parseInt(document.getElementById('bc-count-qty')?.value) || 0);
+      const b = Math.max(0, parseInt(document.getElementById('bc-count-boxes')?.value) || 0);
+      const l = Math.max(0, parseInt(document.getElementById('bc-count-loose')?.value) || 0);
+      return b * m.boxSize + l;
+    };
+    if (boxed) {
+      const upd = () => { document.getElementById('bc-count-total').textContent =
+        `= ${total()} ${m.qtyType||'Each'} (1 ${m.boxUnit||'Box'} = ${m.boxSize} ${m.qtyType||'Each'})`; };
+      document.getElementById('bc-count-boxes').addEventListener('input', upd);
+      document.getElementById('bc-count-loose').addEventListener('input', upd);
+    }
+    const save = async () => {
+      const qty = total();
+      // A scan landing in the focused field types the barcode digits — a shelf
+      // count can't realistically be a 10+ digit number, so refuse it.
+      if (qty > 99999) { alert('That looks like a barcode scan, not a shelf count — please type the quantity.'); return; }
+      ow.innerHTML = '';
+      const s = Settings.get();
+      try {
+        await DB.setInitialStock(sid, m.description, qty, `${(s.managerName || 'Manager').trim() || 'Manager'} — setup`);
+        this._toast(`${m.description}: counted ${boxed ? boxDisplay(m, qty) : qty + ' ' + (m.qtyType||'Each')}`);
+        setTimeout(() => this.renderBarcodesPanel(), 300);
+      } catch (e) { alert('Failed to save count: ' + e.message); }
+    };
+    ow.querySelectorAll('input').forEach(inp => inp.addEventListener('keydown', e => { if (e.key === 'Enter') save(); }));
+    document.getElementById('btn-bc-count-save').addEventListener('click', save);
+    document.getElementById('btn-bc-count-skip').addEventListener('click', () => { ow.innerHTML = ''; });
+    (document.getElementById(boxed ? 'bc-count-boxes' : 'bc-count-qty'))?.focus();
+  },
+
+  // Highest SC placeholder number currently visible (catalog + ghosts) — the floor
+  // for claiming the next code, so the shared counter can never re-issue a number
+  // that was ever hand-assigned in the CSV.
+  _ghostFloorNum() {
+    let max = 0;
+    for (const m of this.consumables) {
+      const match = /^SC(\d+)$/i.exec((m.partCode || '').trim());
+      if (match) max = Math.max(max, parseInt(match[1], 10));
+    }
+    return max + 1;
+  },
+
+  // Create a consumable that has no CSV row yet (a "ghost"): name it, optionally
+  // categorise it, and it becomes a real item everywhere immediately — checkout
+  // grid, stock, ordering — under an auto-claimed SC placeholder code. If a scanned
+  // barcode kicked this off it's linked in the same step, then the starting-count
+  // prompt follows. Export the pending rows from the panel button when done.
+  async _bcNewItemPrompt(code) {
+    const ow = document.getElementById('overlay-wrap');
+    // Existing categories (ghosts' included) as suggestions — typing a brand-new
+    // category is fine too, it just becomes a new tab everywhere.
+    const cats = Data.categories(this.consumables);
+    const qtyTypes = ['Each','Pair','Roll','Pack','Can','Bottle','Tube','Tub','Sheet','Litre','Metre'];
+    ow.innerHTML = `
+      <div class="success-overlay">
+        <div class="success-card" style="max-width:440px;text-align:left">
+          <div class="success-icon blue" style="margin-left:auto;margin-right:auto"><i class="ti ti-sparkles"></i></div>
+          <h3 style="text-align:center">New item</h3>
+          <p style="text-align:center;margin-bottom:12px;font-size:13px">Not in the catalog yet — it gets the next SC code and works everywhere straight away.${code ? `<br><span style="font-family:var(--mono);font-size:12px">barcode ${esc(code)} will be linked</span>` : ''}</p>
+          <div class="setup-field"><label>Name / description *</label><input id="gh-name" autocomplete="off" placeholder="e.g. Cutting Disc 125mm x 1mm"></div>
+          <div style="display:flex;gap:10px">
+            <div class="setup-field" style="flex:1"><label>Category</label>
+              <input id="gh-cat" autocomplete="off" placeholder="Uncategorised" list="gh-cat-list">
+              <datalist id="gh-cat-list">${cats.map(c => `<option value="${esc(c)}">`).join('')}</datalist>
+            </div>
+            <div class="setup-field" style="flex:1"><label>Subcategory</label><input id="gh-sub" autocomplete="off" placeholder="General"></div>
+          </div>
+          <div style="display:flex;gap:10px">
+            <div class="setup-field" style="flex:1"><label>Unit</label>
+              <input id="gh-qtytype" autocomplete="off" value="Each" list="gh-qtytype-list">
+              <datalist id="gh-qtytype-list">${qtyTypes.map(q => `<option value="${q}">`).join('')}</datalist>
+            </div>
+            <div class="setup-field" style="flex:1"><label>Box size <span style="font-weight:400;color:var(--text3)">(optional)</span></label><input id="gh-boxsize" type="number" min="0" step="1" placeholder="e.g. 50"></div>
+          </div>
+          <button class="btn btn-primary" id="btn-gh-save" style="width:100%;margin-top:4px">Create item</button>
+          <button class="btn btn-outline" id="btn-gh-cancel" style="width:100%;margin-top:8px">Cancel</button>
+        </div>
+      </div>`;
+    const save = async () => {
+      const name = document.getElementById('gh-name').value.trim();
+      if (!name) { alert('Please enter a name.'); return; }
+      // A scan landing in the focused name field types digits + Enter — catch it.
+      if (/^\d{8,}$/.test(name)) { alert('That looks like a barcode scan — please type the item name.'); return; }
+      const sid = stockId({ partCode: 'SC0000', description: name });
+      const clash = this.consumables.find(x => stockId(x) === sid);
+      if (clash) { alert(`An item with a very similar name already exists:\n"${clash.description}"\n\nUse that one, or change the name.`); return; }
+      const boxSize = Math.max(0, parseInt(document.getElementById('gh-boxsize').value) || 0);
+      const btn = document.getElementById('btn-gh-save');
+      btn.disabled = true;
+      const s = Settings.get();
+      const by = `${(s.managerName || 'Manager').trim() || 'Manager'} — setup`;
+      try {
+        const partCode = await DB.claimGhostCode(this._ghostFloorNum());
+        const ghost = {
+          partCode,
+          description: name,
+          category:    document.getElementById('gh-cat').value.trim() || 'Uncategorised',
+          subcategory: document.getElementById('gh-sub').value.trim() || 'General',
+          qtyType:     document.getElementById('gh-qtytype').value.trim() || 'Each',
+          boxSize,
+          boxUnit:     'Box',
+          createdBy:   by,
+          createdAt:   Date.now(),
+        };
+        await DB.createGhostItem(sid, ghost);
+        if (code) {
+          try { await DB.linkBarcode(sid, code, by); }
+          catch (e) { this._toast('Item created, but the barcode is already linked elsewhere', true); }
+        }
+        this._toast(`Created ${partCode} — ${name}`);
+        setTimeout(() => this.renderBarcodesPanel(), 300);
+        // Straight into the starting count — pass the item since the snapshot
+        // carrying the new ghost may not have landed yet.
+        this._bcCountPrompt(sid, { ...ghost, _ghost: true });
+      } catch (e) {
+        btn.disabled = false;
+        alert('Failed to create item: ' + e.message);
+      }
+    };
+    document.getElementById('gh-name').addEventListener('keydown', e => { if (e.key === 'Enter') save(); });
+    document.getElementById('btn-gh-save').addEventListener('click', save);
+    document.getElementById('btn-gh-cancel').addEventListener('click', () => { ow.innerHTML = ''; });
+    document.getElementById('gh-name').focus();
+  },
+
+  // Downloads the would-be consumables.csv rows for every item created on-device:
+  // same column order as the real file, ready to paste in (drop the header line).
+  // Once the rows are committed and deployed, the ghosts reconcile away on the
+  // next page load and the CSV becomes their source of truth.
+  exportGhostRows() {
+    const ghosts = this.consumables.filter(m => m._ghost);
+    if (!ghosts.length) { this._toast('No new items waiting for a CSV row', true); return; }
+    const q = v => { v = String(v ?? ''); return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; };
+    const lines = ['Part Code,Description,Category,Subcategory,Quantity Type,BoxSize,BoxUnit'];
+    for (const m of ghosts) {
+      lines.push([m.partCode, m.description, m.category, m.subcategory, m.qtyType,
+        m.boxSize || '', m.boxSize ? (m.boxUnit || 'Box') : ''].map(q).join(','));
+    }
+    const blob = new Blob([lines.join('\r\n') + '\r\n'], { type: 'text/csv' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `New_Consumables_${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
   },
 
   renderBarcodesPanel() {
@@ -3943,12 +4184,21 @@ const Manager = {
     const items = [...this.consumables].sort((a,b) =>
       naturalCompare(a.category, b.category) || descCompare(a.description, b.description));
     const withBc = items.filter(m => (this._stockFor(stockId(m))?.barcodes || []).length > 0);
+    const counted = items.filter(m => { const r = this._stockFor(stockId(m)); return r?.tracked && (r.qty || 0) > 0; });
+    const ghosts = items.filter(m => m._ghost);
     const summary = document.getElementById('barcodes-summary');
-    if (summary) summary.textContent = `${withBc.length} of ${items.length} consumables have a barcode linked.`;
+    if (summary) summary.textContent =
+      `${withBc.length} of ${items.length} consumables have a barcode · ${counted.length} counted`
+      + (ghosts.length ? ` · ${ghosts.length} new item${ghosts.length > 1 ? 's' : ''} not in the CSV yet` : '');
+    const exportBtn = document.getElementById('btn-bc-export-ghosts');
+    if (exportBtn) exportBtn.style.display = ghosts.length ? '' : 'none';
 
     const filtered = items.filter(m => {
       const n = (this._stockFor(stockId(m))?.barcodes || []).length;
-      return this._bcFilter === 'missing' ? n === 0 : this._bcFilter === 'has' ? n > 0 : true;
+      if (this._bcFilter === 'missing') return n === 0;
+      if (this._bcFilter === 'has')     return n > 0;
+      if (this._bcFilter === 'new')     return !!m._ghost;
+      return true;
     });
     if (!filtered.length) { el.innerHTML = `<div class="empty-state"><i class="ti ti-barcode-off"></i><p>Nothing here.</p></div>`; return; }
 
@@ -3961,13 +4211,19 @@ const Manager = {
       // Show the last few log entries so a wrong link is traceable to a device and time.
       const log = (rec?.barcodeLog || []).slice(-3).reverse().map(l =>
         `<div class="stocktake-row-meta">${l.action === 'unlinked' ? 'Removed' : 'Linked'} ${esc(l.code)} · ${esc(l.by || 'unknown')}${l.at ? ' · ' + fmtTime(new Date(l.at)) : ''}</div>`).join('');
+      // Setup progress at a glance: recorded count (tap to set/correct it).
+      const hasCount = rec?.tracked && (rec.qty || 0) > 0;
+      const countChip = rec?.tracked
+        ? `<button class="bc-chip${hasCount ? '' : ' none'}" data-bc-count="${esc(sid)}" title="Set the counted quantity" style="cursor:pointer"><i class="ti ti-list-numbers" style="font-size:11px"></i> ${esc(boxDisplay(m, rec.qty || 0))}</button>`
+        : `<button class="bc-chip none" data-bc-count="${esc(sid)}" title="Set the counted quantity" style="cursor:pointer"><i class="ti ti-list-numbers" style="font-size:11px"></i> no count yet</button>`;
       html += `<div class="stocktake-row" style="flex-wrap:wrap" id="bc-row-${esc(sid)}">
         <div class="stocktake-row-info">
-          <div class="stocktake-row-name">${esc(m.description)}</div>
+          <div class="stocktake-row-name">${esc(m.description)}${m._ghost ? ' <span class="ghost-chip"><i class="ti ti-sparkles" style="font-size:10px"></i> New — not in CSV yet</span>' : ''}</div>
           <div style="display:flex;flex-wrap:wrap;gap:5px;margin-top:5px">
             ${codes.map(c => `<span class="bc-chip">${esc(c)} <button class="bc-chip-x" data-bc-unlink="${esc(c)}" data-sid="${esc(sid)}" title="Remove this barcode">✕</button></span>`).join('')}
             ${codes.length ? '' : '<span class="bc-chip none">no barcode yet</span>'}
             <button class="btn-sm" data-bc-add="${esc(sid)}" style="font-size:10px;padding:2px 8px"><i class="ti ti-plus"></i> Add</button>
+            ${countChip}
           </div>
           ${log}
         </div>
@@ -3998,6 +4254,9 @@ const Manager = {
     try {
       await DB.linkBarcode(sid, code.trim(), (s.managerName || 'Manager').trim() || 'Manager');
       setTimeout(() => this.renderBarcodesPanel(), 300);
+      // Same setup loop as scanning: never-counted items roll into the count prompt.
+      const rec = this._stockFor(sid);
+      if (!rec?.tracked || (rec?.qty || 0) === 0) this._bcCountPrompt(sid, m);
     } catch (e) {
       if (e.message === 'BARCODE_IN_USE') {
         const other = this.consumables.find(x => stockId(x) === e.existingId);
@@ -4248,10 +4507,11 @@ const Manager = {
     // Delta display varies by subtype so each function reads clearly in
     // history, rather than every adjustment looking like a generic +/-:
     //  - override:  shows "=N" (the new absolute total), not the raw delta
+    //  - setup:     shows "=N" too — the initial shelf count during consumables setup
     //  - open_box:   shows "New Box" — a stocktake correction, not a real movement
     //  - everything else: a normal signed delta
     let deltaDisplay, dClass;
-    if (subtype === 'override') {
+    if (subtype === 'override' || subtype === 'setup') {
       deltaDisplay = `=${r.newQty}`;
       dClass = 'neutral';
     } else if (subtype === 'open_box') {

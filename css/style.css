@@ -740,9 +740,19 @@ button { cursor: pointer; }
   border: 1px solid var(--blue);
 }
 .bc-chip.none { background: var(--bg2); color: var(--text3); border-color: var(--border); padding-right: 9px; }
+/* The count chip is a <button> so it stays tappable — keep it looking like a chip */
+button.bc-chip { font-family: var(--mono); line-height: inherit; }
 .bc-chip-x {
   border: none; background: none; color: var(--red-text); cursor: pointer;
   font-size: 12px; line-height: 1; padding: 2px 3px;
+}
+/* Items created on-device that don't have their consumables.csv row yet —
+   same purple family as the consumables-page barcode setup banner */
+.ghost-chip {
+  display: inline-flex; align-items: center; gap: 3px; vertical-align: 1px;
+  font-size: 10px; font-weight: 600; font-family: var(--mono); padding: 1px 7px;
+  border-radius: 20px; background: #ede9fe; color: #6d28d9;
+  border: 1px solid #ddd6fe; white-space: nowrap; margin-left: 6px;
 }
 
 /* ═══ MATERIALS STOCKTAKE (manager tab) ═══ */

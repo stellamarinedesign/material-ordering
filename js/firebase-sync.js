@@ -1,4 +1,4 @@
-// firebase-sync.js — v0.47
+// firebase-sync.js — v0.48
 let _db = null, _configured = false;
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -597,6 +597,110 @@ const DB = {
       barcodes:   firebase.firestore.FieldValue.arrayRemove(c),
       barcodeLog: firebase.firestore.FieldValue.arrayUnion({ code: c, action: 'unlinked', by: by || '', at: Date.now() }),
     }, { merge: true });
+  },
+
+  // Initial shelf count during consumables setup: sets the quantity absolutely,
+  // turns tracking on, and records a 'setup' history row so it reads as an initial
+  // count in history rather than a fake delivery or checkout. Safe on existing
+  // docs — the history delta is computed against whatever was recorded before.
+  async setInitialStock(stockId, itemName, qty, by) {
+    if (!this.isReady()) throw new Error('Firebase not initialised');
+    const ref = _db.collection('stock').doc(stockId);
+    let oldQty = 0;
+    await _db.runTransaction(async tx => {
+      const doc = await tx.get(ref);
+      oldQty = doc.exists ? (doc.data().qty || 0) : 0;
+      tx.set(ref, {
+        ...(doc.exists ? {} : { reorderQty: 0, warningQty: 0 }),
+        qty, tracked: true,
+      }, { merge: true });
+    });
+    _db.collection('stock_history').add({
+      stockId,
+      itemName:  itemName || '',
+      delta:     qty - oldQty,
+      newQty:    qty,
+      action:    'adjustment',
+      subtype:   'setup',
+      by:        by || '',
+      sessionId: null,
+      reverted:  false,
+      timestamp: firebase.firestore.FieldValue.serverTimestamp(),
+    }).catch(e => console.warn('History write failed:', e));
+  },
+
+  // ── GHOST ITEMS (on-device consumables awaiting their consumables.csv row) ──
+
+  // Claims the next free SC placeholder number. A transaction against
+  // meta/consumables makes simultaneous claims from two devices impossible;
+  // floorNum (computed client-side from the highest SC code visible across
+  // catalog + ghosts) keeps the counter ahead of codes ever assigned by hand
+  // in the CSV. Returns the formatted code, e.g. "SC0178".
+  async claimGhostCode(floorNum) {
+    if (!this.isReady()) throw new Error('Firebase not initialised');
+    const ref = _db.collection('meta').doc('consumables');
+    let n;
+    await _db.runTransaction(async tx => {
+      const doc  = await tx.get(ref);
+      const last = doc.exists ? (doc.data().lastGhostNum || 0) : 0;
+      n = Math.max(last + 1, floorNum || 1);
+      tx.set(ref, { lastGhostNum: n }, { merge: true });
+    });
+    return 'SC' + String(n).padStart(4, '0');
+  },
+
+  // Creates the stock document for an on-device item: tracked from birth, zero
+  // quantity (the setup flow's count goes through setInitialStock so history
+  // stays honest), with the would-be CSV row stored under `ghost`.
+  async createGhostItem(sid, ghost) {
+    if (!this.isReady()) throw new Error('Firebase not initialised');
+    const ref = _db.collection('stock').doc(sid);
+    await _db.runTransaction(async tx => {
+      const doc = await tx.get(ref);
+      if (doc.exists && doc.data().ghost) throw new Error('GHOST_EXISTS');
+      tx.set(ref, {
+        ...(doc.exists ? {} : { qty: 0, reorderQty: 0, warningQty: 0 }),
+        tracked: true,
+        ghost,
+      }, { merge: true });
+    });
+  },
+
+  // Clears a ghost marker once its CSV row exists. Same doc id (description kept
+  // verbatim, code still the SC placeholder): just removes the flag. Different id
+  // (description edited in the CSV, or the SC code swapped for a real supplier
+  // code): moves the whole stock record — quantity, barcodes, audit log — onto the
+  // new doc id and deletes the old one, merging additively if something already
+  // exists at the target. Old stock_history rows keep the old stockId (append-only
+  // log, per-item history filter just won't reach behind the rename).
+  async resolveGhost(oldSid, newSid) {
+    if (!this.isReady()) throw new Error('Firebase not initialised');
+    const oldRef = _db.collection('stock').doc(oldSid);
+    if (oldSid === newSid) {
+      await oldRef.update({ ghost: firebase.firestore.FieldValue.delete() });
+      return;
+    }
+    const newRef = _db.collection('stock').doc(newSid);
+    await _db.runTransaction(async tx => {
+      const oldDoc = await tx.get(oldRef);
+      if (!oldDoc.exists) return;
+      const newDoc = await tx.get(newRef);
+      const o = oldDoc.data();
+      delete o.ghost;
+      if (newDoc.exists) {
+        const n = newDoc.data();
+        tx.set(newRef, {
+          ...o, ...n,
+          qty:        (n.qty || 0) + (o.qty || 0),
+          tracked:    !!(n.tracked || o.tracked),
+          barcodes:   [...new Set([...(o.barcodes || []), ...(n.barcodes || [])])],
+          barcodeLog: [...(o.barcodeLog || []), ...(n.barcodeLog || [])],
+        });
+      } else {
+        tx.set(newRef, o);
+      }
+      tx.delete(oldRef);
+    });
   },
 
   // Disable tracking (keeps doc but sets tracked=false)

@@ -123,6 +123,10 @@ if ('serviceWorker' in navigator) {
 
 const ConsApp = {
   consumables: [],
+  // CSV-backed list only — this.consumables = _baseConsumables + ghosts (items
+  // created during setup on the manager page whose CSV row hasn't landed yet),
+  // re-merged on every stock snapshot so new items are usable the same day.
+  _baseConsumables: [],
   _stock:      [],       // live from Firestore
   _unsubStock: null,
   _items:      {},       // id -> qty in current checkout
@@ -139,7 +143,8 @@ const ConsApp = {
     if (!cfg) { this.showSetup(); return; }
     const ok = await DB.init(cfg);
     if (!ok) { this.showSetup('Could not connect. Check your Firebase config.'); return; }
-    this.consumables = await Data.loadConsumables('./consumables.csv');
+    this._baseConsumables = await Data.loadConsumables('./consumables.csv');
+    this.consumables = this._baseConsumables;
     this.renderShell();
     this.startStockListening();
     this.startConnectionStatus();
@@ -198,7 +203,8 @@ const ConsApp = {
     const ok = await DB.init(cfg);
     if (!ok) { this.showSetup('Connection failed. Check your config.'); return; }
     FirebaseConfig.save(cfg);
-    this.consumables = await Data.loadConsumables('./consumables.csv');
+    this._baseConsumables = await Data.loadConsumables('./consumables.csv');
+    this.consumables = this._baseConsumables;
     this.renderShell();
     this.startStockListening();
     this.startConnectionStatus();
@@ -372,6 +378,9 @@ const ConsApp = {
     this._unsubStock = DB.listenStock(records => {
       this._stock = records;
       this._stockReady = true;
+      // Fold in ghosts (items created during setup, CSV row pending) so tradesmen
+      // can sign them out the same day they're shelved.
+      this.consumables = GhostItems.merge(this._baseConsumables, records);
       // Tabs are computed from TRACKED items, which need stock data — the initial
       // renderShell ran before any stock arrived, so they must be re-rendered here
       // too or the category bar stays stuck on just "All".
