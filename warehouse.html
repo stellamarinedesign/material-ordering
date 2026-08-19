@@ -327,7 +327,14 @@ const Warehouse = {
   },
   startVersionCheck() {
     DB.announceVersionIfNewer(APP_VERSION, isVersionNewer);
-    DB.listenAppVersion(v => { this._connState.latestVersion = v; this._renderLiveStatus(); });
+    DB.listenAppVersion(v => { this._connState.latestVersion = v; this._renderLiveStatus(); AutoUpdate.notifyVersion(v); });
+    // Idle auto-reload for the warehouse iPad. No cart to guard — intake edits
+    // save to Firestore as they're made, and the shared checks already block
+    // reloading while a panel/overlay is open or a field holds unsaved typing.
+    AutoUpdate.start({
+      onDiscover: v => { this._connState.latestVersion = v; this._renderLiveStatus(); },
+      isOnline:   () => this._connState.connected === true,
+    });
   },
 
   // ── LIVE DATA ─────────────────────────────────────────────────────────

@@ -208,6 +208,19 @@ const Manager = {
     DB.listenAppVersion(latest => {
       this._connState.latestVersion = latest;
       this._renderLiveStatus();
+      AutoUpdate.notifyVersion(latest);
+    });
+    // Idle auto-reload (matters when this page is opened on an iPad for barcode
+    // setup; harmless on the PC). Never while anything is part-done: a draft
+    // materials/consumables order, receive-stock entries, an in-progress
+    // stocktake count, or delivery edit mode selections.
+    AutoUpdate.start({
+      onDiscover: v => { this._connState.latestVersion = v; this._renderLiveStatus(); },
+      isOnline:   () => this._connState.connected === true,
+      isBusy:     () => this.noCount() > 0 || this.coCount() > 0
+        || Object.keys(this._receive._items).length > 0
+        || Object.keys(this._mstCart).length > 0
+        || this._editMode.materials || this._editMode.consumables,
     });
   },
 
@@ -4639,7 +4652,7 @@ const Manager = {
         <div class="settings-label">Search &amp; Sort</div>
         <div class="settings-card">
           <div class="settings-row">
-            <div><div class="settings-row-label">Numeric-aware sorting</div><div class="settings-row-sub">e.g. 8mm lists before 10mm, rather than alphabetically</div></div>
+            <div><div class="settings-row-label">Numeric-aware sorting</div><div class="settings-row-sub">e.g. 8mm lists before 10mm; inch sizes slot in by their mm value (32mm sits between 1&quot; and 1 1/2&quot;)</div></div>
             <input type="checkbox" id="s-natural-sort" ${s.naturalSort!==false?'checked':''} style="width:20px;height:20px">
           </div>
           <div class="settings-row">

@@ -1,6 +1,6 @@
-// shared.js — v0.49.1
+// shared.js — v0.50
 
-const APP_VERSION = 'v0.49.1';
+const APP_VERSION = 'v0.50';
 
 // Numeric version comparison (handles "v0.9" vs "v0.10" correctly, unlike
 // plain string comparison). Returns true if `a` is strictly newer than `b`.
@@ -38,7 +38,7 @@ const DEFAULT_SETTINGS = {
   bulkConsumablesSubject: '{orderType} - {date}',
   emailSignature:       '',
   emailTemplate:        '{date}\r\n\r\n────────────────────────────────────────────────────\r\n{orderType} - {category}\r\n────────────────────────────────────────────────────\r\n\r\n{items}\r\n────────────────────────────────────────────────────\r\n{closingNote}',
-  naturalSort:          true,   // numeric-aware sort order, e.g. 8mm before 10mm
+  naturalSort:          true,   // numeric-aware sort order, e.g. 8mm before 10mm; inch sizes sort by their mm value
   unitAwareSearch:      true,   // "1 inch" matches "25.4mm" etc. — exact value match, no rounding
   fuzzySearch:          true,   // typo-tolerant text matching, exact matches always rank first
 };
@@ -90,7 +90,8 @@ const Settings = {
 // SEARCH & SORT ENGINE
 // ═══════════════════════════════════════════════════════════════════
 // Three independent, toggleable features feeding into Data.filter():
-//   1. Natural sort      — "10mm" sorts after "8mm", not before (default list order)
+//   1. Natural sort      — "10mm" sorts after "8mm", not before; inch sizes sort
+//                          by their mm value, interleaved with metric sizes
 //   2. Unit-aware search — "1 inch" / "25.4mm" / "1\"" all match the same value
 //   3. Fuzzy text search — tolerates typos in the catalogue or in what's typed
 //
@@ -102,11 +103,23 @@ const Settings = {
 
 // ── 1. NATURAL SORT ──────────────────────────────────────────────────
 // Splits a string into alternating text/number chunks and compares
-// numbers numerically rather than character-by-character. Mixed fractions
-// ("1 1/2", "3/8") are converted to decimals before chunking so they sort
-// in numeric order ("1"" before "1 1/2"" before "2"").
+// numbers numerically rather than character-by-character. Two conversions
+// happen before chunking so sizes sort in true numeric order:
+//   - inch measurements (1", 1 1/2", 3/8", 0.5 in) are replaced by their
+//     millimetre value, putting inch and mm items on ONE scale — a 32mm
+//     pipe sorts between 1" (25.4) and 1 1/2" (38.1), not after both
+//   - remaining plain fractions ("1 1/2", "3/8") become decimals
+// Uses INCH_VALUE_RE / MM_PER_INCH / roundMm from the unit-aware search
+// section below — safe, since sorting only runs long after the whole file
+// has been evaluated.
 function naturalSortChunks(str) {
   const s = String(str||'').toLowerCase()
+    .replace(INCH_VALUE_RE, (m, w, n, d, dec) => {
+      const inches = dec !== undefined
+        ? parseFloat(dec)
+        : (w ? parseFloat(w) : 0) + parseFloat(n) / parseFloat(d);
+      return String(roundMm(inches * MM_PER_INCH));
+    })
     .replace(/(\d+)\s+(\d+)\/(\d+)/g, (_, w, n, d) => String(+w + +n / +d))
     .replace(/(\d+)\/(\d+)/g, (_, n, d) => String(+n / +d));
   return s.match(/\d+\.?\d*|\D+/g) || [];
@@ -145,20 +158,25 @@ function naturalCompare(a, b) {
 // be wrong, not helpful.
 const MM_PER_INCH = 25.4;
 
+// Inch token forms shared by search AND sort: mixed/fractional ("1 1/2"",
+// "1/2 inch", "3/8in") or decimal ("0.5""). Note: \b doesn't work reliably
+// after a quote character (" isn't a word character), so the unit alternation
+// uses an explicit lookahead instead — (?![a-z]) for the word-based units
+// (in/inch/inches) to avoid matching inside a longer word, and nothing extra
+// needed after the quote symbols.
+// INCH_VALUE_RE is precompiled for the sorter, which runs inside comparators
+// where per-call RegExp construction would be wasteful — safe to share there
+// because String.replace resets a /g regex's lastIndex itself. The exec loop
+// in extractMeasurements builds its own instance so its cursor stays private.
+const INCH_UNIT_SRC  = `(?:"|''|in\\.?(?![a-z])|inch(?:es)?(?![a-z]))`;
+const INCH_VALUE_SRC = `(\\d+\\s+)?(\\d+)\\s*\\/\\s*(\\d+)\\s*${INCH_UNIT_SRC}|(\\d+(?:\\.\\d+)?)\\s*${INCH_UNIT_SRC}`;
+const INCH_VALUE_RE  = new RegExp(INCH_VALUE_SRC, 'g');
+
 function extractMeasurements(str) {
   const s = String(str||'').toLowerCase();
   const results = [];
 
-  // Fractional/mixed inches: "1 1/2"", "1/2 inch", "3/8in", etc.
-  // Mixed: optional whole number, optional fraction, then an inch unit.
-  // Note: \b doesn't work reliably after a quote character (" isn't a word
-  // character), so the unit alternation uses an explicit lookahead instead —
-  // (?![a-z]) for the word-based units (in/inch/inches) to avoid matching
-  // inside a longer word, and nothing extra needed after the quote symbols.
-  const inchUnit = `(?:"|''|in\\.?(?![a-z])|inch(?:es)?(?![a-z]))`;
-  const inchRe = new RegExp(
-    `(\\d+\\s+)?(\\d+)\\s*\\/\\s*(\\d+)\\s*${inchUnit}|(\\d+(?:\\.\\d+)?)\\s*${inchUnit}`, 'g'
-  );
+  const inchRe = new RegExp(INCH_VALUE_SRC, 'g');
   let m;
   while ((m = inchRe.exec(s))) {
     let inches;
@@ -524,6 +542,103 @@ const BarcodeScanner = {
     const code = this._buf.trim();
     this._buf = '';
     if (code.length >= this.MIN_LEN) onScan(code);
+  },
+};
+
+// ── AUTO-UPDATE (idle reload for the home-screen iPads) ──────────────────
+// The iPads run these pages as home-screen web apps: no address bar, no easy
+// refresh, and iOS keeps the old page alive for days — so the update banner
+// alone can sit unseen forever. Ported from the Stella Drawings app:
+//
+//   1. DISCOVER — the meta/version Firestore listener stays the fast path
+//      (pages feed what it reports into notifyVersion). A periodic self-fetch
+//      of js/shared.js (cache: no-store, regexing APP_VERSION out of the
+//      source) backstops the case where EVERY device is stale — Firestore only
+//      learns about a new version once one device has actually loaded it.
+//   2. RELOAD — once a newer version is known, reload automatically, but only
+//      when it can't lose work or interrupt anyone: user idle 3+ minutes, no
+//      panel or overlay open, nothing sitting in a focused input, the page's
+//      own carts empty (isBusy), and the connection confirmed live (isOnline)
+//      so a kiosk can't reload itself into an offline error page.
+//
+// Two extra safeguards on the reload itself:
+//   - RETRY window: GitHub Pages caches HTML ~10 minutes, so a reload right
+//     after deploy can be served the old build again. One attempt per version
+//     PER HOUR (sessionStorage) self-heals that without any possibility of a
+//     reload loop; the banner stays up in between as the manual fallback.
+//   - REACHABLE gate: a reload only fires if a self-fetch succeeded moments
+//     ago — a live Firestore channel doesn't prove the site host is up, and a
+//     kiosk that reloads into a browser error page is stuck until tapped.
+const AutoUpdate = {
+  SELF_CHECK_MS: 5 * 60 * 1000,   // self-fetch cadence (Firestore push is the fast path)
+  TICK_MS:       30 * 1000,        // how often the reload decision is re-evaluated
+  IDLE_MS:       3 * 60 * 1000,    // required inactivity before an automatic reload
+  RETRY_MS:      60 * 60 * 1000,   // min gap between reload attempts for the same version
+  REACHABLE_MS:  3 * 60 * 1000,    // a successful self-fetch must be this recent to reload
+  _latest: null, _lastActivity: Date.now(), _lastSelfCheck: 0, _lastSelfOk: 0,
+  _opts: null, _tried: null,
+
+  start(opts) {
+    if (this._opts) return;   // once per page load
+    this._opts = opts || {};
+    for (const ev of ['touchstart', 'mousedown', 'keydown', 'wheel', 'scroll'])
+      addEventListener(ev, () => { this._lastActivity = Date.now(); }, { passive: true, capture: true });
+    setInterval(() => { this._selfCheck(); this._maybeReload(); }, this.TICK_MS);
+    // Home-screen apps freeze while backgrounded — check the moment they wake.
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') this._selfCheck(true);
+    });
+  },
+
+  // Both discovery paths (Firestore push + self-fetch) funnel through here so a
+  // single "newest known version" drives the reload decision.
+  notifyVersion(v) {
+    if (v && isVersionNewer(v, APP_VERSION) && (!this._latest || isVersionNewer(v, this._latest)))
+      this._latest = v;
+  },
+
+  async _selfCheck(force) {
+    const now = Date.now();
+    if (now - this._lastSelfCheck < (force ? 20 * 1000 : this.SELF_CHECK_MS)) return;
+    this._lastSelfCheck = now;
+    try {
+      const res = await fetch('js/shared.js?nocache=' + now, { cache: 'no-store' });
+      if (!res.ok) return;
+      this._lastSelfOk = Date.now();   // proof the site host is reachable right now
+      const m = (await res.text()).match(/APP_VERSION\s*=\s*'([^']+)'/);
+      if (m && isVersionNewer(m[1], APP_VERSION)) {
+        this.notifyVersion(m[1]);
+        if (this._opts.onDiscover) this._opts.onDiscover(m[1]);   // surface the banner
+      }
+    } catch { /* offline — ignore */ }
+  },
+
+  _busy() {
+    if (document.querySelector('.panel.open')) return true;        // any slide-in panel
+    const ow = document.getElementById('overlay-wrap');
+    if (ow && ow.innerHTML.trim()) return true;                    // any dialog/overlay
+    const el = document.activeElement;                             // walked away mid-entry
+    if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') && el.value) return true;
+    return this._opts.isBusy ? !!this._opts.isBusy() : false;
+  },
+
+  _maybeReload() {
+    if (!this._opts || !this._latest) return;
+    if (this._opts.isOnline && !this._opts.isOnline()) return;
+    if (Date.now() - this._lastActivity < this.IDLE_MS) return;
+    if (this._busy()) return;
+    // REACHABLE gate — only reload off the back of a recent successful fetch of
+    // the site itself. Forcing a check here (throttled to 20s inside) means the
+    // next 30s tick can pass this gate if the host answers.
+    if (Date.now() - this._lastSelfOk > this.REACHABLE_MS) { this._selfCheck(true); return; }
+    // RETRY window — one attempt per version per RETRY_MS. In-memory mirror of
+    // the sessionStorage record covers private mode, where storage throws.
+    const tried = this._tried
+      || (() => { try { return JSON.parse(sessionStorage.getItem('mo_auto_reload') || 'null'); } catch { return null; } })();
+    if (tried && tried.v === this._latest && Date.now() - tried.at < this.RETRY_MS) return;
+    this._tried = { v: this._latest, at: Date.now() };
+    try { sessionStorage.setItem('mo_auto_reload', JSON.stringify(this._tried)); } catch {}
+    location.reload();
   },
 };
 
