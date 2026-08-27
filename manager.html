@@ -169,7 +169,9 @@ const Manager = {
     const lbl = document.getElementById('live-label');
     const wrap = document.getElementById('update-banner-wrap');
     const { connected, latestVersion } = this._connState;
-    const outdated = connected && latestVersion && isVersionNewer(latestVersion, APP_VERSION);
+    // hostReachable(): keep the update pill visible when Firestore's channel is
+    // wedged (dot says Offline) but the site itself answers — refresh is the cure.
+    const outdated = (connected || AutoUpdate.hostReachable()) && latestVersion && isVersionNewer(latestVersion, APP_VERSION);
 
     if (dot && lbl) {
       dot.classList.remove('disconnected', 'update-available');
@@ -216,7 +218,6 @@ const Manager = {
     // stocktake count, or delivery edit mode selections.
     AutoUpdate.start({
       onDiscover: v => { this._connState.latestVersion = v; this._renderLiveStatus(); },
-      isOnline:   () => this._connState.connected === true,
       isBusy:     () => this.noCount() > 0 || this.coCount() > 0
         || Object.keys(this._receive._items).length > 0
         || Object.keys(this._mstCart).length > 0

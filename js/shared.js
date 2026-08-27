@@ -1,6 +1,6 @@
-// shared.js — v0.50
+// shared.js — v0.50.1
 
-const APP_VERSION = 'v0.50';
+const APP_VERSION = 'v0.50.1';
 
 // Numeric version comparison (handles "v0.9" vs "v0.10" correctly, unlike
 // plain string comparison). Returns true if `a` is strictly newer than `b`.
@@ -56,6 +56,7 @@ const CAT_ICONS = {
   'Brass':           { icon:'ti-coin',     bg:'#fef9c3', color:'#ca8a04' },
   'Bronze':          { icon:'ti-coins',    bg:'#fef3c7', color:'#92400e' },
   'Thrust Washer':   { icon:'ti-circle-dot', bg:'#ffedd5', color:'#c2410c' },
+  '3D Filament':     { icon:'ti-3d-cube-sphere', bg:'#ecfeff', color:'#0e7490' },
   // Consumable categories
   'Fasteners':       { icon:'ti-bolt',    bg:'#fef9c3', color:'#a16207' },
   'Abrasives':       { icon:'ti-ripple',  bg:'#fce7f3', color:'#9d174d' },
@@ -557,9 +558,8 @@ const BarcodeScanner = {
 //      learns about a new version once one device has actually loaded it.
 //   2. RELOAD — once a newer version is known, reload automatically, but only
 //      when it can't lose work or interrupt anyone: user idle 3+ minutes, no
-//      panel or overlay open, nothing sitting in a focused input, the page's
-//      own carts empty (isBusy), and the connection confirmed live (isOnline)
-//      so a kiosk can't reload itself into an offline error page.
+//      panel or overlay open, nothing sitting in a focused input, and the
+//      page's own carts empty (isBusy).
 //
 // Two extra safeguards on the reload itself:
 //   - RETRY window: GitHub Pages caches HTML ~10 minutes, so a reload right
@@ -567,8 +567,15 @@ const BarcodeScanner = {
 //     PER HOUR (sessionStorage) self-heals that without any possibility of a
 //     reload loop; the banner stays up in between as the manual fallback.
 //   - REACHABLE gate: a reload only fires if a self-fetch succeeded moments
-//     ago — a live Firestore channel doesn't prove the site host is up, and a
-//     kiosk that reloads into a browser error page is stuck until tapped.
+//     ago, so a kiosk can't reload itself into a browser error page.
+//
+// Reachability is judged ONLY by the self-fetch — deliberately NOT by
+// Firestore's connection state. iOS home-screen apps can wake from a long
+// suspend with a wedged Firestore channel (the page shows "Offline" despite
+// working wifi, and stays that way until reloaded). That is a state a reload
+// CURES, so gating on Firestore would block the fix on exactly the devices
+// that need it. Same reason hostReachable() feeds the update banner: a wedged
+// page must still show the pill when the site itself is answering.
 const AutoUpdate = {
   SELF_CHECK_MS: 5 * 60 * 1000,   // self-fetch cadence (Firestore push is the fast path)
   TICK_MS:       30 * 1000,        // how often the reload decision is re-evaluated
@@ -597,6 +604,11 @@ const AutoUpdate = {
       this._latest = v;
   },
 
+  // True while a self-fetch answered recently — the site host is genuinely
+  // reachable even if Firestore's channel is wedged. Pages use this to keep the
+  // update banner visible in that state (refreshing is exactly the remedy).
+  hostReachable() { return Date.now() - this._lastSelfOk < this.REACHABLE_MS; },
+
   async _selfCheck(force) {
     const now = Date.now();
     if (now - this._lastSelfCheck < (force ? 20 * 1000 : this.SELF_CHECK_MS)) return;
@@ -624,7 +636,6 @@ const AutoUpdate = {
 
   _maybeReload() {
     if (!this._opts || !this._latest) return;
-    if (this._opts.isOnline && !this._opts.isOnline()) return;
     if (Date.now() - this._lastActivity < this.IDLE_MS) return;
     if (this._busy()) return;
     // REACHABLE gate — only reload off the back of a recent successful fetch of

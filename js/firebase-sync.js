@@ -1,4 +1,4 @@
-// firebase-sync.js — v0.50
+// firebase-sync.js — v0.50.1
 let _db = null, _configured = false;
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

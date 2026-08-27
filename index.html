@@ -402,7 +402,9 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
     const lbl = document.getElementById('live-label');
     const wrap = document.getElementById('update-banner-wrap');
     const { connected, latestVersion } = this._connState;
-    const outdated = connected && latestVersion && isVersionNewer(latestVersion, APP_VERSION);
+    // hostReachable(): keep the update pill visible when Firestore's channel is
+    // wedged (dot says Offline) but the site itself answers — refresh is the cure.
+    const outdated = (connected || AutoUpdate.hostReachable()) && latestVersion && isVersionNewer(latestVersion, APP_VERSION);
 
     if (dot && lbl) {
       dot.classList.remove('disconnected', 'update-available');
@@ -441,7 +443,6 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
     // stocktake count is in progress.
     AutoUpdate.start({
       onDiscover: v => { this._connState.latestVersion = v; this._renderLiveStatus(); },
-      isOnline:   () => this._connState.connected === true,
       isBusy:     () => !Order.isEmpty() || this.stCount() > 0,
     });
   },

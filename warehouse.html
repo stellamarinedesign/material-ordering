@@ -306,7 +306,9 @@ const Warehouse = {
     const lbl  = document.getElementById('live-label');
     const wrap = document.getElementById('update-banner-wrap');
     const { connected, latestVersion } = this._connState;
-    const outdated = connected && latestVersion && isVersionNewer(latestVersion, APP_VERSION);
+    // hostReachable(): keep the update pill visible when Firestore's channel is
+    // wedged (dot says Offline) but the site itself answers — refresh is the cure.
+    const outdated = (connected || AutoUpdate.hostReachable()) && latestVersion && isVersionNewer(latestVersion, APP_VERSION);
     if (dot && lbl) {
       dot.classList.remove('disconnected', 'update-available');
       if (!connected)    { dot.classList.add('disconnected');    lbl.textContent = 'Offline'; }
@@ -333,7 +335,6 @@ const Warehouse = {
     // reloading while a panel/overlay is open or a field holds unsaved typing.
     AutoUpdate.start({
       onDiscover: v => { this._connState.latestVersion = v; this._renderLiveStatus(); },
-      isOnline:   () => this._connState.connected === true,
     });
   },
 
