@@ -1,0 +1,46 @@
+/* ═══════════════════════════════════════════════════════════════════
+   THEMES
+   The default look is the :root block at the top of css/style.css. A theme
+   is a variable override block keyed on <html data-theme="…"> — it changes
+   only the variables it lists and everything else falls through to the
+   default. The per-device choice lives in localStorage ("mo_theme"): a tiny
+   inline script in each page's <head> applies it before first paint, and
+   Theme.set() in js/shared.js switches it live from Settings.
+
+   To add a theme: copy a block, give it a new id, and register the id/name
+   in THEMES in js/shared.js so it appears in the Settings picker.
+
+   Guideline: restyle the CHROME (header, backgrounds, borders, tabs, accents,
+   logo) and leave the status colours alone unless it's just a shade change —
+   green / amber / red / blue are the app's safety language (received,
+   warning, reject/danger, info) and must stay distinguishable.
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* ── Stella Marine brand (Corporate Brand Guidelines 2025) ─────────────
+   Black Night #0E0A0A · Shadow Grey #282827 · Upsdell Red #AF1F24 ·
+   Burning Star Red #EA372E · Titanium White #FFFFFF. Header in Black Night
+   with the alternate (icon-only) logo — the version the guidelines specify
+   for online use — and Upsdell Red for the active-tab accent. Brand fonts
+   (Friz Quadrata Pro / Sweet Sans Pro) are not licensed as web fonts here,
+   so typography stays IBM Plex. */
+[data-theme="stella"] {
+  --bg:             #f3f3f2;
+  --bg2:            #e7e7e5;
+  --surface:        #ffffff;    /* Titanium White */
+  --border:         #d8d8d5;
+  --border2:        #bbbbb7;
+  --text:           #0e0a0a;    /* Black Night */
+  --text2:          #4b4b49;
+  --text3:          #7b7b78;
+  --accent:         #0e0a0a;    /* header + primary buttons */
+  --accent-text:    #ffffff;
+  --header-mgr:     #282827;    /* Shadow Grey — manager header */
+  --header-muted:   #a6a6a3;
+  --tab-active:     #af1f24;    /* Upsdell Red */
+  --main-tab-active:#af1f24;
+  --red:            #ea372e;    /* Burning Star Red — danger / alerts */
+  --red-text:       #af1f24;    /* Upsdell Red — red text on pale red */
+  --logo:           url('../images/brand/stella-icon.png');
+  --logo-w:         48px;
+  --logo-gap:       12px;
+}

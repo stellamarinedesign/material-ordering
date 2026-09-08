@@ -2,12 +2,15 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
+  <meta name="theme-color" content="#1a1a18">
+  <script>/* Theme bootstrap — runs before first paint so a themed device never flashes the default look. Choice is per device; see Theme in js/shared.js */try{var t=localStorage.getItem("mo_theme");if(t)document.documentElement.setAttribute("data-theme",t);}catch(e){}</script>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="mobile-web-app-capable" content="yes">
   <title>Warehouse Intake</title>
   <link rel="icon" type="image/png" href="favicon.png">
   <link rel="stylesheet" href="fonts/tabler-icons.min.css">
   <link rel="stylesheet" href="css/style.css">
+  <link rel="stylesheet" href="css/themes.css">
 </head>
 <body>
 <div id="root"></div>
@@ -140,6 +143,7 @@ const Warehouse = {
 
         <div class="header">
           <div class="col"><div class="header-inner">
+            <span class="header-logo"></span>
             <div class="header-left">
               <div class="header-title"><i class="ti ti-warehouse" style="opacity:.7;margin-right:6px"></i>Warehouse Intake</div>
               <div class="header-ref">
@@ -211,6 +215,15 @@ const Warehouse = {
           </div>
           <div class="panel-scroll"><div class="panel-col" style="gap:20px">
             <div class="settings-section">
+              <div class="settings-label">Appearance</div>
+              <div class="settings-card">
+                <div class="settings-row">
+                  <div><div class="settings-row-label">Theme</div><div class="settings-row-sub">Colours and logo for this device — applies to every page opened on it</div></div>
+                  <select id="s-theme">${THEMES.map(t => `<option value="${t.id}"${Theme.get() === t.id ? ' selected' : ''}>${esc(t.name)}</option>`).join('')}</select>
+                </div>
+              </div>
+            </div>
+            <div class="settings-section">
               <div class="settings-label">Database</div>
               <div class="settings-card">
                 <div class="settings-row">
@@ -257,6 +270,8 @@ const Warehouse = {
     // Settings button — opens settings panel (test mode toggle + reconnect option)
     document.getElementById('btn-setup').addEventListener('click', () => this.openPanel('wh-settings-panel'));
     document.getElementById('btn-close-wh-settings').addEventListener('click', () => this.closePanel('wh-settings-panel'));
+    // No Save button on this panel — the theme applies the moment it's picked
+    document.getElementById('s-theme').addEventListener('change', e => Theme.set(e.target.value));
     document.getElementById('btn-wh-toggle-test').addEventListener('click', () => {
       FirebaseConfig.setTestMode(!FirebaseConfig.isTestMode());
       location.reload();

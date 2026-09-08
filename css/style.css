@@ -25,6 +25,16 @@
   --amber-bg:    #fffbeb;
   --amber-text:  #b45309;
   --orange:      #ea580c;
+  --amber:       #d97706;
+  /* Chrome colours a theme is most likely to restyle (see css/themes.css) */
+  --header-mgr:     #1e3a5f;      /* manager page header */
+  --header-muted:   #9ca3af;      /* version/ref text in the header */
+  --tab-active:     var(--text);  /* worker-page tab underline */
+  --main-tab-active:#1e3a5f;      /* manager main-tab underline */
+  /* Header logo slot — none by default; a theme sets all three */
+  --logo:        none;
+  --logo-w:      0px;
+  --logo-gap:    0px;
   --radius:      6px;
   --radius-lg:   10px;
   --font:        'IBM Plex Sans', sans-serif;
@@ -81,21 +91,27 @@ button { cursor: pointer; }
   justify-content: space-between;
   padding: 13px 0 11px;
 }
-.header.manager-hdr { background: #1e3a5f; }
+.header.manager-hdr { background: var(--header-mgr); }
 .header-left { display: flex; flex-direction: column; gap: 2px; }
+/* Brand logo slot: invisible (0 width, no image) unless the active theme sets
+   --logo/--logo-w/--logo-gap — a CSS background so nothing downloads otherwise */
+.header-logo {
+  width: var(--logo-w); height: 36px; margin-right: var(--logo-gap); flex-shrink: 0;
+  background: var(--logo) center / contain no-repeat;
+}
 .header-title { font-size: 16px; font-weight: 600; letter-spacing: 0.02em; }
-.header-ref { font-size: 11px; font-family: var(--mono); color: #9ca3af; letter-spacing: 0.05em; }
+.header-ref { font-size: 11px; font-family: var(--mono); color: var(--header-muted); letter-spacing: 0.05em; }
 .header-actions { display: flex; align-items: center; gap: 8px; }
 .icon-btn {
   background: rgba(255,255,255,0.12); border: 1px solid rgba(255,255,255,0.18);
   border-radius: var(--radius); width: 36px; height: 36px;
   display: flex; align-items: center; justify-content: center;
-  color: #f5f4f0; font-size: 18px; position: relative; flex-shrink: 0;
+  color: var(--accent-text); font-size: 18px; position: relative; flex-shrink: 0;
 }
 .icon-btn:active { background: rgba(255,255,255,0.24); }
 .order-badge {
   position: absolute; top: -5px; right: -5px;
-  background: #ef4444; color: #fff; border-radius: 50%;
+  background: var(--red); color: #fff; border-radius: 50%;
   width: 17px; height: 17px; font-size: 10px; font-weight: 600;
   display: flex; align-items: center; justify-content: center;
   border: 1.5px solid var(--accent);
@@ -133,14 +149,14 @@ button { cursor: pointer; }
   border-bottom: 2px solid transparent; white-space: nowrap; flex-shrink: 0;
   background: none; border-top: none; border-left: none; border-right: none;
 }
-.tab.active { color: var(--text); border-bottom-color: var(--text); }
+.tab.active { color: var(--text); border-bottom-color: var(--tab-active); }
 .main-tab {
   padding: 11px 18px; font-size: 13px; font-weight: 500; color: var(--text3);
   border-bottom: 2px solid transparent; background: none;
   border-top: none; border-left: none; border-right: none;
   cursor: pointer; white-space: nowrap; display: inline-flex; align-items: center; gap: 6px;
 }
-.main-tab.active { color: var(--text); border-bottom-color: #1e3a5f; }
+.main-tab.active { color: var(--text); border-bottom-color: var(--main-tab-active); }
 .main-tab-group { display: flex; flex-direction: column; flex-shrink: 0; }
 .main-tab-group-label {
   font-size: 9px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em;
@@ -295,7 +311,7 @@ button { cursor: pointer; }
 .settings-row:last-child { border-bottom: none; }
 .settings-row-label { font-size: 14px; color: var(--text); flex: 1; }
 .settings-row-sub   { font-size: 12px; color: var(--text3); margin-top: 2px; }
-.settings-row input[type=text], .settings-row input[type=email] {
+.settings-row input[type=text], .settings-row input[type=email], .settings-row select {
   flex: 1; border: 1px solid var(--border); background: var(--bg);
   border-radius: var(--radius); padding: 7px 10px; font-size: 13px; color: var(--text); outline: none; min-width: 0;
 }
@@ -831,7 +847,7 @@ button.bc-chip { font-family: var(--mono); line-height: inherit; }
 .intake-btn:hover { border-color: var(--border2); color: var(--text); }
 
 .intake-btn.intake-ok.active       { background: var(--green-bg);   color: var(--green-text);  border-color: var(--green); }
-.intake-btn.intake-partial.active  { background: var(--amber-bg);   color: var(--amber-text);  border-color: #d97706; }
+.intake-btn.intake-partial.active  { background: var(--amber-bg);   color: var(--amber-text);  border-color: var(--amber); }
 .intake-btn.intake-missing.active  { background: var(--red-bg);     color: var(--red-text);    border-color: var(--red); }
 .intake-btn.intake-backorder.active{ background: var(--blue-bg);    color: var(--blue-text);   border-color: var(--blue); }
 
@@ -846,7 +862,7 @@ button.bc-chip { font-family: var(--mono); line-height: inherit; }
 }
 .intake-partial-row label { font-size: 12px; color: var(--amber-text); font-weight: 500; white-space: nowrap; }
 .intake-partial-input {
-  width: 72px; border: 1px solid #d97706; background: var(--surface);
+  width: 72px; border: 1px solid var(--amber); background: var(--surface);
   border-radius: var(--radius); padding: 5px 8px; font-size: 13px;
   color: var(--text); outline: none; font-family: var(--mono);
 }

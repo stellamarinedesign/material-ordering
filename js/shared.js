@@ -1,6 +1,6 @@
-// shared.js — v0.50.1
+// shared.js — v0.51
 
-const APP_VERSION = 'v0.50.1';
+const APP_VERSION = 'v0.51';
 
 // Numeric version comparison (handles "v0.9" vs "v0.10" correctly, unlike
 // plain string comparison). Returns true if `a` is strictly newer than `b`.
@@ -64,6 +64,37 @@ const CAT_ICONS = {
   'Safety':          { icon:'ti-shield-check', bg:'#f0fdf4', color:'#166534' },
   'Chemicals':       { icon:'ti-flask',   bg:'#faf5ff', color:'#7e22ce' },
   'default':         { icon:'ti-package', bg:'#f3f4f6', color:'#6b7280' },
+};
+
+// ── THEMES ────────────────────────────────────────────────────────────
+// Visual themes are CSS-variable override blocks in css/themes.css, keyed on
+// <html data-theme="…">. The choice is per device (localStorage) — it's a
+// Settings item on each page and the four pages share one origin, so picking a
+// theme on any page themes them all on that device. Each page's <head> carries
+// a two-line bootstrap that applies the saved id before first paint; set()
+// switches it live. To add a theme: a block in themes.css + an entry here.
+const THEMES = [
+  { id: '',       name: 'Workshop (default)' },
+  { id: 'stella', name: 'Stella brand' },
+];
+const Theme = {
+  _key: 'mo_theme',
+  get()   { try { return localStorage.getItem(this._key) || ''; } catch { return ''; } },
+  set(id) {
+    try { if (id) localStorage.setItem(this._key, id); else localStorage.removeItem(this._key); } catch {}
+    this.apply();
+  },
+  apply() {
+    const id = this.get();
+    if (id) document.documentElement.setAttribute('data-theme', id);
+    else    document.documentElement.removeAttribute('data-theme');
+    // Browser chrome / status bar tint follows the header colour of the theme
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) {
+      const c = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim();
+      if (c) meta.setAttribute('content', c);
+    }
+  },
 };
 
 const DeviceName = {

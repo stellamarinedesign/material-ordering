@@ -2,6 +2,8 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
+  <meta name="theme-color" content="#1a1a18">
+  <script>/* Theme bootstrap — runs before first paint so a themed device never flashes the default look. Choice is per device; see Theme in js/shared.js */try{var t=localStorage.getItem("mo_theme");if(t)document.documentElement.setAttribute("data-theme",t);}catch(e){}</script>
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
@@ -13,6 +15,7 @@
   <link rel="apple-touch-icon" href="icons/icon-192.png">
   <link rel="stylesheet" href="fonts/tabler-icons.min.css">
   <link rel="stylesheet" href="css/style.css">
+  <link rel="stylesheet" href="css/themes.css">
   <style>
     .mat-bin {
       width:30px; height:32px; display:flex; align-items:center; justify-content:center;
@@ -214,6 +217,7 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
       <div class="app-root" id="app-root">
         <div class="header">
           <div class="col"><div class="header-inner">
+            <span class="header-logo"></span>
             <div class="header-left">
               <div class="header-title">Material Orders</div>
               <div class="header-ref" style="display:flex;gap:6px;align-items:center"><span class="live-dot" id="live-dot"></span><span id="live-label">Live</span><span style="opacity:0.45">·</span><span id="order-ref"></span><span style="opacity:0.45">·</span><span id="app-version" style="opacity:0.6;font-family:var(--mono)"></span></div>
@@ -566,6 +570,15 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
     const isTest = FirebaseConfig.isTestMode();
     el.innerHTML = `
       <div class="settings-section">
+        <div class="settings-label">Appearance</div>
+        <div class="settings-card">
+          <div class="settings-row">
+            <div><div class="settings-row-label">Theme</div><div class="settings-row-sub">Colours and logo for this device — applies to every page opened on it</div></div>
+            <select id="s-theme">${THEMES.map(t => `<option value="${t.id}"${Theme.get() === t.id ? ' selected' : ''}>${esc(t.name)}</option>`).join('')}</select>
+          </div>
+        </div>
+      </div>
+      <div class="settings-section">
         <div class="settings-label">Search &amp; Sort</div>
         <div class="settings-card">
           <div class="settings-row">
@@ -599,6 +612,7 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
   },
 
   saveSettings() {
+    Theme.set(document.getElementById('s-theme')?.value ?? Theme.get());   // per-device, applied immediately
     Settings.save({
       naturalSort:     document.getElementById('s-natural-sort')?.checked ?? true,
       unitAwareSearch: document.getElementById('s-unit-search')?.checked ?? true,
