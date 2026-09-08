@@ -27,6 +27,11 @@
   --orange:      #ea580c;
   --amber:       #d97706;
   /* Chrome colours a theme is most likely to restyle (see css/themes.css) */
+  --header-bg:      var(--accent);      /* worker-page header; separate from
+                                            --accent so a theme can colour the
+                                            header without recolouring buttons */
+  --header-text:    var(--accent-text);
+  --header-line:    0 solid transparent; /* rule under the header (border-bottom) */
   --header-mgr:     #1e3a5f;      /* manager page header */
   --header-muted:   #9ca3af;      /* version/ref text in the header */
   --tab-active:     var(--text);  /* worker-page tab underline */
@@ -80,8 +85,9 @@ button { cursor: pointer; }
    HEADER
    ═══════════════════════════════════════ */
 .header {
-  background: var(--accent);
-  color: var(--accent-text);
+  background: var(--header-bg);
+  color: var(--header-text);
+  border-bottom: var(--header-line);
   flex-shrink: 0;
   z-index: 2;
 }
@@ -106,7 +112,7 @@ button { cursor: pointer; }
   background: rgba(255,255,255,0.12); border: 1px solid rgba(255,255,255,0.18);
   border-radius: var(--radius); width: 36px; height: 36px;
   display: flex; align-items: center; justify-content: center;
-  color: var(--accent-text); font-size: 18px; position: relative; flex-shrink: 0;
+  color: var(--header-text); font-size: 18px; position: relative; flex-shrink: 0;
 }
 .icon-btn:active { background: rgba(255,255,255,0.24); }
 .order-badge {
