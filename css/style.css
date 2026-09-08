@@ -1,4 +1,8 @@
-@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap');
+/* Every weight the stylesheet asks for is loaded above. A weight that isn't
+   loaded gets synthesised by the browser (smeared glyphs) — on light-on-dark
+   text that shows as a hazy halo around headings, so keep this list in step
+   with the font-weight values used below and in the page-local styles. */
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
