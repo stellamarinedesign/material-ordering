@@ -27,6 +27,9 @@
   --orange:      #ea580c;
   --amber:       #d97706;
   /* Chrome colours a theme is most likely to restyle (see css/themes.css) */
+  --ground:         var(--surface);     /* page/app/panel background behind the
+                                            cards — same as cards by default, but a
+                                            dark theme wants black behind grey */
   --header-bg:      var(--accent);      /* worker-page header; separate from
                                             --accent so a theme can colour the
                                             header without recolouring buttons */
@@ -67,7 +70,7 @@ button { cursor: pointer; }
   inset: 0;
   display: flex;
   flex-direction: column;
-  background: var(--surface);
+  background: var(--ground);
   overflow: hidden;
 }
 

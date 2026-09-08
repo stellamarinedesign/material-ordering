@@ -29,9 +29,13 @@
    apps declare them but fall back too). */
 [data-theme="stella"] {
   color-scheme: dark;              /* native selects, scrollbars, spinners go dark */
-  --bg:             #0e0a0a;       /* Black Night */
-  --bg2:            #1c1c1b;       /* band */
-  --surface:        #282827;       /* Shadow Grey */
+  /* Ground is Black Night; grey is reserved for bars, cards and boxes — the
+     balance the Drawings app has. --bg (inputs, hovers, insets) is the band
+     tone that sits between the two. */
+  --ground:         #0e0a0a;       /* Black Night — behind everything */
+  --bg:             #1c1c1b;       /* band — inputs, hover, insets */
+  --bg2:            #333331;       /* a step lighter than the cards, for chips */
+  --surface:        #282827;       /* Shadow Grey — bars, cards, boxes */
   --border:         #454542;       /* line */
   --border2:        #5e5e5a;
   --text:           #ffffff;
@@ -67,6 +71,11 @@
   --logo-gap:       12px;
 }
 /* Component touches that variables alone can't express */
+[data-theme="stella"] body, [data-theme="stella"] .panel, [data-theme="stella"] .setup-screen,
+[data-theme="stella"] .manager-main { background: var(--ground); }   /* sidebar stays grey — it's a bar */
+/* Search: black strip with a grey box in it, as in the Drawings app */
+[data-theme="stella"] .search-bar { background: var(--ground); border-bottom: none; }
+[data-theme="stella"] .search-wrap input { background: var(--surface); }
 [data-theme="stella"] .header-title { text-transform: uppercase; letter-spacing: .1em; font-weight: 700; }
 [data-theme="stella"] .header-ref   { letter-spacing: .06em; }
 [data-theme="stella"] .icon-btn     { border-color: var(--border); background: rgba(255,255,255,0.06); }
