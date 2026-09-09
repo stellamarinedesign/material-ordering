@@ -7,55 +7,68 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root {
-  --bg:          #f5f4f0;
-  --bg2:         #eceae4;
-  --surface:     #ffffff;
-  --border:      #d4d2c8;
-  --border2:     #b8b6ac;
-  --text:        #1a1a18;
-  --text2:       #5a5a54;
-  --text3:       #8a8a82;
-  --accent:      #1a1a18;
-  --accent-text: #f5f4f0;
-  --blue:        #2563eb;
-  --blue-bg:     #eff6ff;
-  --blue-text:   #1d4ed8;
-  --green:       #16a34a;
-  --green-bg:    #f0fdf4;
-  --green-text:  #15803d;
-  --red:         #dc2626;
-  --red-bg:      #fef2f2;
-  --red-text:    #b91c1c;
-  --amber-bg:    #fffbeb;
-  --amber-text:  #b45309;
+  /* ── DEFAULT THEME: Stella brand (dark) ───────────────────────────────
+     Same tokens as the Drawings and Production Board apps. A theme is a
+     block in css/themes.css that overrides any of these — nothing else in
+     the stylesheet carries a colour of its own. Status colours (blue / green
+     / red / amber) are the app's safety language: info / received / danger /
+     warning — a theme may re-tint them but must keep them distinguishable. */
+  color-scheme: dark;                   /* native selects, scrollbars, spinners */
+  --ground:      #0e0a0a;   /* Black Night — page/app/panel background */
+  --bg:          #1c1c1b;   /* band — inputs, hover, insets */
+  --bg2:         #333331;   /* a step lighter than the cards, for chips */
+  --surface:     #282827;   /* Shadow Grey — bars, cards, boxes */
+  --border:      #454542;
+  --border2:     #5e5e5a;
+  --text:        #ffffff;
+  --text2:       #d2d2ce;
+  --text3:       #b0b0ab;
+  --accent:      #af1f24;   /* Upsdell Red — primary buttons, active chips */
+  --accent-text: #ffffff;
+  --blue:        #3b82f6;  --blue-bg:  #172033;  --blue-text:  #8ab4ff;
+  --green:       #5fb85f;  --green-bg: #13261a;  --green-text: #7fd47f;
+  --red:         #ea372e;  --red-bg:   #2b100e;  --red-text:   #ff7369;
+  --amber:       #d97706;  --amber-bg: #2b1f08;  --amber-text: #f2b84b;
   --orange:      #ea580c;
-  --amber:       #d97706;
-  /* Chrome colours a theme is most likely to restyle (see css/themes.css) */
-  --ground:         var(--surface);     /* page/app/panel background behind the
-                                            cards — same as cards by default, but a
-                                            dark theme wants black behind grey */
-  --header-bg:      var(--accent);      /* worker-page header; separate from
-                                            --accent so a theme can colour the
-                                            header without recolouring buttons */
-  --header-text:    var(--accent-text);
-  --header-line:    0 solid transparent; /* rule under the header (border-bottom) */
-  --header-mgr:     #1e3a5f;      /* manager page header */
-  --header-muted:   #9ca3af;      /* version/ref text in the header */
-  --tab-active:     var(--text);  /* worker-page tab underline */
-  --main-tab-active:#1e3a5f;      /* manager main-tab underline */
-  /* Header logo slot — none by default; a theme sets all three */
-  --logo:        none;
-  --logo-w:      0px;
-  --logo-gap:    0px;
-  --radius:      6px;
-  --radius-lg:   10px;
+  /* Header */
+  --header-bg:      #282827;             /* worker pages — separate from --accent
+                                            so the header and buttons can differ */
+  --header-text:    #ffffff;
+  --header-line:    3px solid #ea372e;   /* rule under the header (border-bottom) */
+  --header-mgr:     #282827;             /* manager page header */
+  --header-muted:   #b0b0ab;             /* version/ref text in the header */
+  --title-transform: uppercase;          /* header title treatment */
+  --title-spacing:  .1em;
+  --title-weight:   700;
+  --icon-btn-bg:    rgba(255,255,255,0.06);
+  --icon-btn-line:  var(--border);
+  --logo:        url('../images/brand/stella-icon.png');  /* header logo slot — */
+  --logo-w:      46px;                                     /* set all three, or  */
+  --logo-gap:    12px;                                     /* none for no logo   */
+  /* Tabs, focus, surfaces that differ from the cards */
+  --tab-active:     #ea372e;             /* worker-page tab underline */
+  --main-tab-active:#ea372e;             /* manager main-tab underline */
+  --focus:          #ea372e;             /* focused input border */
+  --panel-bg:       var(--ground);       /* slide-in panels, setup screen, manager content */
+  --search-strip:   var(--ground);       /* strip the search box sits in… */
+  --search-strip-line: 0 solid transparent;
+  --search-input-bg:var(--surface);      /* …and the box itself */
+  --toast-bg:       #1f7a3a;             /* scan confirmation toast */
+  --toast-warn-bg:  #af1f24;
+  /* Highlights used by page-local styles (stocktake mode, barcode setup, new items) */
+  --stocktake-tint:        #1a1308;
+  --stocktake-banner-bg:   #2b1f08;  --stocktake-banner-text: #f2b84b;  --stocktake-banner-line: #4a3610;
+  --setup-banner-bg:       #251c45;  --setup-banner-text:     #c4b5fd;  --setup-banner-line:     #3f3480;
+  --ghost-bg:              #251c45;  --ghost-text:            #c4b5fd;  --ghost-line:            #4c3d8a;
+  --radius:      8px;
+  --radius-lg:   11px;
   --font:        'IBM Plex Sans', sans-serif;
   --mono:        'IBM Plex Mono', monospace;
 }
 
 html, body {
   height: 100%;
-  background: var(--bg);
+  background: var(--ground);
   font-family: var(--font);
   color: var(--text);
   -webkit-font-smoothing: antialiased;
@@ -112,11 +125,11 @@ button { cursor: pointer; }
   width: var(--logo-w); height: 36px; margin-right: var(--logo-gap); flex-shrink: 0;
   background: var(--logo) center / contain no-repeat;
 }
-.header-title { font-size: 16px; font-weight: 600; letter-spacing: 0.02em; }
+.header-title { font-size: 16px; font-weight: var(--title-weight); letter-spacing: var(--title-spacing); text-transform: var(--title-transform); }
 .header-ref { font-size: 11px; font-family: var(--mono); color: var(--header-muted); letter-spacing: 0.05em; }
 .header-actions { display: flex; align-items: center; gap: 8px; }
 .icon-btn {
-  background: rgba(255,255,255,0.12); border: 1px solid rgba(255,255,255,0.18);
+  background: var(--icon-btn-bg); border: 1px solid var(--icon-btn-line);
   border-radius: var(--radius); width: 36px; height: 36px;
   display: flex; align-items: center; justify-content: center;
   color: var(--header-text); font-size: 18px; position: relative; flex-shrink: 0;
@@ -181,15 +194,15 @@ button { cursor: pointer; }
    SEARCH
    ═══════════════════════════════════════ */
 .search-bar {
-  background: var(--surface); border-bottom: 1px solid var(--border); flex-shrink: 0; padding: 10px 0;
+  background: var(--search-strip); border-bottom: var(--search-strip-line); flex-shrink: 0; padding: 10px 0;
 }
 .search-wrap { position: relative; }
 .search-wrap i { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); color: var(--text3); font-size: 15px; pointer-events: none; }
 .search-wrap input {
-  width: 100%; background: var(--bg); border: 1px solid var(--border);
+  width: 100%; background: var(--search-input-bg); border: 1px solid var(--border);
   border-radius: var(--radius); padding: 8px 10px 8px 32px; font-size: 14px; color: var(--text); outline: none;
 }
-.search-wrap input:focus { border-color: var(--border2); }
+.search-wrap input:focus { border-color: var(--focus); }
 
 /* ═══════════════════════════════════════
    SCROLLABLE BODY
@@ -247,7 +260,7 @@ button { cursor: pointer; }
    PANELS — absolute inside app-root
    ═══════════════════════════════════════ */
 .panel {
-  position: absolute; inset: 0; background: var(--bg);
+  position: absolute; inset: 0; background: var(--panel-bg);
   transform: translateX(100%);
   transition: transform 0.3s cubic-bezier(0.32,0.72,0,1);
   z-index: 20; display: flex; flex-direction: column; overflow: hidden;
@@ -328,7 +341,7 @@ button { cursor: pointer; }
   flex: 1; border: 1px solid var(--border); background: var(--bg);
   border-radius: var(--radius); padding: 7px 10px; font-size: 13px; color: var(--text); outline: none; min-width: 0;
 }
-.settings-row input:focus { border-color: var(--border2); }
+.settings-row input:focus { border-color: var(--focus); }
 .btn-sm { padding: 5px 12px; border-radius: var(--radius); font-size: 12px; font-weight: 500; border: 1px solid var(--border); background: var(--bg); color: var(--text); white-space: nowrap; }
 .btn-sm-danger { background: var(--red-bg); border-color: var(--red-text); color: var(--red-text); }
 .btn-sm-save   { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
@@ -401,7 +414,7 @@ button { cursor: pointer; }
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  background: var(--bg);
+  background: var(--panel-bg);
 }
 
 .order-queue {
@@ -623,14 +636,14 @@ button { cursor: pointer; }
 /* ═══════════════════════════════════════
    SETUP SCREEN
    ═══════════════════════════════════════ */
-.setup-screen { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 24px; background: var(--bg); overflow-y: auto; }
+.setup-screen { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 24px; background: var(--panel-bg); overflow-y: auto; }
 .setup-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 24px; width: 100%; max-width: 460px; }
 .setup-card h2 { font-size: 17px; font-weight: 600; margin-bottom: 6px; }
 .setup-card > p { font-size: 13px; color: var(--text2); line-height: 1.5; margin-bottom: 16px; }
 .setup-field { display: flex; flex-direction: column; gap: 5px; margin-bottom: 12px; }
 .setup-field label { font-size: 11px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text3); font-family: var(--mono); }
 .setup-field input { border: 1px solid var(--border); background: var(--bg); border-radius: var(--radius); padding: 8px 10px; font-size: 13px; color: var(--text); outline: none; font-family: var(--mono); }
-.setup-field input:focus { border-color: var(--border2); }
+.setup-field input:focus { border-color: var(--focus); }
 .setup-note { font-size: 12px; color: var(--text3); line-height: 1.5; background: var(--bg2); border-radius: var(--radius); padding: 10px 12px; }
 .setup-note a { color: var(--blue-text); }
 
@@ -741,13 +754,13 @@ button { cursor: pointer; }
 .scan-toast {
   position: fixed; left: 50%; bottom: 88px; transform: translate(-50%, 12px);
   display: flex; align-items: center; gap: 8px; max-width: 88vw;
-  background: var(--green-text); color: #fff; padding: 11px 16px;
+  background: var(--toast-bg); color: #fff; padding: 11px 16px;
   border-radius: var(--radius-lg); font-size: 14px; font-weight: 600;
   box-shadow: 0 6px 20px rgba(0,0,0,0.3); z-index: 200;
   opacity: 0; pointer-events: none; transition: opacity 0.18s, transform 0.18s;
 }
 .scan-toast.show { opacity: 1; transform: translate(-50%, 0); }
-.scan-toast.warn { background: var(--red-text); }
+.scan-toast.warn { background: var(--toast-warn-bg); }
 .scan-toast .ti { font-size: 18px; flex-shrink: 0; }
 /* Item picker shown when an unrecognised barcode is scanned during setup */
 .scan-link-list { display: flex; flex-direction: column; gap: 4px; max-height: 300px; overflow-y: auto; text-align: left; }
@@ -780,8 +793,8 @@ button.bc-chip { font-family: var(--mono); line-height: inherit; }
 .ghost-chip {
   display: inline-flex; align-items: center; gap: 3px; vertical-align: 1px;
   font-size: 10px; font-weight: 600; font-family: var(--mono); padding: 1px 7px;
-  border-radius: 20px; background: #ede9fe; color: #6d28d9;
-  border: 1px solid #ddd6fe; white-space: nowrap; margin-left: 6px;
+  border-radius: 20px; background: var(--ghost-bg); color: var(--ghost-text);
+  border: 1px solid var(--ghost-line); white-space: nowrap; margin-left: 6px;
 }
 
 /* ═══ MATERIALS STOCKTAKE (manager tab) ═══ */
@@ -929,7 +942,7 @@ button.bc-chip { font-family: var(--mono); line-height: inherit; }
   color: var(--text); font-family: var(--font); line-height: 1.5;
   outline: none; resize: vertical;
 }
-.intake-notes-input:focus { border-color: var(--border2); }
+.intake-notes-input:focus { border-color: var(--focus); }
 
 /* Read-only notes display (cancelled cards) */
 .intake-notes-readonly {
@@ -968,7 +981,7 @@ button.bc-chip { font-family: var(--mono); line-height: inherit; }
 /* ── Test mode banner ── */
 .test-mode-banner {
   background: var(--amber-bg); color: var(--amber-text);
-  border-bottom: 1px solid #fbbf24;
+  border-bottom: 1px solid var(--amber);
   padding: 6px 16px; font-size: 12px; font-weight: 500;
   display: flex; align-items: center; gap: 6px; flex-shrink: 0;
 }

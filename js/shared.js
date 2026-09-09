@@ -1,6 +1,6 @@
-// shared.js — v0.52.2
+// shared.js — v0.53
 
-const APP_VERSION = 'v0.52.2';
+const APP_VERSION = 'v0.53';
 
 // Numeric version comparison (handles "v0.9" vs "v0.10" correctly, unlike
 // plain string comparison). Returns true if `a` is strictly newer than `b`.
@@ -74,12 +74,13 @@ const CAT_ICONS = {
 // a two-line bootstrap that applies the saved id before first paint; set()
 // switches it live. To add a theme: a block in themes.css + an entry here.
 const THEMES = [
-  { id: '',       name: 'Workshop (default)' },
-  { id: 'stella', name: 'Stella brand' },
+  { id: '',         name: 'Stella (default)' },
+  { id: 'workshop', name: 'Workshop — light' },
 ];
 const Theme = {
   _key: 'mo_theme',
-  get()   { try { return localStorage.getItem(this._key) || ''; } catch { return ''; } },
+  // 'stella' was the id before it became the default — read it as the default.
+  get()   { try { const v = localStorage.getItem(this._key) || ''; return v === 'stella' ? '' : v; } catch { return ''; } },
   set(id) {
     try { if (id) localStorage.setItem(this._key, id); else localStorage.removeItem(this._key); } catch {}
     this.apply();
@@ -91,7 +92,7 @@ const Theme = {
     // Browser chrome / status bar tint follows the header colour of the theme
     const meta = document.querySelector('meta[name="theme-color"]');
     if (meta) {
-      const c = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim();
+      const c = getComputedStyle(document.documentElement).getPropertyValue('--header-bg').trim();
       if (c) meta.setAttribute('content', c);
     }
   },

@@ -1,92 +1,63 @@
 /* ═══════════════════════════════════════════════════════════════════
    THEMES
-   The default look is the :root block at the top of css/style.css. A theme
-   is a variable override block keyed on <html data-theme="…"> — it changes
-   only the variables it lists and everything else falls through to the
-   default. The per-device choice lives in localStorage ("mo_theme"): a tiny
-   inline script in each page's <head> applies it before first paint, and
-   Theme.set() in js/shared.js switches it live from Settings.
+   The default look is the :root block at the top of css/style.css (the
+   Stella brand, dark). A theme is a variable-override block keyed on
+   <html data-theme="…"> — it changes only the variables it lists and
+   everything else falls through to the default. Themes are ONLY
+   variables: no component rule anywhere carries a colour of its own, so a
+   new theme can't miss a spot. The per-device choice lives in localStorage
+   ("mo_theme"): a tiny inline script in each page's <head> applies it
+   before first paint, and Theme.set() in js/shared.js switches it live.
 
-   To add a theme: copy a block, give it a new id, and register the id/name
-   in THEMES in js/shared.js so it appears in the Settings picker.
-
-   Guideline: restyle the CHROME (header, backgrounds, borders, tabs, accents,
-   logo) and leave the status colours alone unless it's just a shade change —
-   green / amber / red / blue are the app's safety language (received,
-   warning, reject/danger, info) and must stay distinguishable.
+   To add a theme: copy the block below, give it a new id, set the
+   variables you want to differ, and register the id/name in THEMES in
+   js/shared.js so it appears in the Settings picker.
    ═══════════════════════════════════════════════════════════════════ */
 
-/* ── Stella Marine brand ─────────────────────────────────────────────
-   The same dark look as the Drawings and Production Board apps (their
-   :root tokens, kept identical so the three feel like one system):
-     Black Night #0E0A0A page · band #1c1c1b · Shadow Grey #282827 panels
-     line #454542 · text-dim #b0b0ab · white text
-     Upsdell Red #AF1F24 primary/active · Burning Star Red #EA372E accents
-   Header is Shadow Grey with the 3px red rule and the alternate (icon-only)
-   logo — the version the brand guidelines specify for online use. Status
-   colours are re-tinted for a dark ground but keep their meaning. Fonts
-   stay IBM Plex: the brand faces aren't licensed as web fonts (the sibling
-   apps declare them but fall back too). */
-[data-theme="stella"] {
-  color-scheme: dark;              /* native selects, scrollbars, spinners go dark */
-  /* Ground is Black Night; grey is reserved for bars, cards and boxes — the
-     balance the Drawings app has. --bg (inputs, hovers, insets) is the band
-     tone that sits between the two. */
-  --ground:         #0e0a0a;       /* Black Night — behind everything */
-  --bg:             #1c1c1b;       /* band — inputs, hover, insets */
-  --bg2:            #333331;       /* a step lighter than the cards, for chips */
-  --surface:        #282827;       /* Shadow Grey — bars, cards, boxes */
-  --border:         #454542;       /* line */
-  --border2:        #5e5e5a;
-  --text:           #ffffff;
-  --text2:          #d2d2ce;
-  --text3:          #b0b0ab;       /* text-dim */
-  --accent:         #af1f24;       /* Upsdell Red — primary buttons, active chips */
-  --accent-text:    #ffffff;
-  --header-bg:      #282827;       /* Shadow Grey header… */
-  --header-text:    #ffffff;
-  --header-line:    3px solid #ea372e;   /* …with the red rule the sibling apps use */
-  --header-mgr:     #282827;
-  --header-muted:   #b0b0ab;
-  --tab-active:     #ea372e;       /* Burning Star Red */
-  --main-tab-active:#ea372e;
-  /* Status colours: same meanings, dark-ground tints */
-  --blue:           #3b82f6;
-  --blue-bg:        #172033;
-  --blue-text:      #8ab4ff;
-  --green:          #5fb85f;       /* the sibling apps' green */
-  --green-bg:       #13261a;
-  --green-text:     #7fd47f;
-  --red:            #ea372e;
-  --red-bg:         #2b100e;       /* warn-bg */
-  --red-text:       #ff7369;
-  --amber:          #d97706;
-  --amber-bg:       #2b1f08;
-  --amber-text:     #f2b84b;
-  --orange:         #ea580c;
-  --radius:         8px;
-  --radius-lg:      11px;
-  --logo:           url('../images/brand/stella-icon.png');
-  --logo-w:         46px;
-  --logo-gap:       12px;
+/* ── Workshop — the original light look ────────────────────────────── */
+[data-theme="workshop"] {
+  color-scheme: light;
+  --ground:      #ffffff;
+  --bg:          #f5f4f0;
+  --bg2:         #eceae4;
+  --surface:     #ffffff;
+  --border:      #d4d2c8;
+  --border2:     #b8b6ac;
+  --text:        #1a1a18;
+  --text2:       #5a5a54;
+  --text3:       #8a8a82;
+  --accent:      #1a1a18;
+  --accent-text: #f5f4f0;
+  --blue:        #2563eb;  --blue-bg:  #eff6ff;  --blue-text:  #1d4ed8;
+  --green:       #16a34a;  --green-bg: #f0fdf4;  --green-text: #15803d;
+  --red:         #dc2626;  --red-bg:   #fef2f2;  --red-text:   #b91c1c;
+  --amber-bg:    #fffbeb;  --amber-text: #b45309;
+  --header-bg:      var(--accent);
+  --header-text:    var(--accent-text);
+  --header-line:    0 solid transparent;
+  --header-mgr:     #1e3a5f;
+  --header-muted:   #9ca3af;
+  --title-transform: none;
+  --title-spacing:  0.02em;
+  --title-weight:   600;
+  --icon-btn-bg:    rgba(255,255,255,0.12);
+  --icon-btn-line:  rgba(255,255,255,0.18);
+  --logo:        none;
+  --logo-w:      0px;
+  --logo-gap:    0px;
+  --tab-active:     var(--text);
+  --main-tab-active:#1e3a5f;
+  --focus:          var(--border2);
+  --panel-bg:       var(--bg);
+  --search-strip:   var(--surface);
+  --search-strip-line: 1px solid var(--border);
+  --search-input-bg:var(--bg);
+  --toast-bg:       var(--green-text);
+  --toast-warn-bg:  var(--red-text);
+  --stocktake-tint:        #fdf6ec;
+  --stocktake-banner-bg:   #fef3c7;  --stocktake-banner-text: #92400e;  --stocktake-banner-line: #fde68a;
+  --setup-banner-bg:       #ede9fe;  --setup-banner-text:     #6d28d9;  --setup-banner-line:     #ddd6fe;
+  --ghost-bg:              #ede9fe;  --ghost-text:            #6d28d9;  --ghost-line:            #ddd6fe;
+  --radius:      6px;
+  --radius-lg:   10px;
 }
-/* Component touches that variables alone can't express */
-[data-theme="stella"] body, [data-theme="stella"] .panel, [data-theme="stella"] .setup-screen,
-[data-theme="stella"] .manager-main { background: var(--ground); }   /* sidebar stays grey — it's a bar */
-/* Search: black strip with a grey box in it, as in the Drawings app */
-[data-theme="stella"] .search-bar { background: var(--ground); border-bottom: none; }
-[data-theme="stella"] .search-wrap input { background: var(--surface); }
-[data-theme="stella"] .header-title { text-transform: uppercase; letter-spacing: .1em; font-weight: 700; }
-[data-theme="stella"] .header-ref   { letter-spacing: .06em; }
-[data-theme="stella"] .icon-btn     { border-color: var(--border); background: rgba(255,255,255,0.06); }
-[data-theme="stella"] input:focus, [data-theme="stella"] textarea:focus, [data-theme="stella"] select:focus,
-[data-theme="stella"] .search-wrap:focus-within input { border-color: #ea372e; }
-/* Solid-colour surfaces that use light text: keep them readable on the brighter dark-ground tints */
-[data-theme="stella"] .scan-toast        { background: #1f7a3a; }
-[data-theme="stella"] .scan-toast.warn   { background: #af1f24; }
-/* Pale hardcoded highlights from the page-local styles, re-tinted for the dark ground */
-[data-theme="stella"] .app-root.stocktake-mode,
-[data-theme="stella"] .app-root.stocktake-mode .app-scroll { background: #1a1308; }
-[data-theme="stella"] .st-mode-banner    { background: #2b1f08; color: #f2b84b; border-bottom-color: #4a3610; }
-[data-theme="stella"] .bc-setup-banner   { background: #251c45; color: #c4b5fd; border-bottom-color: #3f3480; }
-[data-theme="stella"] .ghost-chip        { background: #251c45; color: #c4b5fd; border-color: #4c3d8a; }

@@ -2,8 +2,8 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="theme-color" content="#1a1a18">
-  <script>/* Theme bootstrap — runs before first paint so a themed device never flashes the default look. Choice is per device; see Theme in js/shared.js */try{var t=localStorage.getItem("mo_theme");if(t)document.documentElement.setAttribute("data-theme",t);}catch(e){}</script>
+  <meta name="theme-color" content="#282827">
+  <script>/* Theme bootstrap — runs before first paint so a themed device never flashes the default look. Choice is per device; see Theme in js/shared.js */try{var t=localStorage.getItem("mo_theme");if(t&&t!=="stella")document.documentElement.setAttribute("data-theme",t);}catch(e){}</script>
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
@@ -41,13 +41,13 @@
        environment carries the signal: amber header, banner, tinted background,
        accent stripe on every card. Nothing here can create an order. */
     .app-root.stocktake-mode .header { background:#b45309; }
-    .app-root.stocktake-mode { background:#fdf6ec; }
-    .app-root.stocktake-mode .app-scroll { background:#fdf6ec; }
+    .app-root.stocktake-mode { background:var(--stocktake-tint); }
+    .app-root.stocktake-mode .app-scroll { background:var(--stocktake-tint); }
     .app-root.stocktake-mode .mat-card { border-left:4px solid #d97706; }
     .st-mode-banner {
       display:none; align-items:center; gap:8px; padding:9px 16px;
       font-size:12.5px; font-weight:600; flex-shrink:0; letter-spacing:0.01em;
-      background:#fef3c7; color:#92400e; border-bottom:1px solid #fde68a;
+      background:var(--stocktake-banner-bg); color:var(--stocktake-banner-text); border-bottom:1px solid var(--stocktake-banner-line);
     }
     .st-mode-banner .ti { font-size:15px; }
     /* Per-row controls: stepper+tick on top, =/+/− mode segment underneath */
@@ -75,7 +75,7 @@
       width:100%; border:1px solid var(--border); background:var(--bg);
       border-radius:var(--radius); padding:8px 12px; font-size:14px; color:var(--text); outline:none;
     }
-    .checkout-name-input:focus { border-color:var(--border2); }
+    .checkout-name-input:focus { border-color:var(--focus); }
     .signout-card { max-width:380px; }
     .signout-item-list { display:flex; flex-direction:column; gap:6px; max-height:240px; overflow-y:auto; text-align:left; }
     .signout-item-row {
