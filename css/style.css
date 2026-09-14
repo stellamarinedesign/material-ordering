@@ -774,6 +774,20 @@ button { cursor: pointer; }
 @keyframes bc-hit-flash { 0% { background: var(--amber-bg); } 100% { background: var(--surface); } }
 .bc-hit { animation: bc-hit-flash 1.6s ease-out; }
 
+/* ═══ SIGN-IN (js/auth.js) ═══ */
+/* Header pill shown only while a device isn't signed in — quiet enough not to
+   bother tradesmen, visible enough for the manager doing the rounds */
+.auth-pill {
+  display: inline-flex; align-items: center; gap: 5px; height: 30px; padding: 0 11px;
+  border-radius: 20px; border: 1px solid var(--amber-text); background: var(--amber-bg);
+  color: var(--amber-text); font-size: 12px; font-weight: 600; cursor: pointer; white-space: nowrap;
+}
+.auth-pill .ti { font-size: 14px; }
+.auth-card .setup-field { margin-bottom: 12px; }
+.auth-card .setup-field input { font-family: var(--font); font-size: 15px; padding: 10px 12px; width: 100%; }
+.auth-logo { width: 100%; height: 44px; margin: 2px 0 10px; background: var(--logo) center / contain no-repeat; }
+.auth-err { min-height: 18px; font-size: 12.5px; color: var(--red-text); margin: 2px 0 8px; line-height: 1.4; }
+
 /* ═══ CONSUMABLE BARCODES (manager panel) ═══ */
 .bc-chip {
   display: inline-flex; align-items: center; gap: 5px;

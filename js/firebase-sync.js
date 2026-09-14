@@ -1,5 +1,19 @@
-// firebase-sync.js — v0.53
+// firebase-sync.js — v0.54
 let _db = null, _configured = false;
+
+// Signed-in email for stamping writes (null when the device isn't signed in —
+// phase 1 of the auth rollout, see js/auth.js). Guarded so the module still
+// works on a page that hasn't loaded the auth SDK.
+function _who() {
+  try { return (typeof firebase.auth === 'function' && firebase.auth().currentUser) ? (firebase.auth().currentUser.email || null) : null; }
+  catch { return null; }
+}
+// Listener errors funnel here; a permission-denied means the rules now require
+// sign-in and this device has none — pages set DB.onDenied to prompt for it.
+function _listenErr(label, err) {
+  console.error(label, err);
+  if (err && err.code === 'permission-denied' && typeof DB.onDenied === 'function') DB.onDenied(err);
+}
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // APP CHECK — Firebase request verification via reCAPTCHA v3.
@@ -18,6 +32,8 @@ const APPCHECK_SITE_KEY = '6LcvOCctAAAAAFXUhpQRg2c09P1g5l7qULqwZCbh';
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 const DB = {
+  onDenied: null,   // set by each page — called on a permission-denied listener error
+
   async init(config) {
     if (_configured) return true;
     try {
@@ -48,7 +64,7 @@ const DB = {
   async submitOrder(order) {
     if (!this.isReady()) throw new Error('Firebase not initialised');
     const ref = await _db.collection('orders').add({
-      ...order, status:'pending',
+      ...order, status:'pending', authEmail: _who(),
       submittedAt: firebase.firestore.FieldValue.serverTimestamp(),
     });
     return ref.id;
@@ -63,7 +79,7 @@ const DB = {
     if (!this.isReady()) return ()=>{};
     return _db.collection('orders').orderBy('submittedAt','desc')
       .onSnapshot(snap=>callback(snap.docs.map(d=>({_id:d.id, _pendingWrite:d.metadata.hasPendingWrites, ...d.data()}))),
-        err=>console.error('Listen error:',err));
+        err=>_listenErr('Listen error:',err));
   },
 
   // ── CONNECTION STATUS & APP VERSION ─────────────────────────────────
@@ -271,6 +287,7 @@ const DB = {
       ...order,
       type: 'consumables',
       status: 'pending',
+      authEmail: _who(),
       submittedAt: firebase.firestore.FieldValue.serverTimestamp(),
     });
     return ref.id;
@@ -333,6 +350,7 @@ const DB = {
         'intake.items':     merged,
         'intake.status':    intakeStatus,
         'intake.updatedBy': updatedBy || '',
+        'intake.updatedByEmail': _who(),
         'intake.updatedAt': firebase.firestore.FieldValue.serverTimestamp(),
         updatedAt:          firebase.firestore.FieldValue.serverTimestamp(),
       });
@@ -502,7 +520,7 @@ const DB = {
     return _db.collection('material_stock')
       .onSnapshot(
         snap => callback(snap.docs.map(d => ({ _id: d.id, ...d.data() }))),
-        err  => console.error('Material stock listen error:', err)
+        err  => _listenErr('Material stock listen error:', err)
       );
   },
 
@@ -552,7 +570,7 @@ const DB = {
       }
       // submittedAt tracks last activity so history sorts newest-first without an index.
       tx.set(sessRef, {
-        deviceName: deviceName || '', date: dateStr,
+        deviceName: deviceName || '', date: dateStr, authEmail: _who(),
         items: [...bySid.values()],
         submittedAt: firebase.firestore.FieldValue.serverTimestamp(),
       }, { merge: true });
@@ -576,7 +594,7 @@ const DB = {
     return _db.collection('stock')
       .onSnapshot(
         snap => callback(snap.docs.map(d => ({ _id: d.id, ...d.data() }))),
-        err  => console.error('Stock listen error:', err)
+        err  => _listenErr('Stock listen error:', err)
       );
   },
 
@@ -613,7 +631,7 @@ const DB = {
     await _db.collection('stock').doc(stockId).set({
       barcodes:   firebase.firestore.FieldValue.arrayUnion(c),
       // serverTimestamp() isn't allowed inside arrayUnion — client time is fine for audit
-      barcodeLog: firebase.firestore.FieldValue.arrayUnion({ code: c, action: 'linked', by: by || '', at: Date.now() }),
+      barcodeLog: firebase.firestore.FieldValue.arrayUnion({ code: c, action: 'linked', by: by || '', email: _who(), at: Date.now() }),
     }, { merge: true });
   },
 
@@ -623,7 +641,7 @@ const DB = {
     const c = String(code).trim();
     await _db.collection('stock').doc(stockId).set({
       barcodes:   firebase.firestore.FieldValue.arrayRemove(c),
-      barcodeLog: firebase.firestore.FieldValue.arrayUnion({ code: c, action: 'unlinked', by: by || '', at: Date.now() }),
+      barcodeLog: firebase.firestore.FieldValue.arrayUnion({ code: c, action: 'unlinked', by: by || '', email: _who(), at: Date.now() }),
     }, { merge: true });
   },
 
@@ -651,6 +669,7 @@ const DB = {
       action:    'adjustment',
       subtype:   'setup',
       by:        by || '',
+      authEmail: _who(),
       sessionId: null,
       reverted:  false,
       timestamp: firebase.firestore.FieldValue.serverTimestamp(),
@@ -773,6 +792,7 @@ const DB = {
       action,
       subtype:    subtype || null,
       by:         by || '',
+      authEmail:  _who(),
       sessionId:  sessionId || null,
       reverted:   false,
       timestamp:  firebase.firestore.FieldValue.serverTimestamp(),
@@ -807,6 +827,7 @@ const DB = {
         action:    'intake',
         subtype:   'delivery_intake',
         by:        by || '',
+      authEmail: _who(),
         sessionId: sessionId || null,
         reverted:  false,
         timestamp: firebase.firestore.FieldValue.serverTimestamp(),
@@ -844,6 +865,7 @@ const DB = {
       action:    'adjustment',
       subtype:    subtype || 'override',
       by:         by || '',
+      authEmail:  _who(),
       sessionId:  sessionId || null,
       reverted:   false,
       timestamp:  firebase.firestore.FieldValue.serverTimestamp(),
