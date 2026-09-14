@@ -665,8 +665,8 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
         </div>
       </div>`+`
       <div class="order-note-card">
-        <label class="order-note-label" for="order-note">Note to the manager <span>— optional, stays in the queue; not sent to purchasing</span></label>
-        <textarea class="order-note-input" id="order-note" rows="3" placeholder="e.g. needed by Thursday for the Riviera job — or use offcuts if there's enough">${esc(this._orderNote)}</textarea>
+        <label class="order-note-label" for="order-note">Optional note</label>
+        <textarea class="order-note-input" id="order-note" rows="3">${esc(this._orderNote)}</textarea>
       </div>`;
   },
 

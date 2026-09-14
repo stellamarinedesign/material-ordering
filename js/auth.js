@@ -1,4 +1,4 @@
-// auth.js — v0.55
+// auth.js — v0.55.1
 //
 // Firebase Authentication (email + password) for every page, added as a layer
 // ON TOP of the existing pasted-config setup so nothing already running is
@@ -102,9 +102,7 @@ const Auth = {
         <div class="success-card auth-card" id="auth-card" style="max-width:380px;text-align:left">
           <div class="auth-logo"></div>
           <h3 style="text-align:center">Sign in</h3>
-          <p style="text-align:center;margin-bottom:14px">${required
-            ? 'Sign-in is now required on every device. Use the account set up for this iPad, or your own.'
-            : 'Use the account set up for this device, or your own.'}</p>
+          <p style="text-align:center;margin-bottom:14px">Use the account set up for this device.</p>
           <div class="setup-field"><label>Email</label><input id="auth-email" type="email" autocomplete="username" autocapitalize="none" spellcheck="false" placeholder="name@stellamarine.com.au"></div>
           <div class="setup-field"><label>Password</label><input id="auth-pass" type="password" autocomplete="current-password"></div>
           <div class="auth-err" id="auth-err"></div>

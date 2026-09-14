@@ -2709,7 +2709,7 @@ const Manager = {
     const id = o._id, note = (o.note || '').trim();
     if (this._noteEditing.has(id)) {
       return `<div class="order-note">
-        <div class="order-note-head"><i class="ti ti-message-2"></i> Note to manager</div>
+        <div class="order-note-head"><i class="ti ti-message-2"></i> Order note</div>
         <textarea class="order-note-input" id="onote-input-${esc(id)}" rows="3" placeholder="Anything the manager should know about this order">${esc(note)}</textarea>
         <div class="order-note-actions">
           <button class="btn-sm btn-sm-save" data-note-save="${esc(id)}">Save note</button>
@@ -2719,7 +2719,7 @@ const Manager = {
     }
     if (!note) return isPending ? `<button class="order-note-add" data-note-edit="${esc(id)}"><i class="ti ti-message-plus"></i> Add a note</button>` : '';
     return `<div class="order-note">
-      <div class="order-note-head"><i class="ti ti-message-2"></i> Note to manager${o.deviceName ? ' · ' + esc(o.deviceName) : ''}${isPending ? `<button class="btn-sm" data-note-edit="${esc(id)}">Edit</button>` : ''}</div>
+      <div class="order-note-head"><i class="ti ti-message-2"></i> Order note${o.deviceName ? ' · ' + esc(o.deviceName) : ''}${isPending ? `<button class="btn-sm" data-note-edit="${esc(id)}">Edit</button>` : ''}</div>
       <div class="order-note-text">${esc(note)}</div>
     </div>`;
   },
@@ -3158,8 +3158,8 @@ const Manager = {
         </div>
       </div>`+`
       <div class="order-note-card">
-        <label class="order-note-label" for="no-order-note">Note to the manager <span>— optional, stays in the queue; not sent to purchasing</span></label>
-        <textarea class="order-note-input" id="no-order-note" rows="3" placeholder="e.g. needed by Thursday for the Riviera job — or use offcuts if there's enough">${esc(this._noNote)}</textarea>
+        <label class="order-note-label" for="no-order-note">Optional note</label>
+        <textarea class="order-note-input" id="no-order-note" rows="3">${esc(this._noNote)}</textarea>
       </div>`;
     const cats = [...new Set(items.map(i => i.category))];
     const btns = document.getElementById('no-email-buttons'); if (!btns) return;
