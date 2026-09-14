@@ -774,6 +774,29 @@ button { cursor: pointer; }
 @keyframes bc-hit-flash { 0% { background: var(--amber-bg); } 100% { background: var(--surface); } }
 .bc-hit { animation: bc-hit-flash 1.6s ease-out; }
 
+/* ═══ ORDER NOTES — worker/manager → manager; never in the email or a delivery ═══ */
+/* Confirmation screens */
+.order-note-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 12px 14px; margin-top: 8px; }
+.order-note-label { display: block; font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--text3); font-family: var(--mono); margin-bottom: 6px; }
+.order-note-label span { text-transform: none; letter-spacing: 0; font-weight: 400; font-family: var(--font); }
+.order-note-input {
+  width: 100%; min-height: 72px; resize: vertical; border: 1px solid var(--border); background: var(--bg);
+  border-radius: var(--radius); padding: 9px 11px; font-size: 14px; color: var(--text); outline: none; font-family: var(--font); line-height: 1.4;
+}
+.order-note-input:focus { border-color: var(--focus); }
+.order-note-preview { font-size: 13px; color: var(--amber-text); background: var(--amber-bg); border-radius: var(--radius); padding: 8px 10px; margin-bottom: 12px; white-space: pre-wrap; line-height: 1.4; text-align: left; }
+/* Queue card */
+.order-note { margin: 4px 12px 8px; padding: 9px 12px; border-radius: var(--radius); background: var(--amber-bg); border-left: 3px solid var(--amber-text); }
+.order-note-head { display: flex; align-items: center; gap: 6px; font-size: 10.5px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--amber-text); font-family: var(--mono); }
+.order-note-head .btn-sm { margin-left: auto; font-size: 10px; padding: 2px 8px; }
+.order-note-text { font-size: 13px; color: var(--text); white-space: pre-wrap; line-height: 1.45; margin-top: 4px; }
+.order-note .order-note-input { margin-top: 6px; min-height: 60px; }
+.order-note-actions { display: flex; gap: 6px; margin-top: 8px; }
+.order-note-add {
+  display: inline-flex; align-items: center; gap: 5px; margin: 4px 12px 8px; font-size: 12px; color: var(--text3);
+  background: none; border: 1px dashed var(--border); border-radius: var(--radius); padding: 5px 10px; cursor: pointer;
+}
+
 /* ═══ SIGN-IN (js/auth.js) ═══ */
 /* Header pill shown only while a device isn't signed in — quiet enough not to
    bother tradesmen, visible enough for the manager doing the rounds */

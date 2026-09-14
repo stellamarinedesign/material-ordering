@@ -1,4 +1,4 @@
-// firebase-sync.js — v0.54
+// firebase-sync.js — v0.55
 let _db = null, _configured = false;
 
 // Signed-in email for stamping writes (null when the device isn't signed in —
@@ -135,6 +135,17 @@ const DB = {
     if (!this.isReady()) throw new Error('Firebase not initialised');
     await _db.collection('orders').doc(id).update({
       status, updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+    });
+  },
+
+  // Manager-facing note on an order (from the worker's or manager's order
+  // confirmation, or edited on the queue card). Lives only on the order doc —
+  // deliberately never copied into the email body or the delivery cards.
+  async updateOrderNote(orderId, note) {
+    if (!this.isReady()) throw new Error('Firebase not initialised');
+    await _db.collection('orders').doc(orderId).update({
+      note: String(note || '').trim(),
+      updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
     });
   },
 

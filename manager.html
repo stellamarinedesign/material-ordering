@@ -63,6 +63,8 @@ const Manager = {
   // Tracks the Firestore order doc created when the first New Order category email is
   // sent (mirrors _coOrderId below). Cleared when the cart is fully emptied.
   _noOrderId: null,
+  _noNote:    '',           // note to self/other managers, typed on the New Order confirmation
+  _noteEditing: new Set(),  // queue cards with the note editor open
 
   // Consumables Order panel state (launched from Stock tab)
   _co:              { _items: {} },
@@ -806,12 +808,12 @@ const Manager = {
     document.getElementById('btn-no-add-to-orders').addEventListener('click', () => this.noAddToOrders());
     document.getElementById('btn-no-clear-main').addEventListener('click', () => {
       if (!confirm('Clear all items?')) return;
-      this._no._items = {};
+      this._no._items = {}; this._noNote = '';
       this._updateNoBadge(); this.renderNoList(); this.closePanel('no-review-panel');
     });
     document.getElementById('btn-no-clear-inner').addEventListener('click', () => {
       if (!confirm('Clear all items?')) return;
-      this._no._items = {};
+      this._no._items = {}; this._noNote = '';
       this._updateNoBadge(); this.renderNoList(); this.closePanel('no-review-panel');
     });
 
@@ -922,6 +924,12 @@ const Manager = {
       if (rejectItem)  { e.stopPropagation(); this.rejectItem(rejectItem.dataset.rejectItem, rejectItem.dataset.partcode); return; }
       const unrejItem  = e.target.closest('[data-unreject-item]');
       if (unrejItem)   { e.stopPropagation(); this.unrejectItem(unrejItem.dataset.unrejectItem, unrejItem.dataset.partcode); return; }
+      const noteEdit   = e.target.closest('[data-note-edit]');
+      if (noteEdit)    { e.stopPropagation(); this.noteEdit(noteEdit.dataset.noteEdit); return; }
+      const noteSave   = e.target.closest('[data-note-save]');
+      if (noteSave)    { e.stopPropagation(); this.noteSave(noteSave.dataset.noteSave); return; }
+      const noteCancel = e.target.closest('[data-note-cancel]');
+      if (noteCancel)  { e.stopPropagation(); this.noteCancel(noteCancel.dataset.noteCancel); return; }
       const resetCat   = e.target.closest('[data-reset-cat]');
       if (resetCat)    { e.stopPropagation(); this.resetCategoryEmailed(resetCat.dataset.resetCat, resetCat.dataset.category); return; }
       const resetGroup = e.target.closest('[data-reset-group]');
@@ -978,6 +986,9 @@ const Manager = {
     });
     document.getElementById('no-review-contents').addEventListener('change', e => {
       const inp = e.target.closest('[data-rqid]'); if (inp) this.noRevSet(+inp.dataset.rqid, inp.value);
+    });
+    document.getElementById('no-review-contents').addEventListener('input', e => {
+      if (e.target.id === 'no-order-note') this._noNote = e.target.value;
     });
     document.getElementById('no-email-buttons').addEventListener('click', e => {
       const btn = e.target.closest('[data-no-cat]'); if (btn) this.noOpenCategoryEmail(btn.dataset.noCat);
@@ -2683,10 +2694,53 @@ const Manager = {
       </div>
       <div class="order-card-body" id="body-${o._id}">
         ${isPending ? '<div class="edit-note">Edit quantities before sending.</div>' : ''}
+        ${this._orderNoteHtml(o, isPending)}
         ${allRows}
         <div class="order-card-actions">${catEmailBtns}</div>
       </div>
     </div>`;
+  },
+
+  // ── ORDER NOTES ──────────────────────────────────────────────────────
+  // A note rides on the order document for the manager's eyes only: typed on
+  // the worker's or manager's confirmation screen, shown and editable on the
+  // queue card, and deliberately never copied into the email or a delivery.
+  _orderNoteHtml(o, isPending) {
+    const id = o._id, note = (o.note || '').trim();
+    if (this._noteEditing.has(id)) {
+      return `<div class="order-note">
+        <div class="order-note-head"><i class="ti ti-message-2"></i> Note to manager</div>
+        <textarea class="order-note-input" id="onote-input-${esc(id)}" rows="3" placeholder="Anything the manager should know about this order">${esc(note)}</textarea>
+        <div class="order-note-actions">
+          <button class="btn-sm btn-sm-save" data-note-save="${esc(id)}">Save note</button>
+          <button class="btn-sm" data-note-cancel="${esc(id)}">Cancel</button>
+        </div>
+      </div>`;
+    }
+    if (!note) return isPending ? `<button class="order-note-add" data-note-edit="${esc(id)}"><i class="ti ti-message-plus"></i> Add a note</button>` : '';
+    return `<div class="order-note">
+      <div class="order-note-head"><i class="ti ti-message-2"></i> Note to manager${o.deviceName ? ' · ' + esc(o.deviceName) : ''}${isPending ? `<button class="btn-sm" data-note-edit="${esc(id)}">Edit</button>` : ''}</div>
+      <div class="order-note-text">${esc(note)}</div>
+    </div>`;
+  },
+  // Read-only notes from every order contributing to a delivery-sorted group,
+  // since that view can hide the order cards themselves.
+  _groupNotesHtml(entries) {
+    const seen = new Set(); let html = '';
+    for (const { order } of entries) {
+      const note = (order.note || '').trim();
+      if (!note || seen.has(order._id)) continue;
+      seen.add(order._id);
+      html += `<div class="order-note"><div class="order-note-head"><i class="ti ti-message-2"></i> Note · ${esc(order.deviceName || order.ref || order._id)}</div><div class="order-note-text">${esc(note)}</div></div>`;
+    }
+    return html;
+  },
+  noteEdit(id)   { this._noteEditing.add(id); this.renderQueue(); document.getElementById(`onote-input-${id}`)?.focus(); },
+  noteCancel(id) { this._noteEditing.delete(id); this.renderQueue(); },
+  async noteSave(id) {
+    const ta = document.getElementById(`onote-input-${id}`); if (!ta) return;
+    try { await DB.updateOrderNote(id, ta.value); this._noteEditing.delete(id); this.renderQueue(); }
+    catch (e) { alert('Failed to save note: ' + e.message); }
   },
 
   // Groups pending items that have a deliveryId by delivery+category — these are
@@ -2783,6 +2837,7 @@ const Manager = {
         </div>
       </div>
       <div class="order-card-body${isOpen?' open':''}" id="body-${safeKey}">
+        ${this._groupNotesHtml(entries)}
         <div class="edit-note">Items reset from a previous delivery — edit quantities before re-sending.</div>
         ${itemRows}
       </div>
@@ -2912,7 +2967,7 @@ const Manager = {
           qtyType: i.qtyType || '', qty: i.qty,
         }));
         try {
-          this._noOrderId = await DB.submitOrder({ ref: this.orderRef, deviceName, items: allItems });
+          this._noOrderId = await DB.submitOrder({ ref: this.orderRef, deviceName, items: allItems, note: this._noNote.trim() });
           this._myOrderIds.add(this._noOrderId);
           if (this._seenOrderIds) this._seenOrderIds.add(this._noOrderId);
         } catch(e) { console.error('New Order save failed:', e); }
@@ -3101,6 +3156,10 @@ const Manager = {
           <span>Total items</span>
           <span>${items.reduce((s,i)=>s+i.qty,0)} across ${items.length} line${items.length!==1?'s':''}</span>
         </div>
+      </div>`+`
+      <div class="order-note-card">
+        <label class="order-note-label" for="no-order-note">Note to the manager <span>— optional, stays in the queue; not sent to purchasing</span></label>
+        <textarea class="order-note-input" id="no-order-note" rows="3" placeholder="e.g. needed by Thursday for the Riviera job — or use offcuts if there's enough">${esc(this._noNote)}</textarea>
       </div>`;
     const cats = [...new Set(items.map(i => i.category))];
     const btns = document.getElementById('no-email-buttons'); if (!btns) return;
@@ -3150,13 +3209,15 @@ const Manager = {
         this._myOrderIds.add(this._noOrderId);
         if (this._seenOrderIds) this._seenOrderIds.add(this._noOrderId);
         await DB.appendItems(this._noOrderId, items);
+        if (this._noNote.trim()) await DB.updateOrderNote(this._noOrderId, this._noNote.trim());
         this._noOrderId = null;
       } else {
-        const submittedId = await DB.submitOrder({ ref: this.orderRef, deviceName, items });
+        const submittedId = await DB.submitOrder({ ref: this.orderRef, deviceName, items, note: this._noNote.trim() });
         this._myOrderIds.add(submittedId);
         if (this._seenOrderIds) this._seenOrderIds.add(submittedId);
       }
       this._no._items = {};
+      this._noNote = '';
       this.orderRef = genRef();
       this._updateNoBadge();
       this.renderNoList();

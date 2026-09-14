@@ -105,6 +105,7 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
   materials:  [],
   _cats:      [],
   _subs:      [],
+  _orderNote: '',   // note to the manager, typed on the confirmation screen
 
   // Stocktake MODE state — the whole page switches between ordering and counting.
   // The flag persists in localStorage so a reload mid-count stays in stocktake mode.
@@ -376,6 +377,10 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
       const inp = e.target.closest('[data-rqid]');
       if (inp) this.revSet(+inp.dataset.rqid, inp.value);
     });
+    // The review re-renders on every qty change, so the note is kept in state.
+    document.getElementById('review-contents').addEventListener('input', e => {
+      if (e.target.id === 'order-note') this._orderNote = e.target.value;
+    });
 
     document.getElementById('tabs-wrap').addEventListener('click', e => {
       const catBtn = e.target.closest('[data-cat-idx]');
@@ -559,7 +564,7 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
   revAdj(id,d)  { Order.adjust(id,d);           this.updateBadge(); this._syncReview(); },
   revSet(id,v)  { Order.set(id,parseInt(v)||0); this.updateBadge(); this._syncReview(); },
   removeItem(id){ Order.remove(id);              this.updateBadge(); this._syncReview(); },
-  clearOrder()  { if(!confirm('Clear all items?')) return; Order.clear(); this.updateBadge(); this._syncReview(); this.closePanel('review-panel'); },
+  clearOrder()  { if(!confirm('Clear all items?')) return; Order.clear(); this._orderNote=''; this.updateBadge(); this._syncReview(); this.closePanel('review-panel'); },
 
   _changed()    { this.updateBadge(); this.renderList(); if(document.getElementById('review-panel')?.classList.contains('open')) this._renderReviewContents(); },
   _syncReview() { this._renderReviewContents(); this.renderList(); },
@@ -658,6 +663,10 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
           <span>Total items</span>
           <span>${items.reduce((s,i)=>s+i.qty,0)} across ${items.length} line${items.length!==1?'s':''}</span>
         </div>
+      </div>`+`
+      <div class="order-note-card">
+        <label class="order-note-label" for="order-note">Note to the manager <span>— optional, stays in the queue; not sent to purchasing</span></label>
+        <textarea class="order-note-input" id="order-note" rows="3" placeholder="e.g. needed by Thursday for the Riviera job — or use offcuts if there's enough">${esc(this._orderNote)}</textarea>
       </div>`;
   },
 
@@ -677,6 +686,7 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
           <h3>Submit order?</h3>
           <pre style="font-size:12px;font-family:var(--mono);background:var(--bg);padding:10px;
             border-radius:var(--radius);margin-bottom:12px;white-space:pre-wrap;line-height:1.6">${esc(lines)}</pre>
+          ${this._orderNote.trim() ? `<div class="order-note-preview"><i class="ti ti-message-2"></i> ${esc(this._orderNote.trim())}</div>` : ''}
           <p>The production manager will review and forward to purchasing.</p>
           <div class="sheet-btns">
             <button class="btn btn-orange" id="btn-confirm-yes"><i class="ti ti-send"></i> Confirm and submit</button>
@@ -708,7 +718,8 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
     const yesBtn = document.getElementById('btn-confirm-yes');
     if (yesBtn) { yesBtn.disabled = true; yesBtn.innerHTML = '<i class="ti ti-loader" style="animation:spin 1s linear infinite"></i> Submitting…'; }
     try {
-      await DB.submitOrder({ ref:this.orderRef, deviceName:DeviceName.get(), items });
+      await DB.submitOrder({ ref:this.orderRef, deviceName:DeviceName.get(), items, note:this._orderNote.trim() });
+      this._orderNote = '';
       this.closeOverlay();
       this.closePanel('review-panel');
       this.openPanel('success-panel');
@@ -870,7 +881,7 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
   },
 
   newOrder() {
-    Order.clear(); this.orderRef=genRef(); this.activeCat=null; this.activeSub=null;
+    Order.clear(); this._orderNote=''; this.orderRef=genRef(); this.activeCat=null; this.activeSub=null;
     this.closePanel('success-panel'); this.updateBadge();
     const ref=document.getElementById('order-ref'); if(ref) ref.textContent=this.orderRef;
     const srch=document.getElementById('search');   if(srch) srch.value='';
