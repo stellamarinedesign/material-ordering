@@ -60,6 +60,21 @@
   --stocktake-banner-bg:   #2b1f08;  --stocktake-banner-text: #f2b84b;  --stocktake-banner-line: #4a3610;
   --setup-banner-bg:       #251c45;  --setup-banner-text:     #c4b5fd;  --setup-banner-line:     #3f3480;
   --ghost-bg:              #251c45;  --ghost-text:            #c4b5fd;  --ghost-line:            #4c3d8a;
+  /* Non-status accents — selected/active highlights, count bubbles, links,
+     neutral chips, notes. The brand has no blue and amber means "warning", so
+     these are red/neutral here; the Workshop theme maps them back to blue/amber. */
+  --select-bg:   var(--accent);          /* active sidebar item, in-order add button, dialog icon */
+  --select-text: var(--accent-text);
+  --select-line: #ea372e;                /* in-order card border, delivery-group card rule */
+  --count-bg:    rgba(255,255,255,0.14); /* count bubbles beside tabs and on buttons */
+  --count-text:  #ffffff;
+  --link:        #ff7369;                /* back buttons, links, hover-to-open names */
+  --chip-bg:     var(--bg2);             /* informational chips (barcodes) */
+  --chip-text:   var(--text2);
+  --chip-line:   var(--border2);
+  --note-bg:     var(--bg);              /* order notes — a callout, not a warning */
+  --note-text:   var(--text3);
+  --note-line:   #af1f24;
   --radius:      8px;
   --radius-lg:   11px;
   --font:        'IBM Plex Sans', sans-serif;
@@ -220,7 +235,7 @@ button { cursor: pointer; }
   border-radius: var(--radius-lg); padding: 11px 12px;
   display: flex; align-items: center; gap: 10px; transition: border-color 0.15s;
 }
-.mat-card.in-order { border-color: var(--blue); border-width: 1.5px; }
+.mat-card.in-order { border-color: var(--select-line); border-width: 1.5px; }
 .mat-card.untracked-item { opacity: 0.55; }
 .mat-icon { width: 38px; height: 38px; border-radius: var(--radius); display: flex; align-items: center; justify-content: center; font-size: 18px; flex-shrink: 0; }
 .mat-info { flex: 1; min-width: 0; }
@@ -248,7 +263,7 @@ button { cursor: pointer; }
   border: 1px solid var(--border); background: var(--bg); font-size: 16px; color: var(--text3);
   display: flex; align-items: center; justify-content: center;
 }
-.add-btn.in-order { background: var(--blue-bg); border-color: var(--blue); color: var(--blue-text); }
+.add-btn.in-order { background: var(--select-bg); border-color: var(--select-line); color: var(--select-text); }
 .mat-bin {
   width: 30px; height: 32px; display: flex; align-items: center; justify-content: center;
   background: none; border: none; color: var(--red-text); font-size: 15px;
@@ -270,7 +285,7 @@ button { cursor: pointer; }
   background: var(--surface); border-bottom: 1px solid var(--border);
   padding: 13px 16px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0;
 }
-.back-btn { display: flex; align-items: center; gap: 4px; background: none; border: none; font-size: 14px; color: var(--blue-text); padding: 4px 0; }
+.back-btn { display: flex; align-items: center; gap: 4px; background: none; border: none; font-size: 14px; color: var(--link); padding: 4px 0; }
 .panel-title  { font-size: 15px; font-weight: 600; color: var(--text); }
 .panel-spacer { width: 70px; }
 .panel-scroll { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; }
@@ -314,7 +329,7 @@ button { cursor: pointer; }
 .btn-green   { background: var(--green); color: #fff; }
 .btn-green:active { opacity: 0.85; }
 .btn-orange  { background: var(--orange); color: #fff; }
-.btn-blue    { background: var(--blue); color: #fff; }
+.btn-blue    { background: var(--select-bg); color: var(--select-text); }
 
 /* ═══════════════════════════════════════
    EMAIL PANEL
@@ -365,7 +380,7 @@ button { cursor: pointer; }
 .success-card { background: var(--surface); border-radius: 16px; padding: 28px 22px; width: 100%; max-width: 340px; text-align: center; }
 .success-icon { width: 60px; height: 60px; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 0 auto 14px; font-size: 26px; }
 .success-icon.green { background: var(--green-bg); color: var(--green); }
-.success-icon.blue  { background: var(--blue-bg);  color: var(--blue); }
+.success-icon.blue  { background: var(--select-bg); color: var(--select-text); }
 .success-card h3 { font-size: 17px; font-weight: 600; margin-bottom: 8px; }
 .success-card p  { font-size: 13px; color: var(--text2); line-height: 1.5; margin-bottom: 20px; }
 
@@ -444,8 +459,8 @@ button { cursor: pointer; }
 .sidebar-title { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text3); font-family: var(--mono); margin-bottom: 4px; padding: 0 4px; }
 .sidebar-btn { width: 100%; text-align: left; padding: 7px 10px; border-radius: var(--radius); border: none; background: none; font-size: 13px; color: var(--text2); display: flex; align-items: center; gap: 8px; }
 .sidebar-btn:hover  { background: var(--bg); }
-.sidebar-btn.active { background: var(--blue-bg); color: var(--blue-text); font-weight: 500; }
-.sidebar-count { margin-left: auto; font-size: 10px; font-family: var(--mono); background: var(--amber-bg); color: var(--amber-text); padding: 1px 6px; border-radius: 20px; }
+.sidebar-btn.active { background: var(--select-bg); color: var(--select-text); font-weight: 500; }
+.sidebar-count { margin-left: auto; font-size: 10px; font-family: var(--mono); background: var(--count-bg); color: var(--count-text); padding: 1px 6px; border-radius: 20px; }
 .sidebar-count.zero { display: none; }
 
 /* ═══════════════════════════════════════
@@ -645,7 +660,7 @@ button { cursor: pointer; }
 .setup-field input { border: 1px solid var(--border); background: var(--bg); border-radius: var(--radius); padding: 8px 10px; font-size: 13px; color: var(--text); outline: none; font-family: var(--mono); }
 .setup-field input:focus { border-color: var(--focus); }
 .setup-note { font-size: 12px; color: var(--text3); line-height: 1.5; background: var(--bg2); border-radius: var(--radius); padding: 10px 12px; }
-.setup-note a { color: var(--blue-text); }
+.setup-note a { color: var(--link); }
 
 @keyframes spin { to { transform: rotate(360deg); } }
 
@@ -784,10 +799,10 @@ button { cursor: pointer; }
   border-radius: var(--radius); padding: 9px 11px; font-size: 14px; color: var(--text); outline: none; font-family: var(--font); line-height: 1.4;
 }
 .order-note-input:focus { border-color: var(--focus); }
-.order-note-preview { font-size: 13px; color: var(--amber-text); background: var(--amber-bg); border-radius: var(--radius); padding: 8px 10px; margin-bottom: 12px; white-space: pre-wrap; line-height: 1.4; text-align: left; }
+.order-note-preview { font-size: 13px; color: var(--text); background: var(--note-bg); border-left: 3px solid var(--note-line); border-radius: var(--radius); padding: 8px 10px; margin-bottom: 12px; white-space: pre-wrap; line-height: 1.4; text-align: left; }
 /* Queue card */
-.order-note { margin: 4px 12px 8px; padding: 9px 12px; border-radius: var(--radius); background: var(--amber-bg); border-left: 3px solid var(--amber-text); }
-.order-note-head { display: flex; align-items: center; gap: 6px; font-size: 10.5px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--amber-text); font-family: var(--mono); }
+.order-note { margin: 4px 12px 8px; padding: 9px 12px; border-radius: var(--radius); background: var(--note-bg); border-left: 3px solid var(--note-line); }
+.order-note-head { display: flex; align-items: center; gap: 6px; font-size: 10.5px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--note-text); font-family: var(--mono); }
 .order-note-head .btn-sm { margin-left: auto; font-size: 10px; padding: 2px 8px; }
 .order-note-text { font-size: 13px; color: var(--text); white-space: pre-wrap; line-height: 1.45; margin-top: 4px; }
 .order-note .order-note-input { margin-top: 6px; min-height: 60px; }
@@ -815,8 +830,8 @@ button { cursor: pointer; }
 .bc-chip {
   display: inline-flex; align-items: center; gap: 5px;
   font-size: 11px; font-family: var(--mono); padding: 3px 6px 3px 9px;
-  border-radius: 20px; background: var(--blue-bg); color: var(--blue-text);
-  border: 1px solid var(--blue);
+  border-radius: 20px; background: var(--chip-bg); color: var(--chip-text);
+  border: 1px solid var(--chip-line);
 }
 .bc-chip.none { background: var(--bg2); color: var(--text3); border-color: var(--border); padding-right: 9px; }
 /* The count chip is a <button> so it stays tappable — keep it looking like a chip */
@@ -890,7 +905,7 @@ button.bc-chip { font-family: var(--mono); line-height: inherit; }
 .intake-item-info {
   flex: 1; min-width: 0; cursor: pointer; padding: 2px 0;
 }
-.intake-item-info:hover .intake-item-name { color: var(--blue); }
+.intake-item-info:hover .intake-item-name { color: var(--link); }
 .intake-item-name { font-size: 13px; font-weight: 500; color: var(--text); line-height: 1.3; }
 .intake-item-code { font-size: 11px; color: var(--text3); font-family: var(--mono); margin-top: 1px; }
 .intake-item-order-label { font-size: 11px; color: var(--text3); margin-top: 1px; }
@@ -1047,7 +1062,7 @@ button.bc-chip { font-family: var(--mono); line-height: inherit; }
 .intake-merged-block .intake-item:last-child { border-bottom: none; }
 
 /* ── Pending delivery group card (queue sort by delivery) ── */
-.pending-delivery-group { border-left: 3px solid var(--amber-text); }
+.pending-delivery-group { border-left: 3px solid var(--select-line); }
 .pending-delivery-group .order-card-body { border-top: none; }
 .intake-merged-block .order-line { padding-left: 12px; padding-right: 12px; }
 

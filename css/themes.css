@@ -58,6 +58,18 @@
   --stocktake-banner-bg:   #fef3c7;  --stocktake-banner-text: #92400e;  --stocktake-banner-line: #fde68a;
   --setup-banner-bg:       #ede9fe;  --setup-banner-text:     #6d28d9;  --setup-banner-line:     #ddd6fe;
   --ghost-bg:              #ede9fe;  --ghost-text:            #6d28d9;  --ghost-line:            #ddd6fe;
+  --select-bg:   var(--blue-bg);
+  --select-text: var(--blue-text);
+  --select-line: var(--blue);
+  --count-bg:    var(--amber-bg);
+  --count-text:  var(--amber-text);
+  --link:        var(--blue-text);
+  --chip-bg:     var(--blue-bg);
+  --chip-text:   var(--blue-text);
+  --chip-line:   var(--blue);
+  --note-bg:     var(--amber-bg);
+  --note-text:   var(--amber-text);
+  --note-line:   var(--amber-text);
   --radius:      6px;
   --radius-lg:   10px;
 }

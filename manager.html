@@ -4518,7 +4518,7 @@ const Manager = {
       const idxUrl = (e.message || '').match(/https:\/\/console\.firebase\.google\.com[^\s"')]+/);
       if (list) list.innerHTML = idxUrl
         ? `<div class="empty-state"><i class="ti ti-alert-circle"></i><p>This filter needs a one-time Firestore index.<br>
-            <a href="${esc(idxUrl[0])}" target="_blank" rel="noopener" style="color:var(--blue-text);text-decoration:underline">Create it in the Firebase console</a>,
+            <a href="${esc(idxUrl[0])}" target="_blank" rel="noopener" style="color:var(--link);text-decoration:underline">Create it in the Firebase console</a>,
             wait a minute for it to build, then try again.</p></div>`
         : `<div class="empty-state"><i class="ti ti-alert-circle"></i><p>Failed to load history: ${esc(e.message)}</p></div>`;
     } finally { this._historyLoading = false; }
