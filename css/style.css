@@ -66,8 +66,10 @@
   --select-bg:   var(--accent);          /* active sidebar item, in-order add button, dialog icon */
   --select-text: var(--accent-text);
   --select-line: #ea372e;                /* in-order card border, delivery-group card rule */
-  --count-bg:    rgba(255,255,255,0.14); /* count bubbles beside tabs and on buttons */
+  --count-bg:    #ea372e;                /* count bubbles beside tabs — Burning Star Red */
   --count-text:  #ffffff;
+  --count-on-btn-bg:   rgba(255,255,255,0.22); /* …but on a red/orange button a red bubble vanishes */
+  --count-on-btn-text: #ffffff;
   --link:        #ff7369;                /* back buttons, links, hover-to-open names */
   --chip-bg:     var(--bg2);             /* informational chips (barcodes) */
   --chip-text:   var(--text2);
@@ -461,6 +463,7 @@ button { cursor: pointer; }
 .sidebar-btn:hover  { background: var(--bg); }
 .sidebar-btn.active { background: var(--select-bg); color: var(--select-text); font-weight: 500; }
 .sidebar-count { margin-left: auto; font-size: 10px; font-family: var(--mono); background: var(--count-bg); color: var(--count-text); padding: 1px 6px; border-radius: 20px; }
+.btn .sidebar-count { background: var(--count-on-btn-bg); color: var(--count-on-btn-text); }
 .sidebar-count.zero { display: none; }
 
 /* ═══════════════════════════════════════

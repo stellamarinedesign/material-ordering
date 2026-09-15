@@ -11,9 +11,10 @@
   <meta name="apple-mobile-web-app-title" content="Consumables">
   <title>Consumables Checkout</title>
   <link rel="icon" type="image/png" href="favicon.png">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
   <link rel="stylesheet" href="fonts/tabler-icons.min.css">
-  <link rel="stylesheet" href="css/style.css">
-  <link rel="stylesheet" href="css/themes.css">
+  <link rel="stylesheet" href="css/style.css?v=v0.55.3">
+  <link rel="stylesheet" href="css/themes.css?v=v0.55.3">
   <style>
     .cons-stock-badge {
       font-size: 11px; font-family: var(--mono); padding: 2px 8px;
@@ -118,9 +119,9 @@
 <!-- APP CHECK: remove this line to disable App Check (also remove init block in firebase-sync.js) -->
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-check-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
-<script src="js/shared.js"></script>
-<script src="js/firebase-sync.js"></script>
-<script src="js/auth.js"></script>
+<script src="js/shared.js?v=v0.55.3"></script>
+<script src="js/firebase-sync.js?v=v0.55.3"></script>
+<script src="js/auth.js?v=v0.55.3"></script>
 <script>
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.getRegistrations().then(rs => rs.forEach(r => r.unregister()));
@@ -363,7 +364,7 @@ const ConsApp = {
           <span>A newer version (${esc(latestVersion)}) is available — you're on ${esc(APP_VERSION)}.</span>
           <button id="btn-refresh-update">Refresh</button>
         </div>` : '';
-      document.getElementById('btn-refresh-update')?.addEventListener('click', () => location.reload());
+      document.getElementById('btn-refresh-update')?.addEventListener('click', () => AutoUpdate.reloadFresh(latestVersion));
     }
   },
 

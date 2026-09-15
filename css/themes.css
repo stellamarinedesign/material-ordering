@@ -63,6 +63,8 @@
   --select-line: var(--blue);
   --count-bg:    var(--amber-bg);
   --count-text:  var(--amber-text);
+  --count-on-btn-bg:   var(--amber-bg);
+  --count-on-btn-text: var(--amber-text);
   --link:        var(--blue-text);
   --chip-bg:     var(--blue-bg);
   --chip-text:   var(--blue-text);

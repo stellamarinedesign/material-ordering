@@ -1,6 +1,6 @@
-// shared.js — v0.55.2
+// shared.js — v0.55.3
 
-const APP_VERSION = 'v0.55.2';
+const APP_VERSION = 'v0.55.3';
 
 // Numeric version comparison (handles "v0.9" vs "v0.10" correctly, unlike
 // plain string comparison). Returns true if `a` is strictly newer than `b`.
@@ -594,10 +594,15 @@ const BarcodeScanner = {
 //      page's own carts empty (isBusy).
 //
 // Two extra safeguards on the reload itself:
-//   - RETRY window: GitHub Pages caches HTML ~10 minutes, so a reload right
-//     after deploy can be served the old build again. One attempt per version
-//     PER HOUR (sessionStorage) self-heals that without any possibility of a
-//     reload loop; the banner stays up in between as the manual fallback.
+//   - FRESH reload: GitHub Pages caches every file for ~10 minutes, and a plain
+//     location.reload() only revalidates — the CDN answers "unchanged" from its
+//     stale copy, so right after a deploy the old build comes straight back
+//     (banner reappears, nothing changed). reloadFresh() navigates to the page
+//     with a ?v= query instead: a new URL to the CDN, so the HTML is fetched
+//     from origin, and the HTML's own ?v=-stamped script/style tags (see
+//     tools/bump-version.py) pull matching assets the same way.
+//   - RETRY window: belt and braces for anything still stale — one attempt per
+//     version PER HOUR (sessionStorage) can't loop; the banner stays up between.
 //   - REACHABLE gate: a reload only fires if a self-fetch succeeded moments
 //     ago, so a kiosk can't reload itself into a browser error page.
 //
@@ -634,6 +639,13 @@ const AutoUpdate = {
   notifyVersion(v) {
     if (v && isVersionNewer(v, APP_VERSION) && (!this._latest || isVersionNewer(v, this._latest)))
       this._latest = v;
+  },
+
+  // Reload in a way the CDN can't serve stale: a version-stamped URL is a new
+  // object to it. Used by the banner button and the idle auto-reload.
+  reloadFresh(v) {
+    const stamp = encodeURIComponent(v || this._latest || Date.now());
+    location.replace(location.pathname + '?v=' + stamp);
   },
 
   // True while a self-fetch answered recently — the site host is genuinely
@@ -681,7 +693,7 @@ const AutoUpdate = {
     if (tried && tried.v === this._latest && Date.now() - tried.at < this.RETRY_MS) return;
     this._tried = { v: this._latest, at: Date.now() };
     try { sessionStorage.setItem('mo_auto_reload', JSON.stringify(this._tried)); } catch {}
-    location.reload();
+    this.reloadFresh(this._latest);
   },
 };
 
