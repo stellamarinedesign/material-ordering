@@ -1,4 +1,4 @@
-// intake.js — v0.55.4
+// intake.js — v0.55.5
 // Shared intake rendering module used by warehouse.html and manager.html.
 
 const Intake = {
@@ -530,7 +530,7 @@ const Intake = {
         <div class="intake-item" data-item="${esc(String(item.id))}" data-order="${esc(order._id)}">
           <div class="intake-item-main">
             <div class="intake-item-info">
-              <div class="intake-item-name">${esc(item.description)}</div>
+              <div class="intake-item-name">${descHtml(item.description)}</div>
               ${showCode ? `<div class="intake-item-code">${esc(item.partCode)}</div>` : ''}
               ${orderLabel ? `<div class="intake-item-order-label">${esc(orderLabel)}</div>` : ''}
               <div class="intake-item-ordered">Ordered: <strong>${esc(orderQtyDisplay(item, item.qty))}</strong></div>
@@ -544,7 +544,7 @@ const Intake = {
       <div class="intake-item" data-item="${esc(String(item.id))}" data-order="${esc(order._id)}">
         <div class="intake-item-main">
           <div class="intake-item-info" data-notes-toggle="${esc(String(item.id))}" data-notes-order="${esc(order._id)}">
-            <div class="intake-item-name">${esc(item.description)}</div>
+            <div class="intake-item-name">${descHtml(item.description)}</div>
             ${showCode ? `<div class="intake-item-code">${esc(item.partCode)}</div>` : ''}
             ${orderLabel ? `<div class="intake-item-order-label">${esc(orderLabel)}</div>` : ''}
             <div class="intake-item-ordered">Ordered: <strong>${esc(orderQtyDisplay(item, item.qty))}</strong></div>

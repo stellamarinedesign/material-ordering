@@ -10,8 +10,8 @@
   <link rel="icon" type="image/png" href="favicon.png">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
   <link rel="stylesheet" href="fonts/tabler-icons.min.css">
-  <link rel="stylesheet" href="css/style.css?v=v0.55.4">
-  <link rel="stylesheet" href="css/themes.css?v=v0.55.4">
+  <link rel="stylesheet" href="css/style.css?v=v0.55.5">
+  <link rel="stylesheet" href="css/themes.css?v=v0.55.5">
 </head>
 <body>
 <div id="root"></div>
@@ -20,10 +20,10 @@
 <!-- APP CHECK: remove this line to disable App Check (also remove init block in firebase-sync.js) -->
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-check-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
-<script src="js/shared.js?v=v0.55.4"></script>
-<script src="js/firebase-sync.js?v=v0.55.4"></script>
-<script src="js/auth.js?v=v0.55.4"></script>
-<script src="js/intake.js?v=v0.55.4"></script>
+<script src="js/shared.js?v=v0.55.5"></script>
+<script src="js/firebase-sync.js?v=v0.55.5"></script>
+<script src="js/auth.js?v=v0.55.5"></script>
+<script src="js/intake.js?v=v0.55.5"></script>
 <!-- Vendored xlsx-js-style (SheetJS fork with cell styling) — stocktake Excel exports -->
 <script src="js/xlsx-style.min.js"></script>
 <!-- Vendored ExcelJS — used only for the consumables export, which embeds drawn
@@ -1721,7 +1721,7 @@ const Manager = {
       const when = rec?.updatedAt?.toDate ? fmtTime(rec.updatedAt.toDate()) : '';
       return `<div class="stocktake-row">
         <div class="stocktake-row-info">
-          <div class="stocktake-row-name">${esc(m.description)}</div>
+          <div class="stocktake-row-name">${descHtml(m.description)}</div>
           <div class="stocktake-row-meta">${showCode ? esc(m.partCode) + ' · ' : ''}${esc(unit)}${counted && when ? ` · counted ${when}${rec.updatedBy ? ' by ' + esc(rec.updatedBy) : ''}` : ''}</div>
         </div>
         <div class="stocktake-qty${counted ? '' : ' uncounted'}">${counted ? rec.qty + ' ' + esc(unit) : '—'}</div>
@@ -1782,7 +1782,7 @@ const Manager = {
       return `<div class="mat-card ${hasQty?'in-order':''}">
         <div class="mat-icon" style="background:${(CAT_ICONS[m.category]||CAT_ICONS.default).bg}"><i class="ti ${(CAT_ICONS[m.category]||CAT_ICONS.default).icon}" style="color:${(CAT_ICONS[m.category]||CAT_ICONS.default).color}"></i></div>
         <div class="mat-info">
-          <div class="mat-name">${esc(m.description)}</div>
+          <div class="mat-name">${descHtml(m.description)}</div>
           ${showCode ? `<div class="mat-partcode">${esc(m.partCode)}</div>` : '<div class="mat-partcode"></div>'}
           <div class="mat-unit">${esc(unit)} · <span class="st-recorded">${recorded}</span></div>
         </div>
@@ -1821,7 +1821,7 @@ const Manager = {
     const modeChip = { set: ['=', 'var(--blue-text)'], add: ['+', 'var(--green-text)'], subtract: ['−', 'var(--red-text)'] };
     const lines = items.map(i => {
       const [sym, col] = modeChip[i.stMode] || modeChip.set;
-      return `<div class="stocktake-row"><div class="stocktake-row-info"><div class="stocktake-row-name">${esc(i.description)}</div></div>
+      return `<div class="stocktake-row"><div class="stocktake-row-info"><div class="stocktake-row-name">${descHtml(i.description)}</div></div>
         <div class="stocktake-qty" style="color:${col}">${sym} ${i.qty} ${esc(stocktakeUnit(i))}</div></div>`;
     }).join('');
     const ow = document.getElementById('overlay-wrap');
@@ -1901,7 +1901,7 @@ const Manager = {
         <i class="ti ${isOpen ? 'ti-chevron-up' : 'ti-chevron-down'}" style="color:var(--text3)"></i>
         ${isOpen ? `<div style="flex-basis:100%;padding-top:8px;border-top:1px solid var(--border);margin-top:6px">
           ${(s.items || []).map(i => { const [sym,col] = modeSym[i.mode] || modeSym.set;
-            return `<div class="stocktake-row-meta" style="padding:2px 0">${esc(i.description)} — <strong style="color:${col}">${sym} ${i.qty} ${esc(i.unit || '')}</strong></div>`;
+            return `<div class="stocktake-row-meta" style="padding:2px 0">${descHtml(i.description)} — <strong style="color:${col}">${sym} ${i.qty} ${esc(i.unit || '')}</strong></div>`;
           }).join('')}
         </div>` : ''}
       </div>`;
@@ -2137,7 +2137,7 @@ const Manager = {
             if (merged) {
               return `<div class="combined-main-row">
                 <div class="combined-main-info">
-                  <div class="combined-main-name">${esc(pGroup.description)}</div>
+                  <div class="combined-main-name">${descHtml(pGroup.description)}</div>
                   <div class="combined-main-code" style="display:flex;align-items:center;gap:4px">
                     <span>${esc(pGroup.partCode)}</span>
                     <span style="opacity:0.4">·</span>
@@ -2181,7 +2181,7 @@ const Manager = {
                   : line.submittedAt ? `<span style="opacity:0.6;font-size:11px;font-family:var(--mono);white-space:nowrap">${fmtTime(line.submittedAt)}</span>` : '';
               return `<div class="combined-main-row"${isExc ? ' style="opacity:0.35"' : ''}>
                 <div class="combined-main-info">
-                  <div class="combined-main-name">${esc(pGroup.description)}</div>
+                  <div class="combined-main-name">${descHtml(pGroup.description)}</div>
                   <div class="combined-main-code" style="display:flex;align-items:center;gap:4px">
                     <span>${esc(pGroup.partCode)}</span>
                     ${isExc ? `<span style="opacity:0.4">·</span><span style="font-size:10px;color:var(--text3);font-family:var(--mono)">(excluded)</span>` : displayDevice ? `<span style="opacity:0.4">·</span>${displayDevice}` : ''}
@@ -2209,7 +2209,7 @@ const Manager = {
               // Multiple orders for this partCode — show parent row + visible sub-rows + excluded sub-rows
               const mainRow = `<div class="combined-main-row">
                 <div class="combined-main-info">
-                  <div class="combined-main-name">${esc(pGroup.description)}</div>
+                  <div class="combined-main-name">${descHtml(pGroup.description)}</div>
                   <div class="combined-main-code">${esc(pGroup.partCode)}</div>
                 </div>
                 <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
@@ -2361,7 +2361,7 @@ const Manager = {
           return [...byItemId.values()].map(({ item, totalQty, orders }) => `
           <div class="order-line emailed">
             <div class="order-line-info">
-              <div class="order-line-name">${esc(item.description)}</div>
+              <div class="order-line-name">${descHtml(item.description)}</div>
               <div class="order-line-code">${esc(item.partCode)}${orders.length > 1 ? ` &middot; ${orders.length} orders` : distinctOrderIds.length > 1 ? ' &middot; ' + esc(orders[0].order.deviceName || orders[0].order.ref || orders[0].order._id) : ''}</div>
             </div>
             <div class="order-line-right">
@@ -2602,7 +2602,7 @@ const Manager = {
       return `
       <div class="order-line ${item.emailed ? 'emailed' : ''} ${item.rejected ? 'rejected-line' : ''}">
         <div class="order-line-info">
-          <div class="order-line-name">${esc(item.description)}</div>
+          <div class="order-line-name">${descHtml(item.description)}</div>
           <div class="order-line-code">${esc(item.partCode)}</div>
         </div>
         <div class="order-line-right">
@@ -2787,7 +2787,7 @@ const Manager = {
         const idx = (order.items || []).indexOf(i);
         return `<div class="order-line">
           <div class="order-line-info">
-            <div class="order-line-name">${esc(i.description)}</div>
+            <div class="order-line-name">${descHtml(i.description)}</div>
             <div class="order-line-code">${esc(i.partCode)}</div>
           </div>
           <div class="order-line-right">
@@ -2803,7 +2803,7 @@ const Manager = {
       const showCode = item.partCode && !Data.isDummyCode(item.partCode);
       return `<div class="intake-merged-block">
         <div class="intake-merged-header">
-          <div class="intake-item-name">${esc(item.description)}</div>
+          <div class="intake-item-name">${descHtml(item.description)}</div>
           ${showCode ? `<div class="intake-item-code">${esc(item.partCode)}</div>` : ''}
           <div class="intake-item-ordered">Total: <strong>${totalQty}</strong>${item.qtyType ? ' ' + esc(item.qtyType) : ''}</div>
         </div>
@@ -3109,7 +3109,7 @@ const Manager = {
         <button class="mat-bin" data-bin="${m.id}"><i class="ti ti-trash"></i></button>
         <div class="mat-icon" style="background:${ci.bg}"><i class="ti ${ci.icon}" style="color:${ci.color}"></i></div>
         <div class="mat-info">
-          <div class="mat-name">${esc(m.description)}</div>
+          <div class="mat-name">${descHtml(m.description)}</div>
           ${showCode ? `<div class="mat-partcode">${esc(m.partCode)}</div>` : '<div class="mat-partcode"></div>'}
           <div class="mat-unit">${esc(m.qtyType||'')}</div>
         </div>
@@ -3138,7 +3138,7 @@ const Manager = {
       <div class="order-item">
         <div class="order-item-row">
           <div>
-            <div class="order-item-name">${esc(i.description)}</div>
+            <div class="order-item-name">${descHtml(i.description)}</div>
             ${showCode ? `<div class="order-item-code">${esc(i.partCode)}</div>` : ''}
             <div class="order-item-unit">${esc(i.qtyType||'')}</div>
           </div>
@@ -3305,7 +3305,7 @@ const Manager = {
         <button class="mat-bin" data-bin="${m.id}"><i class="ti ti-trash"></i></button>
         <div class="mat-icon" style="background:${ci.bg}"><i class="ti ${ci.icon}" style="color:${ci.color}"></i></div>
         <div class="mat-info">
-          <div class="mat-name">${esc(m.description)}</div>
+          <div class="mat-name">${descHtml(m.description)}</div>
           ${showCode ? `<div class="mat-partcode">${esc(m.partCode)}</div>` : '<div class="mat-partcode"></div>'}
           <div class="mat-unit">${unitLabel}${isUntracked?' · Not tracked':''}</div>
         </div>
@@ -3334,7 +3334,7 @@ const Manager = {
       <div class="order-item">
         <div class="order-item-row">
           <div>
-            <div class="order-item-name">${esc(i.description)}</div>
+            <div class="order-item-name">${descHtml(i.description)}</div>
             ${showCode ? `<div class="order-item-code">${esc(i.partCode)}</div>` : ''}
             <div class="order-item-unit">${esc(orderQtyUnit(i))}</div>
           </div>
@@ -3459,7 +3459,7 @@ const Manager = {
         <button class="mat-bin" data-bin="${m.id}"><i class="ti ti-trash"></i></button>
         <div class="mat-icon" style="background:${ci.bg}"><i class="ti ${ci.icon}" style="color:${ci.color}"></i></div>
         <div class="mat-info">
-          <div class="mat-name">${esc(m.description)}</div>
+          <div class="mat-name">${descHtml(m.description)}</div>
           ${showCode ? `<div class="mat-partcode">${esc(m.partCode)}</div>` : '<div class="mat-partcode"></div>'}
           <div class="mat-unit">${unitLabel}${isBoxed?` · ${m.boxSize} per ${esc((m.boxUnit||'Box').toLowerCase())}`:''}${isUntracked?' · Not tracked yet':''}</div>
         </div>
@@ -3723,7 +3723,7 @@ const Manager = {
             <input class="stock-delta-input" type="number" min="1" step="1" placeholder="${esc(m.boxUnit||'Box')}es" id="si-intake-box-${esc(sid)}">
             <span style="font-size:11px;color:var(--text3)">${esc(m.boxUnit||'Box')}(es)</span>
             <button class="btn-sm btn-sm-save" data-stock-intake-boxn="${esc(sid)}" style="font-size:11px"><i class="ti ti-plus"></i> Intake</button>
-            <button class="btn-sm" data-stock-hist="${esc(sid)}" data-stock-name="${esc(m.description)}" style="font-size:11px;margin-left:auto"><i class="ti ti-history"></i></button>
+            <button class="btn-sm" data-stock-hist="${esc(sid)}" data-stock-name="${descHtml(m.description)}" style="font-size:11px;margin-left:auto"><i class="ti ti-history"></i></button>
           </div>
           <div class="stock-action-row">
             <span class="stock-action-label">Remove stock</span>
@@ -3750,7 +3750,7 @@ const Manager = {
             <span class="stock-action-label">Add stock</span>
             <input class="stock-delta-input" type="number" min="1" step="1" placeholder="Qty" id="si-intake-${esc(sid)}">
             <button class="btn-sm btn-sm-save" data-stock-intake="${esc(sid)}" style="font-size:11px"><i class="ti ti-plus"></i> Intake</button>
-            <button class="btn-sm" data-stock-hist="${esc(sid)}" data-stock-name="${esc(m.description)}" style="font-size:11px;margin-left:auto"><i class="ti ti-history"></i></button>
+            <button class="btn-sm" data-stock-hist="${esc(sid)}" data-stock-name="${descHtml(m.description)}" style="font-size:11px;margin-left:auto"><i class="ti ti-history"></i></button>
           </div>
           <div class="stock-action-row">
             <span class="stock-action-label">Remove stock</span>
@@ -3794,7 +3794,7 @@ const Manager = {
       <div class="stock-card-header" data-stock-hdr="${esc(sid)}">
         <div class="stock-card-icon" style="background:${ci.bg}"><i class="ti ${ci.icon}" style="color:${ci.color}"></i></div>
         <div class="stock-card-info">
-          <div class="stock-card-name">${esc(m.description)}${m._ghost ? ' <span class="ghost-chip"><i class="ti ti-sparkles" style="font-size:10px"></i> New — not in CSV yet</span>' : ''}</div>
+          <div class="stock-card-name">${descHtml(m.description)}${m._ghost ? ' <span class="ghost-chip"><i class="ti ti-sparkles" style="font-size:10px"></i> New — not in CSV yet</span>' : ''}</div>
           <div class="stock-card-meta">${showCode ? esc(m.partCode)+' · ' : ''}${esc(m.category)} · ${esc(m.subcategory)}</div>
         </div>
         ${qtyBadge}
@@ -4049,7 +4049,7 @@ const Manager = {
   _bcPromptLink(code) {
     const items = [...this.consumables].sort((a,b) => descCompare(a.description, b.description));
     const ow = document.getElementById('overlay-wrap');
-    const rows = items.map(m => `<button class="scan-link-row" data-link-sid="${esc(stockId(m))}">${esc(m.description)}</button>`).join('');
+    const rows = items.map(m => `<button class="scan-link-row" data-link-sid="${esc(stockId(m))}">${descHtml(m.description)}</button>`).join('');
     ow.innerHTML = `
       <div class="success-overlay">
         <div class="success-card" style="max-width:420px">
@@ -4125,7 +4125,7 @@ const Manager = {
         <div class="success-card" style="max-width:400px">
           <div class="success-icon blue"><i class="ti ti-list-numbers"></i></div>
           <h3>Starting count</h3>
-          <p style="margin-bottom:10px">${esc(m.description)}${rec?.tracked ? `<br><span style="font-size:12px;color:var(--text3)">currently recorded: ${rec.qty||0} ${esc(m.qtyType||'Each')}</span>` : ''}</p>
+          <p style="margin-bottom:10px">${descHtml(m.description)}${rec?.tracked ? `<br><span style="font-size:12px;color:var(--text3)">currently recorded: ${rec.qty||0} ${esc(m.qtyType||'Each')}</span>` : ''}</p>
           ${fields}
           <button class="btn btn-primary" id="btn-bc-count-save" style="width:100%">Save count</button>
           <button class="btn btn-outline" id="btn-bc-count-skip" style="width:100%;margin-top:8px">Skip — count later</button>
@@ -4317,7 +4317,7 @@ const Manager = {
         : `<button class="bc-chip none" data-bc-count="${esc(sid)}" title="Set the counted quantity" style="cursor:pointer"><i class="ti ti-list-numbers" style="font-size:11px"></i> no count yet</button>`;
       html += `<div class="stocktake-row" style="flex-wrap:wrap" id="bc-row-${esc(sid)}">
         <div class="stocktake-row-info">
-          <div class="stocktake-row-name">${esc(m.description)}${m._ghost ? ' <span class="ghost-chip"><i class="ti ti-sparkles" style="font-size:10px"></i> New — not in CSV yet</span>' : ''}</div>
+          <div class="stocktake-row-name">${descHtml(m.description)}${m._ghost ? ' <span class="ghost-chip"><i class="ti ti-sparkles" style="font-size:10px"></i> New — not in CSV yet</span>' : ''}</div>
           <div style="display:flex;flex-wrap:wrap;gap:5px;margin-top:5px">
             ${codes.map(c => `<span class="bc-chip">${esc(c)} <button class="bc-chip-x" data-bc-unlink="${esc(c)}" data-sid="${esc(sid)}" title="Remove this barcode">✕</button></span>`).join('')}
             ${codes.length ? '' : '<span class="bc-chip none">no barcode yet</span>'}

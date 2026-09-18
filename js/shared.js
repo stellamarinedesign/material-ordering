@@ -1,6 +1,6 @@
-// shared.js — v0.55.4
+// shared.js — v0.55.5
 
-const APP_VERSION = 'v0.55.4';
+const APP_VERSION = 'v0.55.5';
 
 // Numeric version comparison (handles "v0.9" vs "v0.10" correctly, unlike
 // plain string comparison). Returns true if `a` is strictly newer than `b`.
@@ -145,8 +145,38 @@ const Settings = {
 // Uses INCH_VALUE_RE / MM_PER_INCH / roundMm from the unit-aware search
 // section below — safe, since sorting only runs long after the whole file
 // has been evaluated.
+// Supplier descriptions arrive with vulgar-fraction glyphs and typographic inch
+// marks ("1 ¼”", "½″") as often as with plain text ("1 1/4\""). Both the sorter
+// and the unit-aware search run their input through this first, so either form
+// works anywhere in the catalogue. A glyph straight after a digit gets a space
+// so "1½" reads as the mixed number "1 1/2", not "11/2".
+const FRACTION_GLYPHS = {
+  '½':'1/2', '¼':'1/4', '¾':'3/4', '⅛':'1/8', '⅜':'3/8', '⅝':'5/8', '⅞':'7/8',
+  '⅓':'1/3', '⅔':'2/3', '⅕':'1/5', '⅖':'2/5', '⅗':'3/5', '⅘':'4/5', '⅙':'1/6', '⅚':'5/6',
+};
+function normaliseGlyphs(str) {
+  return String(str||'')
+    .replace(/[½¼¾⅛⅜⅝⅞⅓⅔⅕⅖⅗⅘⅙⅚]/g, (g, i, full) => (i > 0 && /\d/.test(full[i-1]) ? ' ' : '') + FRACTION_GLYPHS[g])
+    .replace(/[“”″]/g, '"');
+}
+
+// Display-only: the same fractions rendered as glyphs on screen ("1 1/2\"" and
+// "1 ½\"" both show as "1½\""), for the fractions Unicode has a glyph for —
+// 5/16 and the like stay as typed. Nothing underneath changes: sorting, search,
+// emails and exports all work on the catalogue text as written. No lookbehind
+// (older iPad Safari would refuse to parse the whole file), so the preceding
+// character is captured and re-emitted instead.
+const GLYPH_FOR = Object.fromEntries(Object.entries(FRACTION_GLYPHS).map(([g, f]) => [f, g]));
+function prettyFractions(str) {
+  return normaliseGlyphs(str)
+    .replace(/(^|[^\d./])(\d)\s*\/\s*(\d{1,2})(?![\d/])/g, (m, pre, n, d) => pre + (GLYPH_FOR[`${n}/${d}`] || `${n}/${d}`))
+    .replace(/(\d) ([½¼¾⅛⅜⅝⅞⅓⅔⅕⅖⅗⅘⅙⅚])/g, '$1$2');
+}
+function descHtml(str) { return esc(prettyFractions(str)); }
+
 function naturalSortChunks(str) {
-  const s = String(str||'').toLowerCase()
+  const s = normaliseGlyphs(str).toLowerCase()
+    .replace(/^[^a-z0-9]+/, '')   // "(1 ½\") 38.1mm …" sorts by 38.1, not by "("
     .replace(INCH_VALUE_RE, (m, w, n, d, dec) => {
       const inches = dec !== undefined
         ? parseFloat(dec)
@@ -206,7 +236,7 @@ const INCH_VALUE_SRC = `(\\d+\\s+)?(\\d+)\\s*\\/\\s*(\\d+)\\s*${INCH_UNIT_SRC}|(
 const INCH_VALUE_RE  = new RegExp(INCH_VALUE_SRC, 'g');
 
 function extractMeasurements(str) {
-  const s = String(str||'').toLowerCase();
+  const s = normaliseGlyphs(str).toLowerCase();
   const results = [];
 
   const inchRe = new RegExp(INCH_VALUE_SRC, 'g');
@@ -375,7 +405,7 @@ const Data = {
         : out;
     }
 
-    const q = query.toLowerCase().trim();
+    const q = normaliseGlyphs(query).toLowerCase().trim();
     const qMeasurements = cfg.unitAwareSearch ? extractMeasurements(q) : [];
     // Strip out the raw text that was successfully parsed as a measurement
     // (e.g. "1in", "25.4mm") before pulling out words for fuzzy matching —
@@ -391,7 +421,7 @@ const Data = {
       .filter(w => w.length >= 3 && !UNIT_WORDS.has(w));
 
     const scored = out.map(m => {
-      const desc = m.description.toLowerCase();
+      const desc = normaliseGlyphs(m.description).toLowerCase();
       const code = m.partCode.toLowerCase();
       let score = null; // null = no match, lower number = better match
 
