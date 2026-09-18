@@ -1,6 +1,6 @@
-// shared.js — v0.55.5
+// shared.js — v0.55.6
 
-const APP_VERSION = 'v0.55.5';
+const APP_VERSION = 'v0.55.6';
 
 // Numeric version comparison (handles "v0.9" vs "v0.10" correctly, unlike
 // plain string comparison). Returns true if `a` is strictly newer than `b`.
@@ -41,6 +41,7 @@ const DEFAULT_SETTINGS = {
   naturalSort:          true,   // numeric-aware sort order, e.g. 8mm before 10mm; inch sizes sort by their mm value
   unitAwareSearch:      true,   // "1 inch" matches "25.4mm" etc. — exact value match, no rounding
   fuzzySearch:          true,   // typo-tolerant text matching, exact matches always rank first
+  fractionGlyphs:       false,  // show 1 1/2" as 1½" — off by default: the glyphs read small on the iPads
 };
 
 const CAT_ICONS = {
@@ -160,19 +161,21 @@ function normaliseGlyphs(str) {
     .replace(/[“”″]/g, '"');
 }
 
-// Display-only: the same fractions rendered as glyphs on screen ("1 1/2\"" and
-// "1 ½\"" both show as "1½\""), for the fractions Unicode has a glyph for —
-// 5/16 and the like stay as typed. Nothing underneath changes: sorting, search,
-// emails and exports all work on the catalogue text as written. No lookbehind
-// (older iPad Safari would refuse to parse the whole file), so the preceding
-// character is captured and re-emitted instead.
+// Display-only. By default every description shows FLAT — "1 ½”" from a
+// supplier sheet renders as "1 1/2\"" like the rest — because the glyphs read
+// too small on the iPads. The Settings toggle (fractionGlyphs) flips that to
+// glyphs everywhere ("1 1/2\"" shows as "1½\""), for the fractions Unicode has a
+// glyph for; 5/16 and the like stay as typed either way. Nothing underneath
+// changes: sorting, search, emails and exports all work on the catalogue text
+// as written. No lookbehind (older iPad Safari would refuse to parse the whole
+// file), so the preceding character is captured and re-emitted instead.
 const GLYPH_FOR = Object.fromEntries(Object.entries(FRACTION_GLYPHS).map(([g, f]) => [f, g]));
 function prettyFractions(str) {
   return normaliseGlyphs(str)
     .replace(/(^|[^\d./])(\d)\s*\/\s*(\d{1,2})(?![\d/])/g, (m, pre, n, d) => pre + (GLYPH_FOR[`${n}/${d}`] || `${n}/${d}`))
     .replace(/(\d) ([½¼¾⅛⅜⅝⅞⅓⅔⅕⅖⅗⅘⅙⅚])/g, '$1$2');
 }
-function descHtml(str) { return esc(prettyFractions(str)); }
+function descHtml(str) { return esc(Settings.get().fractionGlyphs ? prettyFractions(str) : normaliseGlyphs(str)); }
 
 function naturalSortChunks(str) {
   const s = normaliseGlyphs(str).toLowerCase()
@@ -310,7 +313,7 @@ const Data = {
     try {
       const res = await fetch(csvUrl + '?nocache=' + Date.now());
       if (!res.ok) throw new Error('HTTP ' + res.status);
-      const text = await res.text();
+      const text = this._decode(await res.arrayBuffer());
       if (text.trim().startsWith('<')) throw new Error('Got HTML — check file exists in repo');
       const parsed = this._parseCsv(text);
       if (parsed.length) {
@@ -328,7 +331,7 @@ const Data = {
     try {
       const res = await fetch(csvUrl + '?nocache=' + Date.now());
       if (!res.ok) throw new Error('HTTP ' + res.status);
-      const text = await res.text();
+      const text = this._decode(await res.arrayBuffer());
       if (text.trim().startsWith('<')) throw new Error('Got HTML — check file exists in repo');
       const parsed = this._parseCsv(text);
       if (parsed.length) {
@@ -343,8 +346,16 @@ const Data = {
     return [];
   },
   get() { return this._list || [...DEFAULT_MATERIALS]; },
+  // The CSVs are edited in Excel, which saves either UTF-8 (with a BOM, when
+  // "CSV UTF-8" is chosen) or the Windows ANSI codepage (plain "CSV"). Decode
+  // strictly as UTF-8 first — the BOM is consumed — and fall back to
+  // Windows-1252 if that fails, so a ½ or ” survives either way.
+  _decode(buf) {
+    try { return new TextDecoder('utf-8', { fatal: true }).decode(buf); }
+    catch { return new TextDecoder('windows-1252').decode(buf); }
+  },
   _parseCsv(text) {
-    const lines = text.trim().split(/\r?\n/).filter(l => l.trim() !== '');
+    const lines = text.replace(/^\uFEFF/, '').trim().split(/\r?\n/).filter(l => l.trim() !== '');
     if (lines.length < 2) return [];
     const headers = this._splitLine(lines[0]).map(h => h.toLowerCase().trim());
     const findCol = (...names) => { for (const n of names) { const i = headers.indexOf(n); if (i >= 0) return i; } return -1; };

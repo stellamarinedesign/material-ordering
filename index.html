@@ -14,8 +14,8 @@
   <link rel="icon" type="image/png" href="favicon.png">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
   <link rel="stylesheet" href="fonts/tabler-icons.min.css">
-  <link rel="stylesheet" href="css/style.css?v=v0.55.5">
-  <link rel="stylesheet" href="css/themes.css?v=v0.55.5">
+  <link rel="stylesheet" href="css/style.css?v=v0.55.6">
+  <link rel="stylesheet" href="css/themes.css?v=v0.55.6">
   <style>
     .mat-bin {
       width:30px; height:32px; display:flex; align-items:center; justify-content:center;
@@ -94,9 +94,9 @@
 <!-- APP CHECK: remove this line to disable App Check (also remove init block in firebase-sync.js) -->
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-check-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
-<script src="js/shared.js?v=v0.55.5"></script>
-<script src="js/firebase-sync.js?v=v0.55.5"></script>
-<script src="js/auth.js?v=v0.55.5"></script>
+<script src="js/shared.js?v=v0.55.6"></script>
+<script src="js/firebase-sync.js?v=v0.55.6"></script>
+<script src="js/auth.js?v=v0.55.6"></script>
 <script>
 const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker global
   activeCat:  null,
@@ -589,6 +589,10 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
             <div><div class="settings-row-label">Theme</div><div class="settings-row-sub">Colours and logo for this device — applies to every page opened on it</div></div>
             <select id="s-theme">${THEMES.map(t => `<option value="${t.id}"${Theme.get() === t.id ? ' selected' : ''}>${esc(t.name)}</option>`).join('')}</select>
           </div>
+          <div class="settings-row">
+            <div><div class="settings-row-label">Fractions as symbols</div><div class="settings-row-sub">Show 1 1/2" as 1½" — off keeps sizes large and easy to read on the iPads</div></div>
+            <input type="checkbox" id="s-fraction-glyphs" ${s.fractionGlyphs ? 'checked' : ''} style="width:20px;height:20px">
+          </div>
         </div>
       </div>
       <div class="settings-section">
@@ -628,6 +632,7 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
     Theme.set(document.getElementById('s-theme')?.value ?? Theme.get());   // per-device, applied immediately
     Settings.save({
       naturalSort:     document.getElementById('s-natural-sort')?.checked ?? true,
+      fractionGlyphs:  document.getElementById('s-fraction-glyphs')?.checked ?? false,
       unitAwareSearch: document.getElementById('s-unit-search')?.checked ?? true,
       fuzzySearch:     document.getElementById('s-fuzzy-search')?.checked ?? true,
     });

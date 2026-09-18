@@ -10,8 +10,8 @@
   <link rel="icon" type="image/png" href="favicon.png">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
   <link rel="stylesheet" href="fonts/tabler-icons.min.css">
-  <link rel="stylesheet" href="css/style.css?v=v0.55.5">
-  <link rel="stylesheet" href="css/themes.css?v=v0.55.5">
+  <link rel="stylesheet" href="css/style.css?v=v0.55.6">
+  <link rel="stylesheet" href="css/themes.css?v=v0.55.6">
 </head>
 <body>
 <div id="root"></div>
@@ -20,10 +20,10 @@
 <!-- APP CHECK: remove this line to disable App Check (also remove init block in firebase-sync.js) -->
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-check-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
-<script src="js/shared.js?v=v0.55.5"></script>
-<script src="js/firebase-sync.js?v=v0.55.5"></script>
-<script src="js/auth.js?v=v0.55.5"></script>
-<script src="js/intake.js?v=v0.55.5"></script>
+<script src="js/shared.js?v=v0.55.6"></script>
+<script src="js/firebase-sync.js?v=v0.55.6"></script>
+<script src="js/auth.js?v=v0.55.6"></script>
+<script src="js/intake.js?v=v0.55.6"></script>
 <!-- Vendored xlsx-js-style (SheetJS fork with cell styling) — stocktake Excel exports -->
 <script src="js/xlsx-style.min.js"></script>
 <!-- Vendored ExcelJS — used only for the consumables export, which embeds drawn
@@ -4270,7 +4270,7 @@ const Manager = {
       lines.push([m.partCode, m.description, m.category, m.subcategory, m.qtyType,
         m.boxSize || '', m.boxSize ? (m.boxUnit || 'Box') : ''].map(q).join(','));
     }
-    const blob = new Blob([lines.join('\r\n') + '\r\n'], { type: 'text/csv' });
+    const blob = new Blob(['\uFEFF' + lines.join('\r\n') + '\r\n'], { type: 'text/csv;charset=utf-8' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
     a.download = `New_Consumables_${new Date().toISOString().slice(0, 10)}.csv`;
@@ -4730,6 +4730,10 @@ const Manager = {
             <div><div class="settings-row-label">Theme</div><div class="settings-row-sub">Colours and logo for this device — applies to every page opened on it</div></div>
             <select id="s-theme">${THEMES.map(t => `<option value="${t.id}"${Theme.get() === t.id ? ' selected' : ''}>${esc(t.name)}</option>`).join('')}</select>
           </div>
+          <div class="settings-row">
+            <div><div class="settings-row-label">Fractions as symbols</div><div class="settings-row-sub">Show 1 1/2" as 1½" — off keeps sizes large and easy to read on the iPads</div></div>
+            <input type="checkbox" id="s-fraction-glyphs" ${s.fractionGlyphs ? 'checked' : ''} style="width:20px;height:20px">
+          </div>
         </div>
       </div>
       <div class="settings-section">
@@ -4904,7 +4908,9 @@ const Manager = {
       emailSignature:         document.getElementById('s-signature')?.value,
       emailTemplate:          document.getElementById('s-template')?.value,
       naturalSort, unitAwareSearch, fuzzySearch,
+      fractionGlyphs: document.getElementById('s-fraction-glyphs')?.checked ?? false,
     });
+    this.renderQueue(); this.renderStockList(); this.renderNoList(); this.renderCoList();
     // Settings.get() is read live by Data.filter on every call, so list/search
     // behaviour picks up the new toggles immediately — just need to re-render.
     this.renderNoList(); this.renderCoList(); this.renderReceiveList(); this.renderStockList();
