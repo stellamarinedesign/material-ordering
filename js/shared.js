@@ -1,6 +1,6 @@
-// shared.js — v0.55.6
+// shared.js — v0.56
 
-const APP_VERSION = 'v0.55.6';
+const APP_VERSION = 'v0.56';
 
 // Numeric version comparison (handles "v0.9" vs "v0.10" correctly, unlike
 // plain string comparison). Returns true if `a` is strictly newer than `b`.
@@ -126,7 +126,8 @@ const Settings = {
 // Three independent, toggleable features feeding into Data.filter():
 //   1. Natural sort      — "10mm" sorts after "8mm", not before; inch sizes sort
 //                          by their mm value, interleaved with metric sizes
-//   2. Unit-aware search — "1 inch" / "25.4mm" / "1\"" all match the same value
+//   2. Unit-aware search — "1 inch" / "25.4mm" / "1\"" all match the same value;
+//                          a bare number is read as millimetres ("50 x 25" ↔ "50mm x 25mm")
 //   3. Fuzzy text search — tolerates typos in the catalogue or in what's typed
 //
 // Toggles live in Settings (naturalSort / unitAwareSearch / fuzzySearch,
@@ -259,6 +260,22 @@ function extractMeasurements(str) {
   const mmRe = /(\d+(?:\.\d+)?)\s*mm(?![a-z])/g;
   while ((m = mmRe.exec(s))) {
     results.push({ mm: roundMm(parseFloat(m[1])), raw: m[0] });
+  }
+
+  // Bare numbers are millimetres — metric is the house standard, and the
+  // catalogue is inconsistent about writing the unit ("50 x 25" here,
+  // "50mm x 25mm" there), so a size has to match whichever way it was typed.
+  // A number is only "bare" when nothing around it says otherwise:
+  //   - not glued to letters (T5, P60, A554, part codes, "x" excepted so
+  //     "40x40x2" still reads as three sizes)
+  //   - not part of a fraction, or the whole number of a mixed fraction
+  //   - not followed by a unit — length units are handled above, and
+  //     weights, volumes, grits, percentages etc. aren't lengths at all
+  //   - not a pipe schedule ("Sch 80") — stripped before scanning
+  const bareSrc = s.replace(/\bsch(?:d|ed|edule)?\.?\s*\d+/g, ' ');
+  const bareRe = /(^|[^\d.\/a-wyz])(\d+(?:\.\d+)?)(?![\d.\/])(?!\s+\d+\s*\/)(?!\s*(?:mm|mtr|m|inch(?:es)?|in|wt|kg|ml|g|l|ltr|litres?|grit|gr|swg|gauge|deg|pcs?|off)(?![a-z]))(?!\s*(?:"|''|°|%))/g;
+  while ((m = bareRe.exec(bareSrc))) {
+    results.push({ mm: roundMm(parseFloat(m[2])), raw: m[2], bare: true });
   }
 
   return results;
@@ -441,13 +458,16 @@ const Data = {
         score = 0;
       }
 
-      // Tier 1: unit-aware exact value match — query names a measurement that
-      // appears (in any written form) in this item's description. Exact
-      // canonical-mm equality only, no rounding tolerance.
+      // Tier 1: unit-aware exact value match — the query's sizes appear (in any
+      // written form: 25.4mm, 1", or a bare 25.4) in this item. Exact canonical-mm
+      // equality only, no rounding tolerance. An item carrying EVERY size in the
+      // query ("50 x 25" → "50mm x 25mm x 3mm") ranks above one that shares only
+      // some of them ("100 x 25mm Flat Bar").
       if (score === null && qMeasurements.length) {
-        const itemMeasurements = extractMeasurements(desc);
-        const hit = qMeasurements.some(qm => itemMeasurements.some(im => im.mm === qm.mm));
-        if (hit) score = 1;
+        const itemMm = new Set(extractMeasurements(desc).map(im => im.mm));
+        const hits = qMeasurements.filter(qm => itemMm.has(qm.mm)).length;
+        if (hits === qMeasurements.length) score = 1;
+        else if (hits > 0)                 score = 1.5;
       }
 
       // Tier 2: fuzzy word match on remaining alphabetic query words —

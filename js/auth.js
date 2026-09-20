@@ -1,4 +1,4 @@
-// auth.js — v0.55.6
+// auth.js — v0.56
 //
 // Firebase Authentication (email + password) for every page, added as a layer
 // ON TOP of the existing pasted-config setup so nothing already running is
