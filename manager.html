@@ -10,8 +10,8 @@
   <link rel="icon" type="image/png" href="favicon.png">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
   <link rel="stylesheet" href="fonts/tabler-icons.min.css">
-  <link rel="stylesheet" href="css/style.css?v=v0.56">
-  <link rel="stylesheet" href="css/themes.css?v=v0.56">
+  <link rel="stylesheet" href="css/style.css?v=2026-10-06.1">
+  <link rel="stylesheet" href="css/themes.css?v=2026-10-06.1">
 </head>
 <body>
 <div id="root"></div>
@@ -20,10 +20,11 @@
 <!-- APP CHECK: remove this line to disable App Check (also remove init block in firebase-sync.js) -->
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-check-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
-<script src="js/shared.js?v=v0.56"></script>
-<script src="js/firebase-sync.js?v=v0.56"></script>
-<script src="js/auth.js?v=v0.56"></script>
-<script src="js/intake.js?v=v0.56"></script>
+<script src="js/shared.js?v=2026-10-06.1"></script>
+<script src="js/firebase-sync.js?v=2026-10-06.1"></script>
+<script src="js/auth.js?v=2026-10-06.1"></script>
+<script src="js/intake.js?v=2026-10-06.1"></script>
+<script src="js/catalogue.js?v=2026-10-06.1"></script>
 <!-- Vendored xlsx-js-style (SheetJS fork with cell styling) — stocktake Excel exports -->
 <script src="js/xlsx-style.min.js"></script>
 <!-- Vendored ExcelJS — used only for the consumables export, which embeds drawn
@@ -152,15 +153,16 @@ const Manager = {
     this.materials    = await Data.load('./materials.csv');
     this._baseConsumables = await Data.loadConsumables('./consumables.csv');
     this.consumables  = this._baseConsumables;
-    Auth.start();
+    Auth.start(() => Auth.guardManagerPage());
     DB.onDenied = () => Auth.openDialog({ required: true });
     this.orderRef  = genRef();
     this.renderShell();
     const verEl = document.getElementById('app-version');
-    if (verEl) verEl.textContent = APP_VERSION;
+    if (verEl) verEl.textContent = verLabel(APP_VERSION);
     this.startListening();
     this.startStockListening();
     this.startMatStockListening();
+    this.startCatalogueWatch();
     this.startConnectionStatus();
     this.startVersionCheck();
     if ('Notification' in window && Notification.permission === 'default') {
@@ -192,7 +194,7 @@ const Manager = {
     if (wrap) {
       wrap.innerHTML = outdated ? `<div class="update-banner">
           <i class="ti ti-refresh"></i>
-          <span>A newer version (${esc(latestVersion)}) is available — you're on ${esc(APP_VERSION)}.</span>
+          <span>A newer version (${esc(verLabel(latestVersion))}) is available — you're on ${esc(verLabel(APP_VERSION))}.</span>
           <button id="btn-refresh-update">Refresh</button>
         </div>` : '';
       document.getElementById('btn-refresh-update')?.addEventListener('click', () => AutoUpdate.reloadFresh(latestVersion));
@@ -286,14 +288,15 @@ const Manager = {
     this.materials    = await Data.load('./materials.csv');
     this._baseConsumables = await Data.loadConsumables('./consumables.csv');
     this.consumables  = this._baseConsumables;
-    Auth.start();
+    Auth.start(() => Auth.guardManagerPage());
     DB.onDenied = () => Auth.openDialog({ required: true });
     this.orderRef=genRef();
     this.renderShell();
-    const verEl=document.getElementById('app-version'); if(verEl) verEl.textContent=APP_VERSION;
+    const verEl=document.getElementById('app-version'); if(verEl) verEl.textContent=verLabel(APP_VERSION);
     this.startListening();
     this.startStockListening();
     this.startMatStockListening();
+    this.startCatalogueWatch();
     this.startConnectionStatus();
     this.startVersionCheck();
     if ('Notification' in window && Notification.permission === 'default') {
@@ -680,6 +683,17 @@ const Manager = {
           <div class="panel-scroll"><div class="panel-col" style="gap:20px" id="settings-body"></div></div>
         </div>
 
+        <!-- MATERIALS CATALOGUE PANEL (Settings → Materials catalogue; js/catalogue.js) -->
+        <div class="panel" id="catalogue-panel">
+          <div class="panel-header">
+            <button class="back-btn" id="btn-close-catalogue"><i class="ti ti-chevron-left"></i>Back</button>
+            <div class="panel-title">Materials catalogue</div>
+            <div class="panel-spacer"></div>
+          </div>
+          <div class="col" id="cat-head" style="padding-top:4px;padding-bottom:0;flex-shrink:0"></div>
+          <div class="panel-scroll"><div class="panel-col" id="cat-body"></div></div>
+        </div>
+
       </div>
       <div id="overlay-wrap"></div>`;
 
@@ -689,6 +703,8 @@ const Manager = {
     document.getElementById('sb-reset')           .addEventListener('click', () => this.clearFirebase());
     document.getElementById('btn-close-settings') .addEventListener('click', () => this.closePanel('settings-panel'));
     document.getElementById('btn-save-settings')  .addEventListener('click', () => this.saveSettings());
+    document.getElementById('btn-close-catalogue').addEventListener('click', () => Catalogue.close());
+    Catalogue.mount(this);
     document.getElementById('btn-close-email')    .addEventListener('click', () => this.closePanel('email-panel'));
     document.getElementById('btn-send-email')     .addEventListener('click', () => this.sendEmail());
     document.getElementById('main-tab-queue')     .addEventListener('click', () => this.setMainTab('queue'));
@@ -1662,6 +1678,25 @@ const Manager = {
       this._matStock = recs;
       if (this.mainTab === 'stocktake' && this._stocktakeView !== 'history') this._renderStActiveList();
     });
+  },
+
+  // Live materials list (Data.watch): a catalogue change re-renders the New
+  // Order and Stocktake material lists; the full document feeds the catalogue
+  // screen in Settings. A category tab that no longer exists falls back to All.
+  startCatalogueWatch() {
+    if (this._unsubCatalogue) this._unsubCatalogue();
+    this._unsubCatalogue = Data.watch(list => {
+      this.materials = list;
+      const cats = Data.categories(list);
+      if (this.activeCat && !cats.includes(this.activeCat)) { this.activeCat = null; this.activeSub = null; }
+      else if (this.activeSub && !Data.subcategories(list, this.activeCat).includes(this.activeSub)) this.activeSub = null;
+      if (this._stActiveCat && !cats.includes(this._stActiveCat)) { this._stActiveCat = null; this._stActiveSub = null; }
+      else if (this._stActiveSub && !Data.subcategories(list, this._stActiveCat).includes(this._stActiveSub)) this._stActiveSub = null;
+      const restoreFocus = captureInputFocus();
+      this.renderNoTabs(); this.renderNoList();
+      this.renderStocktakeTabs(); this._renderStActiveList();
+      restoreFocus();
+    }, doc => Catalogue.onDoc(doc));
   },
 
   renderStocktakeView() {
@@ -4816,8 +4851,9 @@ const Manager = {
       <div class="settings-section">
         <div class="settings-label">Materials catalogue</div>
         <div class="settings-card">
-          <div class="settings-row" style="flex-direction:column;align-items:flex-start;gap:6px">
-            <div class="settings-row-sub">Edit <strong>materials.csv</strong> in GitHub and commit. Both devices reload automatically.</div>
+          <div class="settings-row">
+            <div><div class="settings-row-label">Materials the workshop can order</div><div class="settings-row-sub" id="cat-settings-sub">${esc(Catalogue.summary())}</div></div>
+            <button class="btn-sm" id="btn-open-catalogue">Open</button>
           </div>
         </div>
       </div>
@@ -4874,6 +4910,7 @@ const Manager = {
       </div>`;
 
     document.getElementById('btn-clear-firebase').addEventListener('click', () => this.clearFirebase());
+    document.getElementById('btn-open-catalogue').addEventListener('click', () => Catalogue.open());
     document.getElementById('btn-enable-notif')?.addEventListener('click', async () => {
       const result = await Notification.requestPermission();
       if (result === 'granted') this._populateSettings();

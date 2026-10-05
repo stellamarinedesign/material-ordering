@@ -39,9 +39,14 @@ you use test mode):
    - one account per kiosk iPad, e.g. `consumables-ipad@stellamarine.com.au`,
      `warehouse-ipad@…`, `workshop-ipad@…` (they can be aliases of a real
      mailbox so password-reset emails arrive somewhere);
-   - each manager's own address.
+   - each manager's own address. **Manager accounts are listed in two
+     places that must match:** `MANAGER_EMAILS` in `js/auth.js` (the manager
+     page refuses any other signed-in account) and `isManager()` in
+     `firestore.rules`. Both currently hold `design@` and `production@` —
+     change them in the same commit if the real addresses differ.
 4. On each iPad, tap the **Sign in** pill and enter its account. On the PC,
-   sign in on the manager page with your own account.
+   sign in on the manager page with a manager account — a workshop account
+   is shut out of that page (it can still reach the ordering page).
 
 Sign-ins persist across app restarts (Firebase keeps a refresh token on the
 device), so this is a one-time job per device.
@@ -55,11 +60,14 @@ carries on once signed in — but it can't be used until someone types the
 account in).
 
 Then: Firestore Database → Rules → paste `firestore.rules` from this repo →
-fill in the manager email list in `isManager()` → Publish. The new rules:
+check the manager email list in `isManager()` → Publish. The new rules:
 
 - require a signed-in user for everything the app does;
 - restrict permanent deletes (order records, history records) to the manager
-  accounts listed.
+  accounts listed;
+- restrict changes to the materials catalogue (the `meta/catalog…` documents)
+  to the manager accounts. The catalogue needed no rules change to go live
+  because it lives under `meta`, which the current rules already open.
 
 App Check stays exactly as it is — it's the anti-bot layer, sign-in is the
 identity layer, and they work together.

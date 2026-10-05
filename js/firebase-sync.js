@@ -1,4 +1,4 @@
-// firebase-sync.js — v0.56
+// firebase-sync.js — v2026-10-06.1
 let _db = null, _configured = false;
 
 // Signed-in email for stamping writes (null when the device isn't signed in —
@@ -585,6 +585,107 @@ const DB = {
         items: [...bySid.values()],
         submittedAt: firebase.firestore.FieldValue.serverTimestamp(),
       }, { merge: true });
+    });
+  },
+
+  // ── MATERIALS CATALOGUE ───────────────────────────────────────────
+  // The materials list, moved out of materials.csv (manager page → Settings →
+  // Materials catalogue; see js/catalogue.js). Three documents under meta/ —
+  // a collection every device can already read and write, so the catalogue
+  // needed no rules change to go live:
+  //   meta/catalogMaterials          { items:[{ id, code, erpDesc, desc?, category, subcategory, qtyType, retired? }], nextId, rev, … }
+  //   meta/catalogMaterialsPrevious  the catalogue as it was before the last import — the one-step undo
+  //   meta/catalogErpParts           the last uploaded part list, slimmed — what "new since last import" is measured against
+  // The whole list is ONE document on purpose (as the production board keeps
+  // its parts): one read, one listener, and every change lands atomically.
+  async getCatalog() {
+    if (!this.isReady()) return null;
+    const d = await _db.collection('meta').doc('catalogMaterials').get();
+    return d.exists ? d.data() : null;
+  },
+  // callback(doc|null, fromCache). Errors are only logged — deliberately NOT
+  // routed to DB.onDenied: a device that can't read the catalogue carries on
+  // with materials.csv, it must never be thrown at a sign-in prompt for it.
+  listenCatalog(callback) {
+    if (!this.isReady()) return ()=>{};
+    return _db.collection('meta').doc('catalogMaterials').onSnapshot(
+      snap => callback(snap.exists ? snap.data() : null, snap.metadata.fromCache),
+      err  => console.warn('Catalogue listen error:', err)
+    );
+  },
+  // Every catalogue change goes through here: mutate(currentDoc|null) returns
+  // the next document (or null to leave it alone) and runs inside a transaction,
+  // so two managers editing at once can't overwrite each other's rows.
+  // opts.keepPrevious: also park the current document as the undo copy.
+  async updateCatalog(mutate, opts = {}) {
+    if (!this.isReady()) throw new Error('Firebase not initialised');
+    const ref  = _db.collection('meta').doc('catalogMaterials');
+    const prev = _db.collection('meta').doc('catalogMaterialsPrevious');
+    const now  = firebase.firestore.FieldValue.serverTimestamp();
+    return _db.runTransaction(async tx => {
+      const snap = await tx.get(ref);
+      const cur  = snap.exists ? snap.data() : null;
+      const next = mutate(cur);
+      if (!next) return null;
+      if (opts.keepPrevious && cur) tx.set(prev, { ...cur, savedAt: now, savedReason: opts.keepPrevious });
+      tx.set(ref, { ...next, rev: ((cur && cur.rev) || 0) + 1, updatedAt: now, updatedBy: _who() || opts.by || '' });
+      return next;
+    });
+  },
+  async getPreviousCatalog() {
+    if (!this.isReady()) return null;
+    const d = await _db.collection('meta').doc('catalogMaterialsPrevious').get();
+    return d.exists ? d.data() : null;
+  },
+  // Undo: swaps the catalogue with its undo copy, so the same button puts the
+  // import back. nextId only ever goes up — an id handed out by the undone
+  // import is never given to a different material.
+  async restorePreviousCatalog(by) {
+    if (!this.isReady()) throw new Error('Firebase not initialised');
+    const ref  = _db.collection('meta').doc('catalogMaterials');
+    const prev = _db.collection('meta').doc('catalogMaterialsPrevious');
+    const now  = firebase.firestore.FieldValue.serverTimestamp();
+    await _db.runTransaction(async tx => {
+      const curSnap = await tx.get(ref), prevSnap = await tx.get(prev);
+      if (!prevSnap.exists) throw new Error('Nothing to undo');
+      const cur = curSnap.exists ? curSnap.data() : null;
+      const { savedAt, savedReason, ...old } = prevSnap.data();
+      const reason = savedReason === 'undo' ? 'import' : 'undo';   // what the swap can be undone as, next time
+      tx.set(ref, {
+        ...old, hasUndo: reason,
+        nextId: Math.max(old.nextId || 1, (cur && cur.nextId) || 1),
+        rev: ((cur && cur.rev) || 0) + 1, updatedAt: now, updatedBy: _who() || by || '',
+      });
+      if (cur) tx.set(prev, { ...cur, savedAt: now, savedReason: reason });
+    });
+  },
+  async getErpParts() {
+    if (!this.isReady()) return null;
+    const d = await _db.collection('meta').doc('catalogErpParts').get();
+    return d.exists ? d.data() : null;
+  },
+  async saveErpParts(payload) {
+    if (!this.isReady()) throw new Error('Firebase not initialised');
+    await _db.collection('meta').doc('catalogErpParts').set({
+      ...payload, importedBy: _who() || payload.importedBy || '',
+      importedAt: firebase.firestore.FieldValue.serverTimestamp(),
+    });
+  },
+  // A material's stocktake count is filed under its part code (or, with no
+  // code, under its description) — so when that changes, the count moves with
+  // it. Adds onto whatever is already recorded at the new place.
+  async moveMaterialStock(oldSid, newSid) {
+    if (!this.isReady()) throw new Error('Firebase not initialised');
+    if (!oldSid || !newSid || oldSid === newSid) return;
+    const oldRef = _db.collection('material_stock').doc(oldSid);
+    const newRef = _db.collection('material_stock').doc(newSid);
+    await _db.runTransaction(async tx => {
+      const oldDoc = await tx.get(oldRef);
+      if (!oldDoc.exists) return;
+      const newDoc = await tx.get(newRef);
+      const o = oldDoc.data();
+      tx.set(newRef, newDoc.exists ? { ...o, ...newDoc.data(), qty: (newDoc.data().qty || 0) + (o.qty || 0) } : o);
+      tx.delete(oldRef);
     });
   },
 

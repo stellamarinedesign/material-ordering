@@ -1,12 +1,16 @@
-// shared.js — v0.56
+// shared.js — v2026-10-06.1
 
-const APP_VERSION = 'v0.56';
+// The build date plus that day's counter — "2026-10-06.2" is the second build
+// on 6 Oct 2026 (the production board's scheme). Set by tools/bump-version.py;
+// shown to people with a leading "v" (see verLabel).
+const APP_VERSION = '2026-10-06.1';
 
-// Numeric version comparison (handles "v0.9" vs "v0.10" correctly, unlike
-// plain string comparison). Returns true if `a` is strictly newer than `b`.
-// Both inputs expected in the form "v0.32" or "v0.32.1".
+// Numeric version comparison, part by part. Returns true if `a` is strictly
+// newer than `b`. Reads both the dated form and the "v0.56"-style numbers used
+// before the switch — any dated version is newer than any of those, and a
+// device still running the old comparison agrees (it reads the year first).
 function isVersionNewer(a, b) {
-  const parse = v => String(v||'').replace(/^v/i,'').split('.').map(n => parseInt(n,10) || 0);
+  const parse = v => String(v||'').replace(/^v/i,'').split(/[.\-]/).map(n => parseInt(n,10) || 0);
   const pa = parse(a), pb = parse(b);
   const len = Math.max(pa.length, pb.length);
   for (let i=0; i<len; i++) {
@@ -15,6 +19,7 @@ function isVersionNewer(a, b) {
   }
   return false; // equal
 }
+function verLabel(v) { return 'v' + String(v || '').replace(/^v/i, ''); }
 
 const DEFAULT_MATERIALS = [
   { id:1,  category:'Stainless Steel', subcategory:'Box Section', partCode:'SL0300', description:'100 x 50 x 3mm x 6m Box Section 316 S/S', qtyType:'Length' },
@@ -326,7 +331,74 @@ const Data = {
   _consumablesList: null,
   // Returns true if the partCode is a dummy/placeholder (SC prefix)
   isDummyCode(code) { return !code || /^SC\d*/i.test(code.trim()); },
+
+  // ── Where the materials list comes from ──────────────────────────────
+  // Once the manager has moved the list into the database (manager page →
+  // Settings → Materials catalogue) it is read from there; until then, and on
+  // a device that can't reach the catalogue and has never seen it, from
+  // materials.csv exactly as before:
+  //   1. the last catalogue this device saw — instant, and works offline
+  //   2. the catalogue, fetched (a few seconds at most, then we stop waiting
+  //      so a bad connection can never hold the page on a blank screen)
+  //   3. materials.csv → its own cache → the built-in defaults
+  // Data.watch() then keeps whichever list is showing live.
+  _source: 'csv',     // 'catalogue' once the list is coming from the database
+  _csvUrl: null,
   async load(csvUrl) {
+    this._csvUrl = csvUrl;
+    try {
+      const c = JSON.parse(localStorage.getItem('mo_cat_cache') || 'null');
+      if (Array.isArray(c) && c.length) { this._list = c; this._source = 'catalogue'; return c; }
+    } catch {}
+    if (typeof DB !== 'undefined' && DB.isReady() && DB.getCatalog) {
+      const doc = await Promise.race([
+        DB.getCatalog().catch(() => null),
+        new Promise(r => setTimeout(() => r(null), 3000)),
+      ]);
+      const list = this.fromCatalog(doc);
+      if (list) return this._useCatalog(list);
+    }
+    return this._loadCsv(csvUrl);
+  },
+  // Catalogue document → the item shape every page works with. Retired
+  // materials are left out, and a description typed over the part list's
+  // wording wins over it. Ids are permanent (never the position in the list).
+  fromCatalog(doc) {
+    if (!doc || !Array.isArray(doc.items) || !doc.items.length) return null;
+    return doc.items.filter(i => i && !i.retired).map(i => ({
+      id: i.id, partCode: i.code || '', description: i.desc || i.erpDesc || '',
+      category: i.category || 'Uncategorised', subcategory: i.subcategory || 'General', qtyType: i.qtyType || 'Each',
+      boxSize: 0, boxUnit: 'Box',
+    }));
+  },
+  _useCatalog(list) {
+    this._list = list; this._source = 'catalogue';
+    try { localStorage.setItem('mo_cat_cache', JSON.stringify(list)); } catch {}
+    return list;
+  },
+  // Live catalogue. onChange(list) fires only when the list a page is showing
+  // actually differs; onDoc(doc|null) fires on every snapshot (the manager's
+  // catalogue screen works on the full document, retired rows included).
+  watch(onChange, onDoc) {
+    if (typeof DB === 'undefined' || !DB.isReady() || !DB.listenCatalog) return () => {};
+    return DB.listenCatalog((doc, fromCache) => {
+      const list = this.fromCatalog(doc);
+      if (list) {
+        const changed = this._source !== 'catalogue' || JSON.stringify(list) !== JSON.stringify(this._list);
+        this._useCatalog(list);
+        if (changed && onChange) onChange(list);
+      } else if (!fromCache && this._source === 'catalogue') {
+        // Confirmed by the server that there is no catalogue (any more) — back
+        // to the CSV. An offline "not found" proves nothing, hence !fromCache.
+        try { localStorage.removeItem('mo_cat_cache'); } catch {}
+        this._source = 'csv';
+        this._loadCsv(this._csvUrl).then(l => { if (onChange) onChange(l); });
+      }
+      if (onDoc) onDoc(doc, fromCache);
+    });
+  },
+  async _loadCsv(csvUrl) {
+    this._source = 'csv';
     try {
       const res = await fetch(csvUrl + '?nocache=' + Date.now());
       if (!res.ok) throw new Error('HTTP ' + res.status);
@@ -383,16 +455,21 @@ const Data = {
     const iQty  = findCol('quantity type','quantity_type','quantitytype','qty type','qty_type','unit');
     const iBoxSize = findCol('box size','box_size','boxsize');
     const iBoxUnit = findCol('box unit','box_unit','boxunit');
+    // Only in a backup downloaded from the materials catalogue: the permanent
+    // id of each row (otherwise it's the row number) and whether it's retired.
+    const iId      = findCol('id');
+    const iRetired = findCol('retired');
     if (iCode < 0 || iDesc < 0) { console.error('[CSV] Missing required columns. Got:', headers); return []; }
     return lines.slice(1).map((line, i) => {
       const cols = this._splitLine(line);
       const get  = idx => (idx >= 0 && idx < cols.length) ? cols[idx].trim() : '';
       const code = get(iCode), desc = get(iDesc);
       if (!code && !desc) return null;
+      if (/^(yes|true|1)$/i.test(get(iRetired))) return null;
       const boxSizeRaw = get(iBoxSize);
       const boxSize = boxSizeRaw ? parseInt(boxSizeRaw) || 0 : 0;
       return {
-        id:i+1, partCode:code, description:desc,
+        id:parseInt(get(iId), 10) || i+1, partCode:code, description:desc,
         category:get(iCat)||'Uncategorised', subcategory:get(iSub)||'General', qtyType:get(iQty)||'Each',
         boxSize, boxUnit: get(iBoxUnit) || 'Box',
       };

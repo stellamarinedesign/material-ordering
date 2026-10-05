@@ -26,10 +26,12 @@ service cloud.firestore {
 
     function signedIn() { return request.auth != null; }
 
-    // Manager accounts — fill in the real addresses before publishing.
+    // Manager accounts — check these are the real addresses before publishing.
+    // KEEP IN STEP with MANAGER_EMAILS in js/auth.js.
     function isManager() {
       return signedIn() && request.auth.token.email in [
-        'design@stellamarine.com.au'
+        'design@stellamarine.com.au',
+        'production@stellamarine.com.au'
       ];
     }
 
@@ -62,9 +64,13 @@ service cloud.firestore {
       allow read, write: if signedIn();
     }
 
-    // App version marker, connection probe, and the consumables SC-code counter.
+    // App version marker, connection probe, the consumables SC-code counter —
+    // and the materials catalogue (documents whose id starts with "catalog":
+    // catalogMaterials, catalogMaterialsPrevious, catalogErpParts), which
+    // every device reads but only a manager account may change.
     match /meta/{docId} {
-      allow read, write: if signedIn();
+      allow read: if signedIn();
+      allow write: if signedIn() && (!docId.matches('catalog.*') || isManager());
     }
 
     // Block everything else

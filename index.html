@@ -14,8 +14,8 @@
   <link rel="icon" type="image/png" href="favicon.png">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
   <link rel="stylesheet" href="fonts/tabler-icons.min.css">
-  <link rel="stylesheet" href="css/style.css?v=v0.56">
-  <link rel="stylesheet" href="css/themes.css?v=v0.56">
+  <link rel="stylesheet" href="css/style.css?v=2026-10-06.1">
+  <link rel="stylesheet" href="css/themes.css?v=2026-10-06.1">
   <style>
     .mat-bin {
       width:30px; height:32px; display:flex; align-items:center; justify-content:center;
@@ -94,9 +94,9 @@
 <!-- APP CHECK: remove this line to disable App Check (also remove init block in firebase-sync.js) -->
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-check-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
-<script src="js/shared.js?v=v0.56"></script>
-<script src="js/firebase-sync.js?v=v0.56"></script>
-<script src="js/auth.js?v=v0.56"></script>
+<script src="js/shared.js?v=2026-10-06.1"></script>
+<script src="js/firebase-sync.js?v=2026-10-06.1"></script>
+<script src="js/auth.js?v=2026-10-06.1"></script>
 <script>
 const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker global
   activeCat:  null,
@@ -135,6 +135,7 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
     this.startConnectionStatus();
     this.startVersionCheck();
     this.startMatStockListening();
+    this.startCatalogueWatch();
   },
 
   // ── SETUP — includes device name field ──
@@ -215,6 +216,7 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
     this.startConnectionStatus();
     this.startVersionCheck();
     this.startMatStockListening();
+    this.startCatalogueWatch();
   },
 
   // ── APP SHELL ──
@@ -398,7 +400,7 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
       this._updateStBadge(); this.renderList();
     });
 
-    const _v=document.getElementById('app-version'); if(_v) _v.textContent=APP_VERSION;
+    const _v=document.getElementById('app-version'); if(_v) _v.textContent=verLabel(APP_VERSION);
     const _r=document.getElementById('order-ref'); if(_r) _r.textContent=this.orderRef;
     this.applyStocktakeModeUI();   // restore stocktake mode if it was left on
     this.renderTabs();
@@ -431,7 +433,7 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
     if (wrap) {
       wrap.innerHTML = outdated ? `<div class="update-banner">
           <i class="ti ti-refresh"></i>
-          <span>A newer version (${esc(latestVersion)}) is available — you're on ${esc(APP_VERSION)}.</span>
+          <span>A newer version (${esc(verLabel(latestVersion))}) is available — you're on ${esc(verLabel(APP_VERSION))}.</span>
           <button id="btn-refresh-update">Refresh</button>
         </div>` : '';
       document.getElementById('btn-refresh-update')?.addEventListener('click', () => AutoUpdate.reloadFresh(latestVersion));
@@ -744,6 +746,21 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
     this._unsubMatStock = DB.listenMaterialStock(recs => {
       this._matStock = recs;
       if (this._stocktakeMode) this.renderList();  // refresh "recorded" figures live
+    });
+  },
+
+  // Live materials list (Data.watch): when the manager changes the catalogue
+  // the tabs and list follow. Ids are permanent, so the cart is untouched; a
+  // category tab that no longer exists falls back to All.
+  startCatalogueWatch() {
+    if (this._unsubCatalogue) this._unsubCatalogue();
+    this._unsubCatalogue = Data.watch(list => {
+      this.materials = list;
+      if (this.activeCat && !Data.categories(list).includes(this.activeCat)) { this.activeCat = null; this.activeSub = null; }
+      else if (this.activeSub && !Data.subcategories(list, this.activeCat).includes(this.activeSub)) this.activeSub = null;
+      const restoreFocus = captureInputFocus();
+      this.renderTabs(); this.renderList();
+      restoreFocus();
     });
   },
 

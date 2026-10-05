@@ -1,4 +1,4 @@
-// auth.js — v0.56
+// auth.js — v2026-10-06.1
 //
 // Firebase Authentication (email + password) for every page, added as a layer
 // ON TOP of the existing pasted-config setup so nothing already running is
@@ -24,6 +24,15 @@
 // there). Kiosk iPads get one account each; managers use personal accounts.
 // Persistence is Firebase's default LOCAL, so a sign-in survives reloads and
 // home-screen app restarts until the account is disabled or signed out.
+//
+// Manager accounts: the only ones allowed on the manager page, and — once the
+// phase-2 rules are published — the only ones that can change the materials
+// catalogue or permanently delete records. KEEP IN STEP with isManager() in
+// firestore.rules. A device signed in with any other account is shut out of
+// the manager page (Auth.guardManagerPage); one that isn't signed in at all
+// still gets in until sign-in is made required at rollout.
+const MANAGER_EMAILS = ['design@stellamarine.com.au', 'production@stellamarine.com.au'];
+
 const Auth = {
   _user: null,
   _started: false,
@@ -51,6 +60,26 @@ const Auth = {
   user()       { return this._user; },
   email()      { return this._user ? (this._user.email || '') : ''; },
   isSignedIn() { return !!this._user; },
+  isManager()  { return !!this._user && MANAGER_EMAILS.includes(String(this._user.email || '').trim().toLowerCase()); },
+
+  // Manager page only. Signed in as a workshop account → a full-screen block
+  // with two ways out: sign in with a manager account, or go to the ordering
+  // page. Pass it as Auth.start's onChange so it follows every sign-in/out.
+  guardManagerPage() {
+    const blocked = this.isSignedIn() && !this.isManager();
+    let el = document.getElementById('mgr-block');
+    if (!blocked) { if (el) el.remove(); return; }
+    if (!el) { el = document.createElement('div'); el.id = 'mgr-block'; document.body.appendChild(el); }
+    el.innerHTML = `
+      <div class="success-card" style="max-width:380px">
+        <div class="success-icon blue"><i class="ti ti-lock"></i></div>
+        <h3>Manager page</h3>
+        <p>This device is signed in as <strong>${esc(this.email())}</strong>, which can't open the manager page.</p>
+        <button class="btn btn-primary" style="width:100%" data-mgr-signin><i class="ti ti-login"></i> Sign in with a manager account</button>
+        <a class="btn btn-outline" style="width:100%;margin-top:8px;display:flex;justify-content:center" href="index.html">Go to the ordering page</a>
+      </div>`;
+    el.querySelector('[data-mgr-signin]').addEventListener('click', () => this.openDialog());
+  },
 
   async signIn(email, password) {
     await firebase.auth().signInWithEmailAndPassword(String(email || '').trim(), String(password || ''));
