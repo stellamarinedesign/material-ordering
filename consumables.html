@@ -13,8 +13,8 @@
   <link rel="icon" type="image/png" href="favicon.png">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
   <link rel="stylesheet" href="fonts/tabler-icons.min.css">
-  <link rel="stylesheet" href="css/style.css?v=2026-10-06.1">
-  <link rel="stylesheet" href="css/themes.css?v=2026-10-06.1">
+  <link rel="stylesheet" href="css/style.css?v=2026-10-22.1">
+  <link rel="stylesheet" href="css/themes.css?v=2026-10-22.1">
   <style>
     .cons-stock-badge {
       font-size: 11px; font-family: var(--mono); padding: 2px 8px;
@@ -119,9 +119,9 @@
 <!-- APP CHECK: remove this line to disable App Check (also remove init block in firebase-sync.js) -->
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-check-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
-<script src="js/shared.js?v=2026-10-06.1"></script>
-<script src="js/firebase-sync.js?v=2026-10-06.1"></script>
-<script src="js/auth.js?v=2026-10-06.1"></script>
+<script src="js/shared.js?v=2026-10-22.1"></script>
+<script src="js/firebase-sync.js?v=2026-10-22.1"></script>
+<script src="js/auth.js?v=2026-10-22.1"></script>
 <script>
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.getRegistrations().then(rs => rs.forEach(r => r.unregister()));
@@ -151,8 +151,9 @@ const ConsApp = {
     if (!ok) { this.showSetup('Could not connect. Check your Firebase config.'); return; }
     this._baseConsumables = await Data.loadConsumables('./consumables.csv');
     this.consumables = this._baseConsumables;
+    Auth.deviceName = ConsumablesDeviceName;
     Auth.start();
-    DB.onDenied = () => Auth.openDialog({ required: true });
+    DB.onDenied = () => Auth.denied();
     this.renderShell();
     this.startStockListening();
     this.startConnectionStatus();
@@ -213,8 +214,9 @@ const ConsApp = {
     FirebaseConfig.save(cfg);
     this._baseConsumables = await Data.loadConsumables('./consumables.csv');
     this.consumables = this._baseConsumables;
+    Auth.deviceName = ConsumablesDeviceName;
     Auth.start();
-    DB.onDenied = () => Auth.openDialog({ required: true });
+    DB.onDenied = () => Auth.denied();
     this.renderShell();
     this.startStockListening();
     this.startConnectionStatus();
@@ -696,7 +698,7 @@ const ConsApp = {
           </div>
         </div>
       </div>
-      <div class="settings-section">
+      <div class="settings-section" data-master-only ${Auth.isMaster() ? "" : "hidden"}>
         <div class="settings-label">Database</div>
         <div class="settings-card">
           <div class="settings-row">

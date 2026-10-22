@@ -55,11 +55,11 @@ def edit(path, fn):
 # js/shared.js — the single source of truth (no "v": it's added for display)
 edit("js/shared.js", lambda s: re.subn(rf"(const APP_VERSION = ')({VER})(')", rf"\g<1>{new}\g<3>", s))
 # module headers
-for js in ["js/shared.js", "js/firebase-sync.js", "js/intake.js", "js/auth.js", "js/catalogue.js"]:
+for js in ["js/shared.js", "js/firebase-sync.js", "js/intake.js", "js/auth.js", "js/catalogue.js", "js/accounts.js"]:
     name = os.path.basename(js)
     edit(js, lambda s, name=name: re.subn(rf"^(// {re.escape(name)} — ){VER}", rf"\g<1>v{new}", s, count=1, flags=re.M))
 # cache-busting stamps on local assets
-ASSETS = r"(css/style\.css|css/themes\.css|js/shared\.js|js/firebase-sync\.js|js/auth\.js|js/intake\.js|js/catalogue\.js)"
+ASSETS = r"(css/style\.css|css/themes\.css|js/shared\.js|js/firebase-sync\.js|js/auth\.js|js/intake\.js|js/catalogue\.js|js/accounts\.js)"
 for page in ["index.html", "manager.html", "consumables.html", "warehouse.html"]:
     edit(page, lambda s: re.subn(rf'((?:href|src)="{ASSETS})(?:\?v={VER})?"', rf'\g<1>?v={new}"', s))
 print(f"bumped {current} → {new}  (shown as v{new})")

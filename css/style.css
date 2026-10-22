@@ -1128,8 +1128,43 @@ button.bc-chip { font-family: var(--mono); line-height: inherit; }
 }
 .cat-apply span { flex: 1; font-size: 12px; color: var(--text2); }
 
-/* manager page shut to a non-manager account (Auth.guardManagerPage) */
-#mgr-block {
+/* ═══ ACCOUNTS & ACCESS (js/auth.js, js/accounts.js) ═══ */
+/* Full-screen block: signed in but not listed, or not a manager on the manager page */
+#auth-block {
   position: fixed; inset: 0; z-index: 95; background: var(--bg);
   display: flex; align-items: center; justify-content: center; padding: 20px;
 }
+#auth-block .success-card p { margin-bottom: 16px; }
+[data-master-only][hidden] { display: none !important; }
+.master-chip {
+  display: inline-block; margin-left: 6px; padding: 1px 7px; border-radius: 10px; vertical-align: 1px;
+  font-size: 10px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; font-family: var(--mono);
+  background: var(--chip-bg); color: var(--chip-text); border: 1px solid var(--chip-line);
+}
+.settings-acts { display: flex; gap: 6px; flex-shrink: 0; }
+.acct-table { display: flex; flex-direction: column; gap: 6px; }
+.acct-row {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg);
+}
+.acct-email { flex: 1 1 200px; min-width: 0; font-size: 13px; color: var(--text); word-break: break-all; }
+.acct-role, .acct-add select {
+  border: 1px solid var(--border); background: var(--surface); color: var(--text);
+  border-radius: var(--radius); padding: 5px 8px; font-size: 12px; outline: none;
+}
+.acct-role:focus, .acct-add select:focus, .acct-add input:focus { border-color: var(--focus); }
+.acct-master { display: flex; align-items: center; gap: 5px; font-size: 12px; color: var(--text2); white-space: nowrap; }
+.acct-master input { width: 16px; height: 16px; accent-color: var(--accent); }
+.acct-add { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 10px; }
+.acct-add input {
+  flex: 1 1 220px; border: 1px solid var(--border); background: var(--bg); color: var(--text);
+  border-radius: var(--radius); padding: 7px 10px; font-size: 13px; outline: none; font-family: var(--font);
+}
+.acct-fresh { margin-top: 10px; padding: 10px 12px; border-radius: var(--radius); background: var(--note-bg); border: 1px solid var(--border2); }
+.acct-fresh-head { font-size: 13px; font-weight: 600; color: var(--text); margin-bottom: 4px; }
+.acct-fresh-line { font-size: 13px; color: var(--text); display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 4px 0 6px; }
+.acct-fresh-line code { font-family: var(--mono); font-size: 15px; letter-spacing: 0.04em; background: var(--bg); padding: 3px 8px; border-radius: 6px; border: 1px solid var(--border); user-select: all; }
+.acct-log { padding: 6px 14px; }
+.acct-log-row { display: grid; grid-template-columns: 92px 96px 1fr; gap: 10px; font-size: 12px; color: var(--text2); padding: 5px 0; border-bottom: 1px solid var(--border); }
+.acct-log-row:last-child { border-bottom: none; }
+.acct-log-row span:first-child, .acct-log-row span:nth-child(2) { font-family: var(--mono); color: var(--text3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

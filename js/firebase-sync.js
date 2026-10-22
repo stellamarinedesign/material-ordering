@@ -1,5 +1,5 @@
-// firebase-sync.js — v2026-10-06.1
-let _db = null, _configured = false;
+// firebase-sync.js — v2026-10-22.1
+let _db = null, _configured = false, _config = null, _second = null;
 
 // Signed-in email for stamping writes (null when the device isn't signed in —
 // phase 1 of the auth rollout, see js/auth.js). Guarded so the module still
@@ -37,6 +37,7 @@ const DB = {
   async init(config) {
     if (_configured) return true;
     try {
+      _config = config;
       firebase.initializeApp(config);
 
       // ── APP CHECK INIT (remove this block to disable App Check) ──
@@ -59,6 +60,54 @@ const DB = {
     catch(e) { console.error('Firebase init failed:', e); return false; }
   },
   isReady() { return _configured && _db !== null; },
+
+  // ── ACCOUNTS & ROLES ──────────────────────────────────────────────
+  // settings/access: { managers, engineers, floor, masters } — the one
+  // document that says who is what (model in js/auth.js). The rules read it
+  // too, so an unlisted account's listener here is refused: callback(null, err).
+  async loadAccess() {
+    if (!this.isReady()) return null;
+    const d = await _db.collection('settings').doc('access').get();
+    return d.exists ? d.data() : null;
+  },
+  listenAccess(callback) {
+    if (!this.isReady()) return ()=>{};
+    return _db.collection('settings').doc('access').onSnapshot(
+      snap => callback(snap.exists ? snap.data() : null, null),
+      err  => { console.warn('Access listen error:', err); callback(null, err); }
+    );
+  },
+  // All four lists. The rules let only a master write this — or anyone
+  // signed in the first time, when it doesn't exist yet.
+  async saveAccess({ managers, engineers, floor, masters }) {
+    if (!this.isReady()) throw new Error('Firebase not initialised');
+    await _db.collection('settings').doc('access').set({
+      managers: managers || [], engineers: engineers || [], floor: floor || [], masters: masters || [],
+      updatedAt: new Date().toISOString(), updatedBy: _who() || '',
+    }, { merge: true });
+  },
+  // Who changed the accounts, append-only. A failed log write is a warning,
+  // never a lost change. Newest first (single-field orderBy — no index).
+  async logActivity(entry) {
+    if (!this.isReady()) throw new Error('Firebase not initialised');
+    await _db.collection('activity').add(entry);
+  },
+  async listActivity(limitN) {
+    if (!this.isReady()) return [];
+    const snap = await _db.collection('activity').orderBy('at', 'desc').limit(limitN || 20).get();
+    return snap.docs.map(d => ({ _id: d.id, ...d.data() }));
+  },
+  // Make a Firebase user from the app, as a master. createUserWithEmailAndPassword
+  // signs the new user in on whichever app it is called on, so it's done on a
+  // SECOND app (same config, named 'accounts') and signed out again at once —
+  // the master's own session is untouched. Needs "Enable create (sign-up)" on
+  // in the console; the rules make sign-up harmless (unlisted reads nothing).
+  async createAccount(email, password) {
+    if (!this.isReady()) throw new Error('Firebase not initialised');
+    if (!_second) _second = firebase.apps.find(a => a.name === 'accounts') || firebase.initializeApp(_config, 'accounts');
+    await _second.auth().createUserWithEmailAndPassword(String(email || '').trim().toLowerCase(), password);
+    await _second.auth().signOut();
+  },
 
   // ── ORDERS ────────────────────────────────────────────────────────
   async submitOrder(order) {
