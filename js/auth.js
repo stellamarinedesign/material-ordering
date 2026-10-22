@@ -1,4 +1,4 @@
-// auth.js — v2026-10-22.2
+// auth.js — v2026-10-22.3
 //
 // Sign-in (Firebase email + password, compat SDK) and WHO IS WHAT, on every
 // page. The same model as the production board:
@@ -129,8 +129,13 @@ const Auth = {
     if (this._started || typeof firebase === 'undefined' || typeof firebase.auth !== 'function') return;
     this._started = true;
     this._onChange = onChange || null;
+    // Nothing shows until a sign-in is known: an opaque curtain goes up now,
+    // comes down the moment Firebase reports a user, or becomes the sign-in
+    // dialog if there is none. No page content is ever glimpsed signed out.
+    this._gate(`<div class="success-card auth-card" style="max-width:380px"><div class="auth-logo"></div></div>`);
     firebase.auth().onAuthStateChanged(user => {
       this._user = user || null;
+      if (user) this._closeGate();
       this._stopAccess();
       this._access = null;
       this._accessState = user ? 'loading' : 'none';
@@ -189,7 +194,7 @@ const Auth = {
   // A listener was refused (DB.onDenied), or this account isn't on the list:
   // either way the device needs a listed account, so the sign-in dialog, with
   // no way past it. An unlisted account is simply not one for this app.
-  denied() { this.openDialog({ required: true }); },
+  denied() { this.openDialog(); },
 
   _block() {
     this._blocked = true;
@@ -203,6 +208,14 @@ const Auth = {
       </div>`;
   },
   _clearBlock() { this._blocked = false; document.getElementById('auth-block')?.remove(); },
+  // The full-screen, opaque layer the curtain and the sign-in dialog live in.
+  _gate(html) {
+    let g = document.getElementById('auth-gate');
+    if (!g) { g = document.createElement('div'); g.id = 'auth-gate'; document.body.appendChild(g); }
+    g.innerHTML = html;
+    return g;
+  },
+  _closeGate() { document.getElementById('auth-gate')?.remove(); },
   _reload() { location.reload(); },
 
   // First-time setup: write settings/access with this account as the only
@@ -281,18 +294,13 @@ const Auth = {
   },
 
   // ── Sign-in dialog ────────────────────────────────────────────────────
-  // Optional: a dismissable overlay. Required (sign-in needed and this device
-  // has none): the same card without a way to dismiss it. Either way a
-  // sign-in from a locked state reloads, so every listener re-attaches with
-  // the new credentials.
-  openDialog(opts = {}) {
-    const required = !!opts.required;
-    let ow = document.getElementById('overlay-wrap');
-    if (!ow) { ow = document.createElement('div'); ow.id = 'overlay-wrap'; document.body.appendChild(ow); }
+  // Lives in the opaque gate, so nothing of the page shows behind it, and has
+  // no way past it. A successful sign-in reloads, so every listener attaches
+  // with the new credentials.
+  openDialog() {
     if (document.getElementById('auth-card')) return;   // already open
     const dn = this.deviceName;
-    ow.innerHTML = `
-      <div class="success-overlay">
+    this._gate(`
         <div class="success-card auth-card" id="auth-card" style="max-width:380px;text-align:left">
           <div class="auth-logo"></div>
           <h3 style="text-align:center">Sign in</h3>
@@ -302,11 +310,8 @@ const Auth = {
           <div class="setup-field"><label>Password</label><input id="auth-pass" type="password" autocomplete="current-password"></div>
           <div class="auth-err" id="auth-err"></div>
           <button class="btn btn-primary" id="auth-submit" style="width:100%;margin-top:4px"><i class="ti ti-login"></i> Sign in</button>
-          ${required ? '' : `<button class="btn btn-outline" id="auth-later" style="width:100%;margin-top:8px">Not now</button>`}
-        </div>
-      </div>`;
+        </div>`);
     const err = msg => { document.getElementById('auth-err').textContent = msg || ''; };
-    const reloadAfter = required || this._blocked;
     const submit = async () => {
       const email  = document.getElementById('auth-email').value.trim();
       const pass   = document.getElementById('auth-pass').value;
@@ -317,15 +322,13 @@ const Auth = {
       try {
         await this.signIn(email, pass);
         if (dn) dn.save(device);
-        ow.innerHTML = '';
-        if (reloadAfter) this._reload();
+        this._reload();
       } catch (e) { err(this._friendly(e)); btn.disabled = false; }
     };
     document.getElementById('auth-submit').addEventListener('click', submit);
     document.getElementById('auth-pass').addEventListener('keydown', e => { if (e.key === 'Enter') submit(); });
     document.getElementById('auth-email').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('auth-pass').focus(); });
-    document.getElementById('auth-later')?.addEventListener('click', () => { ow.innerHTML = ''; });
-    document.getElementById('auth-email').focus();
+    (dn && !dn.get() ? document.getElementById('auth-device') : document.getElementById('auth-email')).focus();
   },
 
   // ── Change password dialog ────────────────────────────────────────────

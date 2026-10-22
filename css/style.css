@@ -1135,6 +1135,12 @@ button.bc-chip { font-family: var(--mono); line-height: inherit; }
   display: flex; align-items: center; justify-content: center; padding: 20px;
 }
 #auth-block .success-card p { margin-bottom: 16px; }
+/* Opaque gate: the start-up curtain and the sign-in dialog. Nothing shows through. */
+#auth-gate {
+  position: fixed; inset: 0; z-index: 100; background: var(--ground);
+  display: flex; align-items: center; justify-content: center; padding: 20px;
+}
+#auth-gate .auth-logo { height: 52px; margin: 6px 0 14px; }
 [data-master-only][hidden] { display: none !important; }
 .master-chip {
   display: inline-block; margin-left: 6px; padding: 1px 7px; border-radius: 10px; vertical-align: 1px;

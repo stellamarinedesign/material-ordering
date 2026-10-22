@@ -10,8 +10,8 @@
   <link rel="icon" type="image/png" href="favicon.png">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
   <link rel="stylesheet" href="fonts/tabler-icons.min.css">
-  <link rel="stylesheet" href="css/style.css?v=2026-10-22.2">
-  <link rel="stylesheet" href="css/themes.css?v=2026-10-22.2">
+  <link rel="stylesheet" href="css/style.css?v=2026-10-22.3">
+  <link rel="stylesheet" href="css/themes.css?v=2026-10-22.3">
 </head>
 <body>
 <div id="root"></div>
@@ -20,12 +20,12 @@
 <!-- APP CHECK: remove this line to disable App Check (also remove init block in firebase-sync.js) -->
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-check-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
-<script src="js/shared.js?v=2026-10-22.2"></script>
-<script src="js/firebase-sync.js?v=2026-10-22.2"></script>
-<script src="js/auth.js?v=2026-10-22.2"></script>
-<script src="js/intake.js?v=2026-10-22.2"></script>
-<script src="js/catalogue.js?v=2026-10-22.2"></script>
-<script src="js/accounts.js?v=2026-10-22.2"></script>
+<script src="js/shared.js?v=2026-10-22.3"></script>
+<script src="js/firebase-sync.js?v=2026-10-22.3"></script>
+<script src="js/auth.js?v=2026-10-22.3"></script>
+<script src="js/intake.js?v=2026-10-22.3"></script>
+<script src="js/catalogue.js?v=2026-10-22.3"></script>
+<script src="js/accounts.js?v=2026-10-22.3"></script>
 <!-- Vendored xlsx-js-style (SheetJS fork with cell styling) — stocktake Excel exports -->
 <script src="js/xlsx-style.min.js"></script>
 <!-- Vendored ExcelJS — used only for the consumables export, which embeds drawn
@@ -35,6 +35,13 @@
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.getRegistrations().then(rs => rs.forEach(r => r.unregister()));
 }
+
+// This PC's label — the "Manager name" in Settings — asked for at sign-in like
+// the iPads' device names, and shown in the header pill.
+const ManagerDeviceName = {
+  get()  { return (Settings.get().managerName || '').trim(); },
+  save(v) { Settings.save({ managerName: String(v || '').trim() }); const el = document.getElementById('role-pill'); if (el) el.textContent = this.get() || 'Manager'; },
+};
 
 const Manager = {
   orders:            [],
@@ -153,6 +160,7 @@ const Manager = {
     this.materials    = await Data.load('./materials.csv');
     this._baseConsumables = await Data.loadConsumables('./consumables.csv');
     this.consumables  = this._baseConsumables;
+    Auth.deviceName = ManagerDeviceName;
     Auth.start(() => Auth.guardManagerPage());
     DB.onDenied = () => Auth.denied();
     this.orderRef  = genRef();
@@ -263,7 +271,7 @@ const Manager = {
               <div class="header-ref"><span class="live-dot" id="live-dot"></span><span id="live-label">Live</span> &nbsp;·&nbsp; <span id="app-version" style="opacity:0.6;font-family:var(--mono)"></span></div>
             </div>
             <div class="header-actions">
-              <span class="role-pill">Production Manager</span>
+              <span class="role-pill" id="role-pill">${esc(ManagerDeviceName.get() || 'Manager')}</span>
               <span id="auth-pill"></span>
               <button class="icon-btn" id="btn-settings" title="Settings"><i class="ti ti-settings"></i></button>
             </div>
@@ -4869,6 +4877,8 @@ const Manager = {
     const naturalSort     = document.getElementById('s-natural-sort')?.checked ?? true;
     const unitAwareSearch = document.getElementById('s-unit-search')?.checked ?? true;
     const fuzzySearch     = document.getElementById('s-fuzzy-search')?.checked ?? true;
+    const pill = document.getElementById('role-pill');
+    if (pill) pill.textContent = document.getElementById('s-manager-name')?.value.trim() || 'Manager';
     Settings.save({
       managerName:            document.getElementById('s-manager-name')?.value.trim(),
       supplierEmail:          document.getElementById('s-supplier')?.value.trim(),
