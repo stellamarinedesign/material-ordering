@@ -14,8 +14,8 @@
   <link rel="icon" type="image/png" href="favicon.png">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
   <link rel="stylesheet" href="fonts/tabler-icons.min.css">
-  <link rel="stylesheet" href="css/style.css?v=2026-10-22.1">
-  <link rel="stylesheet" href="css/themes.css?v=2026-10-22.1">
+  <link rel="stylesheet" href="css/style.css?v=2026-10-22.2">
+  <link rel="stylesheet" href="css/themes.css?v=2026-10-22.2">
   <style>
     .mat-bin {
       width:30px; height:32px; display:flex; align-items:center; justify-content:center;
@@ -94,9 +94,9 @@
 <!-- APP CHECK: remove this line to disable App Check (also remove init block in firebase-sync.js) -->
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-check-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
-<script src="js/shared.js?v=2026-10-22.1"></script>
-<script src="js/firebase-sync.js?v=2026-10-22.1"></script>
-<script src="js/auth.js?v=2026-10-22.1"></script>
+<script src="js/shared.js?v=2026-10-22.2"></script>
+<script src="js/firebase-sync.js?v=2026-10-22.2"></script>
+<script src="js/auth.js?v=2026-10-22.2"></script>
 <script>
 const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker global
   activeCat:  null,
@@ -124,10 +124,9 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
       const regs = await navigator.serviceWorker.getRegistrations();
       for (const r of regs) await r.unregister();
     }
-    const cfg = FirebaseConfig.get();
-    if (!cfg || !DeviceName.isSet()) { this.showSetup(); return; }
-    const ok = await DB.init(cfg);
-    if (!ok) { this.showSetup('Could not connect. Check your Firebase config.'); return; }
+    FirebaseConfig.forget();
+    const ok = await DB.init(FirebaseConfig.get());
+    if (!ok) { this.showSetup('Could not connect to the database.'); return; }
     this.materials = await Data.load('./materials.csv');
     Auth.deviceName = DeviceName;
     Auth.start();
@@ -139,86 +138,15 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
     this.startCatalogueWatch();
   },
 
-  // ── SETUP — includes device name field ──
+  // Firebase itself could not be reached (no network at first load, the SDK
+  // blocked): a plain card and a Reload. The config is in the code (shared.js).
   showSetup(err) {
-    const isTest = FirebaseConfig.isTestMode();
     document.getElementById('root').innerHTML = `
-      <div class="setup-screen">
-        <div class="setup-card">
-          <h2><i class="ti ti-flame" style="color:#ea580c;vertical-align:-2px"></i> ${isTest ? 'Test Mode Setup' : 'Device Setup'}</h2>
-          <p>${isTest ? 'Enter the <strong>test</strong> Firebase config. Saved separately — production config is unchanged.' : 'Enter a name for this device and your Firebase project config. This only needs to be done once.'}</p>
-          ${isTest ? `<div style="background:var(--amber-bg);color:var(--amber-text);border-radius:var(--radius);padding:10px 12px;font-size:13px;margin-bottom:12px"><i class="ti ti-flask"></i> Test mode is active</div>` : ''}
-          ${err ? `<div style="background:var(--red-bg);color:var(--red-text);border-radius:var(--radius);padding:10px 12px;font-size:13px;margin-bottom:12px">${esc(err)}</div>` : ''}
-
-          <div style="background:var(--bg2);border-radius:var(--radius);padding:12px;margin-bottom:16px">
-            <div style="font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:0.06em;
-              color:var(--text3);font-family:var(--mono);margin-bottom:10px">This Device</div>
-            <div class="setup-field" style="margin-bottom:0">
-              <label>Device Name</label>
-              <input id="cfg-device" autocomplete="off" placeholder="e.g. Workshop iPad, Bay 2 Tablet"
-                value="${esc(DeviceName.get())}">
-            </div>
-
-          </div>
-
-          <div style="font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:0.06em;
-            color:var(--text3);font-family:var(--mono);margin-bottom:10px">Firebase Connection</div>
-          <div class="setup-field">
-            <label>Paste Firebase config</label>
-            <textarea id="cfg-paste" class="setup-paste-area" placeholder="apiKey|projectId|appId"></textarea>
-          </div>
-          <div class="setup-divider">or enter manually</div>
-          <div class="setup-field"><label>API Key</label><input id="cfg-apiKey" autocomplete="off" placeholder="AIzaSy..."></div>
-          <div class="setup-field"><label>Project ID</label><input id="cfg-projectId" autocomplete="off" placeholder="my-project-id"></div>
-          <div class="setup-field"><label>App ID</label><input id="cfg-appId" autocomplete="off" placeholder="1:123456:web:abc..."></div>
-          <button id="btn-connect" class="btn btn-primary" style="margin-top:8px">
-            <i class="ti ti-plug"></i> Connect
-          </button>
-          ${isTest ? `<button id="btn-cancel-test" class="btn btn-outline" style="margin-top:8px"><i class="ti ti-arrow-left"></i> Cancel — back to production</button>` : ''}
-          <div class="setup-note" style="margin-top:14px">Enter the config string provided by your administrator.</div>
-        </div>
-      </div>`;
-    document.getElementById('cfg-paste').addEventListener('input', () => {
-      const p = parseFirebaseConfig(document.getElementById('cfg-paste').value);
-      if (p.apiKey)    document.getElementById('cfg-apiKey').value    = p.apiKey;
-      if (p.projectId) document.getElementById('cfg-projectId').value = p.projectId;
-      if (p.appId)     document.getElementById('cfg-appId').value     = p.appId;
-    });
-    document.getElementById('btn-connect').addEventListener('click', () => this.saveConfig());
-    document.getElementById('btn-cancel-test')?.addEventListener('click', () => { FirebaseConfig.setTestMode(false); location.reload(); });
-  },
-
-  async saveConfig() {
-    const paste = document.getElementById('cfg-paste')?.value || '';
-    if (paste.trim()) {
-      const p = parseFirebaseConfig(paste);
-      if (p.apiKey)    document.getElementById('cfg-apiKey').value    = p.apiKey;
-      if (p.projectId) document.getElementById('cfg-projectId').value = p.projectId;
-      if (p.appId)     document.getElementById('cfg-appId').value     = p.appId;
-    }
-    const deviceName = document.getElementById('cfg-device').value.trim();
-    const apiKey     = document.getElementById('cfg-apiKey').value.trim();
-    const projectId  = document.getElementById('cfg-projectId').value.trim();
-    const appId      = document.getElementById('cfg-appId').value.trim();
-    if (!deviceName) { alert('Please enter a device name.'); return; }
-    if (!apiKey || !projectId || !appId) { alert('Please fill in all Firebase fields.'); return; }
-    const cfg = { apiKey, projectId, appId,
-      authDomain:`${projectId}.firebaseapp.com`,
-      storageBucket:`${projectId}.appspot.com`,
-      messagingSenderId:'000000000000' };
-    const ok = await DB.init(cfg);
-    if (!ok) { this.showSetup('Connection failed. Double-check your Firebase config values.'); return; }
-    DeviceName.save(deviceName);
-    FirebaseConfig.save(cfg);
-    this.materials = await Data.load('./materials.csv');
-    Auth.deviceName = DeviceName;
-    Auth.start();
-    DB.onDenied = () => Auth.denied();
-    this.renderApp();
-    this.startConnectionStatus();
-    this.startVersionCheck();
-    this.startMatStockListening();
-    this.startCatalogueWatch();
+      <div class="setup-screen"><div class="setup-card" style="text-align:center">
+        <div class="auth-logo"></div>
+        <p style="margin-bottom:16px">${esc(err || 'Could not connect.')}</p>
+        <button class="btn btn-primary" style="width:100%" onclick="location.reload()"><i class="ti ti-refresh"></i> Reload</button>
+      </div></div>`;
   },
 
   // ── APP SHELL ──
@@ -585,6 +513,15 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
     const el = document.getElementById('settings-body'); if (!el) return;
     const isTest = FirebaseConfig.isTestMode();
     el.innerHTML = `
+      <div class="settings-section">
+        <div class="settings-label">Device</div>
+        <div class="settings-card">
+          <div class="settings-row">
+            <div><div class="settings-row-label">Device name</div></div>
+            <input type="text" id="s-device-name" autocomplete="off" value="${esc(DeviceName.get())}" style="max-width:220px">
+          </div>
+        </div>
+      </div>
       ${Auth.settingsSection()}
       <div class="settings-section">
         <div class="settings-label">Appearance</div>
@@ -625,6 +562,7 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
           </div>
         </div>
       </div>`;
+    document.getElementById('s-device-name').addEventListener('change', e => { const v = e.target.value.trim(); if (v) { DeviceName.save(v);  } else e.target.value = DeviceName.get(); });
     document.getElementById('btn-toggle-test-mode').addEventListener('click', () => {
       const on = FirebaseConfig.isTestMode();
       FirebaseConfig.setTestMode(!on);

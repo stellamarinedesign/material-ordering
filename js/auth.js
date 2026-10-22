@@ -1,4 +1,4 @@
-// auth.js — v2026-10-22.1
+// auth.js — v2026-10-22.2
 //
 // Sign-in (Firebase email + password, compat SDK) and WHO IS WHAT, on every
 // page. The same model as the production board:
@@ -243,10 +243,7 @@ const Auth = {
   // ── DOM slots ─────────────────────────────────────────────────────────
   // Pages drop `<span id="auth-pill"></span>` in their header actions and the
   // Settings panels render `Auth.settingsSection()`; both are refreshed here.
-  pillHtml() {
-    if (this._user) return '';   // signed in: quiet — the account lives in Settings
-    return `<button class="auth-pill" data-auth-signin title="Sign in on this device"><i class="ti ti-user-exclamation"></i> Sign in</button>`;
-  },
+  pillHtml() { return ''; },   // kept for the header slots; sign-in is a dialog now, never optional
   settingsSection() {
     let body;
     if (!this._user) {
@@ -276,7 +273,7 @@ const Auth = {
     if (pill) pill.innerHTML = this.pillHtml();
     const acct = document.getElementById('auth-account');
     if (acct) acct.outerHTML = this.settingsSection();
-    if (!this._user) this._clearBlock();
+    if (!this._user) { this._clearBlock(); this.denied(); }      // the rules need a sign-in for everything: ask at once
     else if (this._accessState === 'ready' && !this.isListed()) this.denied();
     // Anything a master alone should see (the test-mode switch in Settings).
     document.querySelectorAll('[data-master-only]').forEach(el => { el.hidden = !this.isMaster(); });

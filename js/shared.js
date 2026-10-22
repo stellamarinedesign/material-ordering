@@ -1,9 +1,9 @@
-// shared.js — v2026-10-22.1
+// shared.js — v2026-10-22.2
 
 // The build date plus that day's counter — "2026-10-06.2" is the second build
 // on 6 Oct 2026 (the production board's scheme). Set by tools/bump-version.py;
 // shown to people with a leading "v" (see verLabel).
-const APP_VERSION = '2026-10-22.1';
+const APP_VERSION = '2026-10-22.2';
 
 // Numeric version comparison, part by part. Returns true if `a` is strictly
 // newer than `b`. Reads both the dated form and the "v0.56"-style numbers used
@@ -849,17 +849,39 @@ const WarehouseDeviceName = {
   isSet()    { return !!this.get(); },
 };
 
+// ── Firebase projects ────────────────────────────────────────────────────
+// PUBLIC IDENTIFIERS, not secrets — every browser needs them to talk to
+// Firebase, so they live here, as the production board's do, and a fresh
+// device needs only a sign-in. What protects the data: Firebase Auth plus
+// the Firestore rules (a LISTED account for every read, see js/auth.js) and
+// App Check; the two browser keys are also restricted in Google Cloud to this
+// site's origin and to the APIs the app calls. GitHub secret scanning flags
+// any "AIzaSy…" string — a Firebase web key is public by design
+// (firebase.google.com/docs/projects/api-keys): mark the alert a false
+// positive, never rotate the key.
+const FIREBASE_PROJECTS = {
+  production: {
+    apiKey: 'AIzaSyBuh_oL3dUQ3qCU8qQQL3e7hBKfGhYdBds',
+    authDomain: 'material-ordering-41851.firebaseapp.com',
+    projectId: 'material-ordering-41851',
+    appId: '1:999530935622:web:e6798dc5b4edbe54142147',
+  },
+  // Throwaway data; locked the same way. Test mode (a master's switch in
+  // Settings) points the whole device at it.
+  test: {
+    apiKey: 'AIzaSyA-FhiK3Lr4-ioifSGJ7OvtTRwmmZfDrMY',
+    authDomain: 'material-ordering-testing.firebaseapp.com',
+    projectId: 'material-ordering-testing',
+    appId: '1:165316963515:web:4916fe002bab1b45cf8d9e',
+  },
+};
 const FirebaseConfig = {
-  _key:         'mo_firebase_config',
-  _testKey:     'mo_firebase_config_test',
   _testModeKey: 'mo_test_mode',
   isTestMode()  { return localStorage.getItem(this._testModeKey) === 'true'; },
   setTestMode(v){ if (v) localStorage.setItem(this._testModeKey, 'true'); else localStorage.removeItem(this._testModeKey); },
-  get()         { try { const s=localStorage.getItem(this.isTestMode()?this._testKey:this._key); return s?JSON.parse(s):null; } catch { return null; } },
-  save(cfg)     { localStorage.setItem(this.isTestMode()?this._testKey:this._key, JSON.stringify(cfg)); },
-  hasTestConfig(){ return !!localStorage.getItem(this._testKey); },
-  clear()       { localStorage.removeItem(this._key); },
-  clearTest()   { localStorage.removeItem(this._testKey); },
+  get()         { return FIREBASE_PROJECTS[this.isTestMode() ? 'test' : 'production']; },
+  // Configs were pasted per device until 2026-10-22.2; nothing reads them now.
+  forget()      { ['mo_firebase_config', 'mo_firebase_config_test'].forEach(k => localStorage.removeItem(k)); },
 };
 
 function esc(str) {
@@ -892,24 +914,7 @@ function captureInputFocus() {
   };
 }
 
-// Parses a Firebase config string into { apiKey, projectId, appId }.
-// Accepts either:
-//   1. Pipe-separated:  "apiKey|projectId|appId"  (preferred — easy to store and copy)
-//   2. JS/JSON blob:    the firebaseConfig snippet pasted from the Firebase console
-function parseFirebaseConfig(raw) {
-  const s = String(raw || '').trim();
-  // Pipe-separated format: three segments, no spaces around pipes
-  const parts = s.split('|');
-  if (parts.length === 3 && parts.every(p => p.trim())) {
-    return { apiKey: parts[0].trim(), projectId: parts[1].trim(), appId: parts[2].trim() };
-  }
-  // Fall back to key-value extraction for JS/JSON blobs
-  const get = key => {
-    const m = s.match(new RegExp('"?' + key + '"?\\s*[:=]\\s*["\']([^"\']+)["\']'));
-    return m ? m[1].trim() : '';
-  };
-  return { apiKey: get('apiKey'), projectId: get('projectId'), appId: get('appId') };
-}
+// Apply all template placeholders to a string (works for both subject and body)
 function genRef() {
   const d=new Date();
   return `ORD-${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}-${Math.floor(Math.random()*900+100)}`;

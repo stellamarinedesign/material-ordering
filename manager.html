@@ -10,8 +10,8 @@
   <link rel="icon" type="image/png" href="favicon.png">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
   <link rel="stylesheet" href="fonts/tabler-icons.min.css">
-  <link rel="stylesheet" href="css/style.css?v=2026-10-22.1">
-  <link rel="stylesheet" href="css/themes.css?v=2026-10-22.1">
+  <link rel="stylesheet" href="css/style.css?v=2026-10-22.2">
+  <link rel="stylesheet" href="css/themes.css?v=2026-10-22.2">
 </head>
 <body>
 <div id="root"></div>
@@ -20,12 +20,12 @@
 <!-- APP CHECK: remove this line to disable App Check (also remove init block in firebase-sync.js) -->
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-check-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
-<script src="js/shared.js?v=2026-10-22.1"></script>
-<script src="js/firebase-sync.js?v=2026-10-22.1"></script>
-<script src="js/auth.js?v=2026-10-22.1"></script>
-<script src="js/intake.js?v=2026-10-22.1"></script>
-<script src="js/catalogue.js?v=2026-10-22.1"></script>
-<script src="js/accounts.js?v=2026-10-22.1"></script>
+<script src="js/shared.js?v=2026-10-22.2"></script>
+<script src="js/firebase-sync.js?v=2026-10-22.2"></script>
+<script src="js/auth.js?v=2026-10-22.2"></script>
+<script src="js/intake.js?v=2026-10-22.2"></script>
+<script src="js/catalogue.js?v=2026-10-22.2"></script>
+<script src="js/accounts.js?v=2026-10-22.2"></script>
 <!-- Vendored xlsx-js-style (SheetJS fork with cell styling) — stocktake Excel exports -->
 <script src="js/xlsx-style.min.js"></script>
 <!-- Vendored ExcelJS — used only for the consumables export, which embeds drawn
@@ -147,10 +147,9 @@ const Manager = {
   _openHistorySessions: new Set(),
 
   async init() {
-    const cfg = FirebaseConfig.get();
-    if (!cfg) { this.showSetup(); return; }
-    const ok = await DB.init(cfg);
-    if (!ok) { this.showSetup('Could not connect. Check your Firebase config.'); return; }
+    FirebaseConfig.forget();
+    const ok = await DB.init(FirebaseConfig.get());
+    if (!ok) { this.showSetup('Could not connect to the database.'); return; }
     this.materials    = await Data.load('./materials.csv');
     this._baseConsumables = await Data.loadConsumables('./consumables.csv');
     this.consumables  = this._baseConsumables;
@@ -238,71 +237,15 @@ const Manager = {
     });
   },
 
+  // Firebase itself could not be reached (no network at first load, the SDK
+  // blocked): a plain card and a Reload. The config is in the code (shared.js).
   showSetup(err) {
-    const isTest = FirebaseConfig.isTestMode();
     document.getElementById('root').innerHTML = `
-      <div class="setup-screen">
-        <div class="setup-card">
-          <h2><i class="ti ti-flame" style="color:#ea580c;vertical-align:-2px"></i> ${isTest ? 'Test Mode Setup' : 'Connect to Firebase'}</h2>
-          <p>${isTest ? 'Enter the <strong>test</strong> Firebase config. Saved separately — production config is unchanged.' : 'Enter your Firebase project config to receive orders from the iPad.'}</p>
-          ${isTest ? `<div style="background:var(--amber-bg);color:var(--amber-text);border-radius:var(--radius);padding:10px 12px;font-size:13px;margin-bottom:12px"><i class="ti ti-flask"></i> Test mode is active</div>` : ''}
-          ${err?`<div style="background:var(--red-bg);color:var(--red-text);border-radius:var(--radius);padding:10px 12px;font-size:13px;margin-bottom:12px">${esc(err)}</div>`:''}
-          <div class="setup-field">
-            <label>Paste Firebase config</label>
-            <textarea id="cfg-paste" class="setup-paste-area" placeholder="apiKey|projectId|appId"></textarea>
-          </div>
-          <div class="setup-divider">or enter manually</div>
-          <div class="setup-field"><label>API Key</label><input id="cfg-apiKey" autocomplete="off" placeholder="AIzaSy..."></div>
-          <div class="setup-field"><label>Project ID</label><input id="cfg-projectId" autocomplete="off" placeholder="my-project-id"></div>
-          <div class="setup-field"><label>App ID</label><input id="cfg-appId" autocomplete="off" placeholder="1:123456:web:abc..."></div>
-          <button id="btn-connect" class="btn btn-primary" style="margin-top:8px"><i class="ti ti-plug"></i> Connect</button>
-          ${isTest ? `<button id="btn-cancel-test" class="btn btn-outline" style="margin-top:8px"><i class="ti ti-arrow-left"></i> Cancel — back to production</button>` : ''}
-          <div class="setup-note" style="margin-top:14px">Enter the config string provided by your administrator.</div>
-        </div>
-      </div>`;
-    document.getElementById('cfg-paste').addEventListener('input', () => {
-      const p = parseFirebaseConfig(document.getElementById('cfg-paste').value);
-      if (p.apiKey)    document.getElementById('cfg-apiKey').value    = p.apiKey;
-      if (p.projectId) document.getElementById('cfg-projectId').value = p.projectId;
-      if (p.appId)     document.getElementById('cfg-appId').value     = p.appId;
-    });
-    document.getElementById('btn-connect').addEventListener('click', () => this.saveConfig());
-    document.getElementById('btn-cancel-test')?.addEventListener('click', () => { FirebaseConfig.setTestMode(false); location.reload(); });
-  },
-
-  async saveConfig() {
-    const paste = document.getElementById('cfg-paste')?.value || '';
-    if (paste.trim()) {
-      const p = parseFirebaseConfig(paste);
-      if (p.apiKey)    document.getElementById('cfg-apiKey').value    = p.apiKey;
-      if (p.projectId) document.getElementById('cfg-projectId').value = p.projectId;
-      if (p.appId)     document.getElementById('cfg-appId').value     = p.appId;
-    }
-    const apiKey=document.getElementById('cfg-apiKey').value.trim();
-    const projectId=document.getElementById('cfg-projectId').value.trim();
-    const appId=document.getElementById('cfg-appId').value.trim();
-    if (!apiKey||!projectId||!appId) { alert('Please fill in all fields.'); return; }
-    const cfg={apiKey,projectId,appId,authDomain:`${projectId}.firebaseapp.com`,storageBucket:`${projectId}.appspot.com`,messagingSenderId:'000000000000'};
-    const ok=await DB.init(cfg);
-    if (!ok) { this.showSetup('Connection failed.'); return; }
-    FirebaseConfig.save(cfg);
-    this.materials    = await Data.load('./materials.csv');
-    this._baseConsumables = await Data.loadConsumables('./consumables.csv');
-    this.consumables  = this._baseConsumables;
-    Auth.start(() => Auth.guardManagerPage());
-    DB.onDenied = () => Auth.denied();
-    this.orderRef=genRef();
-    this.renderShell();
-    const verEl=document.getElementById('app-version'); if(verEl) verEl.textContent=verLabel(APP_VERSION);
-    this.startListening();
-    this.startStockListening();
-    this.startMatStockListening();
-    this.startCatalogueWatch();
-    this.startConnectionStatus();
-    this.startVersionCheck();
-    if ('Notification' in window && Notification.permission === 'default') {
-      Notification.requestPermission();
-    }
+      <div class="setup-screen"><div class="setup-card" style="text-align:center">
+        <div class="auth-logo"></div>
+        <p style="margin-bottom:16px">${esc(err || 'Could not connect.')}</p>
+        <button class="btn btn-primary" style="width:100%" onclick="location.reload()"><i class="ti ti-refresh"></i> Reload</button>
+      </div></div>`;
   },
 
   // ══════════════════════════════════════════
@@ -400,7 +343,6 @@ const Manager = {
               <div class="sidebar-section">
                 <div class="sidebar-title">Settings</div>
                 <button class="sidebar-btn" id="sb-settings"><i class="ti ti-adjustments"></i>Email &amp; preferences</button>
-                <button class="sidebar-btn" id="sb-reset"><i class="ti ti-plug-x"></i>Reset connection</button>
               </div>
             </div>
             <div class="manager-main">
@@ -701,7 +643,6 @@ const Manager = {
     // ── ALL LISTENERS ONCE ──
     document.getElementById('btn-settings')       .addEventListener('click', () => this.openPanel('settings-panel'));
     document.getElementById('sb-settings')        .addEventListener('click', () => this.openPanel('settings-panel'));
-    document.getElementById('sb-reset')           .addEventListener('click', () => this.clearFirebase());
     document.getElementById('btn-close-settings') .addEventListener('click', () => this.closePanel('settings-panel'));
     document.getElementById('btn-save-settings')  .addEventListener('click', () => this.saveSettings());
     document.getElementById('btn-close-catalogue').addEventListener('click', () => Catalogue.close());
@@ -4861,15 +4802,6 @@ const Manager = {
         </div>
       </div>
       <div class="settings-section">
-        <div class="settings-label">Connection</div>
-        <div class="settings-card">
-          <div class="settings-row">
-            <div><div class="settings-row-label">Firebase config</div><div class="settings-row-sub">Clear to re-enter</div></div>
-            <button class="btn-sm btn-sm-danger" id="btn-clear-firebase">Clear</button>
-          </div>
-        </div>
-      </div>
-      <div class="settings-section">
         <div class="settings-label">Notifications</div>
         <div class="settings-card">
           ${(() => {
@@ -4912,7 +4844,6 @@ const Manager = {
         </div>
       </div>`;
 
-    document.getElementById('btn-clear-firebase').addEventListener('click', () => this.clearFirebase());
     document.getElementById('btn-open-catalogue').addEventListener('click', () => Catalogue.open());
     document.getElementById('btn-enable-notif')?.addEventListener('click', async () => {
       const result = await Notification.requestPermission();
@@ -4958,10 +4889,6 @@ const Manager = {
     if (btn) { btn.textContent = '✓ Saved'; setTimeout(() => btn.textContent = 'Save', 1500); }
   },
 
-  clearFirebase() {
-    if (!confirm('Clear Firebase config?')) return;
-    FirebaseConfig.clear(); location.reload();
-  },
 };
 
 document.addEventListener('DOMContentLoaded', () => Manager.init());

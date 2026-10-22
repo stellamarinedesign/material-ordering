@@ -10,8 +10,8 @@
   <link rel="icon" type="image/png" href="favicon.png">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
   <link rel="stylesheet" href="fonts/tabler-icons.min.css">
-  <link rel="stylesheet" href="css/style.css?v=2026-10-22.1">
-  <link rel="stylesheet" href="css/themes.css?v=2026-10-22.1">
+  <link rel="stylesheet" href="css/style.css?v=2026-10-22.2">
+  <link rel="stylesheet" href="css/themes.css?v=2026-10-22.2">
 </head>
 <body>
 <div id="root"></div>
@@ -20,10 +20,10 @@
 <!-- APP CHECK: remove this line to disable App Check (also remove init block in firebase-sync.js) -->
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-check-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
-<script src="js/shared.js?v=2026-10-22.1"></script>
-<script src="js/firebase-sync.js?v=2026-10-22.1"></script>
-<script src="js/auth.js?v=2026-10-22.1"></script>
-<script src="js/intake.js?v=2026-10-22.1"></script>
+<script src="js/shared.js?v=2026-10-22.2"></script>
+<script src="js/firebase-sync.js?v=2026-10-22.2"></script>
+<script src="js/auth.js?v=2026-10-22.2"></script>
+<script src="js/intake.js?v=2026-10-22.2"></script>
 <script>
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.getRegistrations().then(rs => rs.forEach(r => r.unregister()));
@@ -42,11 +42,9 @@ const Warehouse = {
   _noteSaveTimers: {},
 
   async init() {
-    const cfg  = FirebaseConfig.get();
-    const name = WarehouseDeviceName.get();
-    if (!cfg || !name) { this.showSetup(); return; }
-    const ok = await DB.init(cfg);
-    if (!ok) { this.showSetup('Could not connect. Check your Firebase config.'); return; }
+    FirebaseConfig.forget();
+    const ok = await DB.init(FirebaseConfig.get());
+    if (!ok) { this.showSetup('Could not connect to the database.'); return; }
     this.materials   = await Data.load('./materials.csv');
     this.consumables = await Data.loadConsumables('./consumables.csv');
     Auth.deviceName = WarehouseDeviceName;
@@ -58,90 +56,15 @@ const Warehouse = {
     this.startVersionCheck();
   },
 
-  // ── SETUP SCREEN ─────────────────────────────────────────────────────
+  // Firebase itself could not be reached (no network at first load, the SDK
+  // blocked): a plain card and a Reload. The config is in the code (shared.js).
   showSetup(err) {
-    const isTest = FirebaseConfig.isTestMode();
     document.getElementById('root').innerHTML = `
-      <div class="setup-screen">
-        <div class="setup-card">
-          <h2><i class="ti ti-warehouse" style="color:#ea580c;vertical-align:-2px"></i> ${isTest ? 'Warehouse — Test Setup' : 'Warehouse Intake Setup'}</h2>
-          <p>${isTest ? 'Enter the <strong>test</strong> Firebase config. Saved separately — production config is unchanged.' : 'Connect this device to Firebase and give it a name so intake records are attributed correctly.'}</p>
-          ${isTest ? `<div style="background:var(--amber-bg);color:var(--amber-text);border-radius:var(--radius);padding:10px 12px;font-size:13px;margin-bottom:12px"><i class="ti ti-flask"></i> Test mode is active</div>` : ''}
-          ${err ? `<div style="background:var(--red-bg);color:var(--red-text);border-radius:var(--radius);padding:10px 12px;font-size:13px;margin-bottom:12px">${esc(err)}</div>` : ''}
-
-          <div class="setup-field">
-            <label>Device name</label>
-            <input id="cfg-name" placeholder="Warehouse iPad" autocomplete="off"
-              value="${esc(WarehouseDeviceName.get())}">
-          </div>
-
-          <div class="setup-field" style="margin-top:6px">
-            <label>Paste Firebase config</label>
-            <textarea id="cfg-paste" class="setup-paste-area" placeholder="apiKey|projectId|appId"></textarea>
-          </div>
-          <div class="setup-divider">or enter manually</div>
-          <div class="setup-field"><label>API Key</label><input id="cfg-apiKey" autocomplete="off" placeholder="AIzaSy…"></div>
-          <div class="setup-field"><label>Project ID</label><input id="cfg-projectId" autocomplete="off" placeholder="my-project-id"></div>
-          <div class="setup-field"><label>App ID</label><input id="cfg-appId" autocomplete="off" placeholder="1:123456:web:abc…"></div>
-
-          <button id="btn-connect" class="btn btn-primary" style="margin-top:8px;width:100%">
-            <i class="ti ti-plug"></i> Connect
-          </button>
-          ${isTest ? `<button id="btn-cancel-test" class="btn btn-outline" style="margin-top:8px;width:100%"><i class="ti ti-arrow-left"></i> Cancel — back to production</button>` : ''}
-          <div class="setup-note" style="margin-top:14px">Enter the config string provided by your administrator.</div>
-        </div>
-      </div>`;
-
-    // Auto-fill fields from paste
-    document.getElementById('cfg-paste').addEventListener('input', () => {
-      const raw    = document.getElementById('cfg-paste').value;
-      const parsed = parseFirebaseConfig(raw);
-      if (parsed.apiKey)    document.getElementById('cfg-apiKey').value    = parsed.apiKey;
-      if (parsed.projectId) document.getElementById('cfg-projectId').value = parsed.projectId;
-      if (parsed.appId)     document.getElementById('cfg-appId').value     = parsed.appId;
-    });
-    document.getElementById('btn-connect').addEventListener('click', () => this.saveSetup());
-    document.getElementById('btn-cancel-test')?.addEventListener('click', () => { FirebaseConfig.setTestMode(false); location.reload(); });
-  },
-
-  async saveSetup() {
-    const name = document.getElementById('cfg-name').value.trim();
-    if (!name) { alert('Please enter a device name.'); return; }
-
-    // Apply paste if present
-    const paste = document.getElementById('cfg-paste').value;
-    if (paste.trim()) {
-      const p = parseFirebaseConfig(paste);
-      if (p.apiKey)    document.getElementById('cfg-apiKey').value    = p.apiKey;
-      if (p.projectId) document.getElementById('cfg-projectId').value = p.projectId;
-      if (p.appId)     document.getElementById('cfg-appId').value     = p.appId;
-    }
-
-    const apiKey    = document.getElementById('cfg-apiKey').value.trim();
-    const projectId = document.getElementById('cfg-projectId').value.trim();
-    const appId     = document.getElementById('cfg-appId').value.trim();
-    if (!apiKey || !projectId || !appId) { alert('Please fill in all Firebase config fields.'); return; }
-
-    const cfg = {
-      apiKey, projectId, appId,
-      authDomain:        `${projectId}.firebaseapp.com`,
-      storageBucket:     `${projectId}.appspot.com`,
-      messagingSenderId: '000000000000',
-    };
-    const ok = await DB.init(cfg);
-    if (!ok) { this.showSetup('Connection failed. Check your config and try again.'); return; }
-
-    FirebaseConfig.save(cfg);
-    WarehouseDeviceName.save(name);
-    this.materials   = await Data.load('./materials.csv');
-    this.consumables = await Data.loadConsumables('./consumables.csv');
-    Auth.deviceName = WarehouseDeviceName;
-    Auth.start();
-    DB.onDenied = () => Auth.denied();
-    this.renderShell();
-    this.startListening();
-    this.startConnectionStatus();
-    this.startVersionCheck();
+      <div class="setup-screen"><div class="setup-card" style="text-align:center">
+        <div class="auth-logo"></div>
+        <p style="margin-bottom:16px">${esc(err || 'Could not connect.')}</p>
+        <button class="btn btn-primary" style="width:100%" onclick="location.reload()"><i class="ti ti-refresh"></i> Reload</button>
+      </div></div>`;
   },
 
   // ── SHELL ─────────────────────────────────────────────────────────────
@@ -248,11 +171,11 @@ const Warehouse = {
               </div>
             </div>
             <div class="settings-section">
-              <div class="settings-label">Connection</div>
+              <div class="settings-label">Device</div>
               <div class="settings-card">
                 <div class="settings-row">
-                  <div><div class="settings-row-label">Reset connection</div><div class="settings-row-sub">Re-enter device name or Firebase config</div></div>
-                  <button class="btn-sm btn-sm-danger" id="btn-wh-reconnect">Reconnect</button>
+                  <div><div class="settings-row-label">Device name</div></div>
+                  <input type="text" id="s-device-name" autocomplete="off" value="${esc(WarehouseDeviceName.get())}" style="max-width:220px">
                 </div>
               </div>
             </div>
@@ -292,11 +215,7 @@ const Warehouse = {
       FirebaseConfig.setTestMode(!FirebaseConfig.isTestMode());
       location.reload();
     });
-    document.getElementById('btn-wh-reconnect').addEventListener('click', () => {
-      if (confirm('Re-open setup? This will let you change the device name or Firebase config.')) {
-        this.showSetup();
-      }
-    });
+    document.getElementById('s-device-name').addEventListener('change', e => { const v = e.target.value.trim(); if (v) WarehouseDeviceName.save(v); else e.target.value = WarehouseDeviceName.get(); });
 
     // Wire intake events for both lists
     this._wireIntakeList('materials');
