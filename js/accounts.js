@@ -1,4 +1,4 @@
-// accounts.js — v2026-11-06.1
+// accounts.js — v2026-11-12.1
 //
 // Manager page only: the Accounts section of Settings, for a MASTER and for
 // nobody else — absent otherwise, not greyed. Every listed address with its

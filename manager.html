@@ -10,8 +10,8 @@
   <link rel="icon" type="image/png" href="favicon.png">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
   <link rel="stylesheet" href="fonts/tabler-icons.min.css">
-  <link rel="stylesheet" href="css/style.css?v=2026-11-06.1">
-  <link rel="stylesheet" href="css/themes.css?v=2026-11-06.1">
+  <link rel="stylesheet" href="css/style.css?v=2026-11-12.1">
+  <link rel="stylesheet" href="css/themes.css?v=2026-11-12.1">
 </head>
 <body>
 <div id="root"></div>
@@ -20,12 +20,12 @@
 <!-- APP CHECK: remove this line to disable App Check (also remove init block in firebase-sync.js) -->
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-check-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
-<script src="js/shared.js?v=2026-11-06.1"></script>
-<script src="js/firebase-sync.js?v=2026-11-06.1"></script>
-<script src="js/auth.js?v=2026-11-06.1"></script>
-<script src="js/intake.js?v=2026-11-06.1"></script>
-<script src="js/catalogue.js?v=2026-11-06.1"></script>
-<script src="js/accounts.js?v=2026-11-06.1"></script>
+<script src="js/shared.js?v=2026-11-12.1"></script>
+<script src="js/firebase-sync.js?v=2026-11-12.1"></script>
+<script src="js/auth.js?v=2026-11-12.1"></script>
+<script src="js/intake.js?v=2026-11-12.1"></script>
+<script src="js/catalogue.js?v=2026-11-12.1"></script>
+<script src="js/accounts.js?v=2026-11-12.1"></script>
 <!-- Vendored xlsx-js-style (SheetJS fork with cell styling) — stocktake Excel exports -->
 <script src="js/xlsx-style.min.js"></script>
 <!-- Vendored ExcelJS — used only for the consumables export, which embeds drawn
@@ -682,8 +682,8 @@ const Manager = {
       if (c) { const i=+c.dataset.stCatIdx; this.stqSetCat(i===-1?null:this._stCats[i]); }
       else if (s) { const i=+s.dataset.stSubIdx; this.stqSetSub(i===-1?null:this._stSubs[i]); }
     });
-    document.getElementById('btn-st-export').addEventListener('click', () => this.exportStocktake(false));
-    document.getElementById('btn-st-export-blank').addEventListener('click', () => this.exportStocktake(true));
+    document.getElementById('btn-st-export').addEventListener('click', () => this.openStocktakeExport(false));
+    document.getElementById('btn-st-export-blank').addEventListener('click', () => this.openStocktakeExport(true));
     document.getElementById('stocktake-history-list').addEventListener('click', e => {
       const sess = e.target.closest('[data-st-session]'); if (!sess) return;
       const id = sess.dataset.stSession;
@@ -1899,11 +1899,59 @@ const Manager = {
   // stocktake template: navy header band with white bold text, bold Calibri data
   // cells, Tahoma 9 QTY column, thin borders, wide description column.
   // Grouping checkbox ON → category/subcategory section rows; OFF → flat, sorted by code.
-  exportStocktake(blank) {
+  // Both export buttons open the same options first: which categories go in
+  // the sheet. The unticked ones are remembered on this device.
+  _stExportSkipped() {
+    try { const a = JSON.parse(localStorage.getItem('mo_st_export_skip') || '[]'); return new Set(Array.isArray(a) ? a : []); }
+    catch { return new Set(); }
+  },
+  openStocktakeExport(blank) {
+    if (typeof XLSX === 'undefined') { alert('Export library failed to load — refresh the page and try again.'); return; }
+    const cats = Data.categories(this.materials);
+    const skipped = this._stExportSkipped();
+    const ow = document.getElementById('overlay-wrap');
+    ow.innerHTML = `
+      <div class="success-overlay">
+        <div class="success-card st-export-card" style="max-width:380px;text-align:left">
+          <h3 style="text-align:center">${blank ? 'Export blank count sheet' : 'Export stocktake'}</h3>
+          <div class="st-export-tools"><span>Categories</span><button class="btn-sm" id="st-exp-all">All</button><button class="btn-sm" id="st-exp-none">None</button></div>
+          <div class="st-export-cats">
+            ${cats.map((c, i) => `<label class="cat-check"><input type="checkbox" data-st-exp-cat="${i}"${skipped.has(c) ? '' : ' checked'}><span>${esc(c)} <em>· ${this.materials.filter(m => m.category === c).length}</em></span></label>`).join('')}
+          </div>
+          <button class="btn btn-primary" id="st-exp-go" style="width:100%;margin-top:16px"><i class="ti ti-file-spreadsheet"></i> Export</button>
+          <button class="btn btn-outline" id="st-exp-cancel" style="width:100%;margin-top:8px">Cancel</button>
+        </div>
+      </div>`;
+    const boxes = () => [...ow.querySelectorAll('[data-st-exp-cat]')];
+    const sync  = () => { document.getElementById('st-exp-go').disabled = !boxes().some(b => b.checked); };
+    const setAll = on => { boxes().forEach(b => { b.checked = on; }); sync(); };
+    ow.querySelector('.st-export-cats').addEventListener('change', sync);
+    document.getElementById('st-exp-all').addEventListener('click', () => setAll(true));
+    document.getElementById('st-exp-none').addEventListener('click', () => setAll(false));
+    document.getElementById('st-exp-cancel').addEventListener('click', () => { ow.innerHTML = ''; });
+    document.getElementById('st-exp-go').addEventListener('click', () => {
+      const skip = new Set(boxes().filter(b => !b.checked).map(b => cats[+b.dataset.stExpCat]));
+      try { localStorage.setItem('mo_st_export_skip', JSON.stringify([...skip])); } catch {}
+      ow.innerHTML = '';
+      this.exportStocktake(blank, skip);
+    });
+    sync();
+  },
+
+  exportStocktake(blank, skip) {
     if (typeof XLSX === 'undefined') { alert('Export library failed to load — refresh the page and try again.'); return; }
     const grouped = document.getElementById('st-export-grouped')?.checked !== false;
+    const wb = this._stocktakeWorkbook(blank, grouped, skip || new Set());
+    const d = new Date(), date = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    XLSX.writeFile(wb, `Stocktake${blank ? '_blank' : ''}_${date}.xlsx`);
+  },
+  // The sheet: Code · Description · Base Unit · QTY and — on the filled export
+  // only — the date each quantity was last updated, written as a real Excel
+  // date (dd/mm/yyyy) so the column sorts and filters. skip: Set of category
+  // names left out.
+  _stocktakeWorkbook(blank, grouped, skip) {
     const stockMap = this._stStockMap();
-    const items = [...this.materials];
+    const items = this.materials.filter(m => !skip.has(m.category));
     if (grouped) {
       items.sort((a,b) => naturalCompare(a.category,b.category) || naturalCompare(a.subcategory,b.subcategory) || descCompare(a.description,b.description));
     } else {
@@ -1916,36 +1964,46 @@ const Manager = {
     const S_SECTION = { font: { name: 'Calibri', sz: 11, bold: true }, fill: { patternType: 'solid', fgColor: { rgb: 'D9D9D9' } }, border: BORDER };
     const S_CELL    = { font: { name: 'Calibri', sz: 11, bold: true }, border: BORDER };
     const S_QTY     = { font: { name: 'Tahoma', sz: 9 }, border: BORDER };
+    const DATE_FMT  = 'dd/mm/yyyy';
+    const S_DATE    = { ...S_QTY, numFmt: DATE_FMT };
+    // Excel's day number for a local calendar date (no time of day).
+    const excelDay  = d => Math.round((Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) - Date.UTC(1899, 11, 30)) / 86400000);
 
+    const head = blank ? ['Code', 'Description', 'Base Unit', 'QTY'] : ['Code', 'Description', 'Base Unit', 'QTY', 'Last Updated'];
+    const last = head.length - 1;
     const rows = [], merges = [];
-    rows.push(['Code', 'Description', 'Base Unit', 'QTY'].map(v => ({ v, t: 's', s: S_HEADER })));
+    rows.push(head.map(v => ({ v, t: 's', s: S_HEADER })));
     let lastSection = null;
     for (const m of items) {
       if (grouped) {
         const section = `${m.category}${m.subcategory && m.subcategory !== 'General' ? ' — ' + m.subcategory : ''}`;
         if (section !== lastSection) {
-          merges.push({ s: { r: rows.length, c: 0 }, e: { r: rows.length, c: 3 } });
-          rows.push([{ v: section, t: 's', s: S_SECTION }, { v: '', t: 's', s: S_SECTION }, { v: '', t: 's', s: S_SECTION }, { v: '', t: 's', s: S_SECTION }]);
+          merges.push({ s: { r: rows.length, c: 0 }, e: { r: rows.length, c: last } });
+          rows.push(head.map((_, c) => ({ v: c === 0 ? section : '', t: 's', s: S_SECTION })));
           lastSection = section;
         }
       }
       const rec = stockMap.get(stockId(m));
       const code = m.partCode && !Data.isDummyCode(m.partCode) ? m.partCode : '';
       const qty = blank ? '' : (rec && rec.qty != null ? rec.qty : '');
-      rows.push([
+      const row = [
         { v: code, t: 's', s: S_CELL },
         { v: m.description, t: 's', s: S_CELL },
         { v: stocktakeUnit(m), t: 's', s: S_CELL },
         qty === '' ? { v: '', t: 's', s: S_QTY } : { v: qty, t: 'n', s: S_QTY },
-      ]);
+      ];
+      if (!blank) {
+        const when = qty !== '' && rec.updatedAt && rec.updatedAt.toDate ? rec.updatedAt.toDate() : null;
+        row.push(when ? { v: excelDay(when), t: 'n', z: DATE_FMT, s: S_DATE } : { v: '', t: 's', s: S_QTY });
+      }
+      rows.push(row);
     }
     const ws = XLSX.utils.aoa_to_sheet(rows);
-    ws['!cols'] = [{ wch: 12 }, { wch: 40 }, { wch: 10 }, { wch: 9 }];
+    ws['!cols'] = [{ wch: 12 }, { wch: 40 }, { wch: 10 }, { wch: 9 }, ...(blank ? [] : [{ wch: 13 }])];
     ws['!merges'] = merges;
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Stocktake');
-    const date = new Date().toISOString().slice(0, 10);
-    XLSX.writeFile(wb, `Stocktake${blank ? '_blank' : ''}_${date}.xlsx`);
+    return wb;
   },
 
   // ══════════════════════════════════════════
