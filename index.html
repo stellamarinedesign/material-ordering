@@ -14,8 +14,8 @@
   <link rel="icon" type="image/png" href="favicon.png">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
   <link rel="stylesheet" href="fonts/tabler-icons.min.css">
-  <link rel="stylesheet" href="css/style.css?v=2026-10-22.3">
-  <link rel="stylesheet" href="css/themes.css?v=2026-10-22.3">
+  <link rel="stylesheet" href="css/style.css?v=2026-11-06.1">
+  <link rel="stylesheet" href="css/themes.css?v=2026-11-06.1">
   <style>
     .mat-bin {
       width:30px; height:32px; display:flex; align-items:center; justify-content:center;
@@ -94,9 +94,9 @@
 <!-- APP CHECK: remove this line to disable App Check (also remove init block in firebase-sync.js) -->
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-check-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
-<script src="js/shared.js?v=2026-10-22.3"></script>
-<script src="js/firebase-sync.js?v=2026-10-22.3"></script>
-<script src="js/auth.js?v=2026-10-22.3"></script>
+<script src="js/shared.js?v=2026-11-06.1"></script>
+<script src="js/firebase-sync.js?v=2026-11-06.1"></script>
+<script src="js/auth.js?v=2026-11-06.1"></script>
 <script>
 const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker global
   activeCat:  null,
@@ -128,10 +128,12 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
     const ok = await DB.init(FirebaseConfig.get());
     if (!ok) { this.showSetup('Could not connect to the database.'); return; }
     this.materials = await Data.load('./materials.csv');
+    Outbox.start('mo_outbox', () => this._renderOutbox());
     Auth.deviceName = DeviceName;
-    Auth.start();
+    Auth.start(user => { if (user) Outbox.resume(); });
     DB.onDenied = () => Auth.denied();
     this.renderApp();
+    this._renderOutbox();
     this.startConnectionStatus();
     this.startVersionCheck();
     this.startMatStockListening();
@@ -164,7 +166,7 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
             <div class="header-actions">
               <span class="device-chip">${esc(device)}</span>
               <button class="stocktake-btn" id="btn-stocktake" title="Materials stocktake"><i class="ti ti-clipboard-list"></i> <span id="stocktake-btn-label">Stocktake</span></button>
-              <span id="auth-pill"></span>
+              <span id="outbox-slot"></span><span id="auth-pill"></span>
               <button class="icon-btn" id="btn-settings" title="Settings"><i class="ti ti-settings"></i></button>
             </div>
           </div></div>
@@ -243,11 +245,11 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
         <div class="panel" id="success-panel" style="background:var(--surface);z-index:30">
           <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;
               flex:1;padding:40px 24px;text-align:center">
-            <div class="success-icon green" style="margin-bottom:20px">
+            <div class="success-icon green" style="margin-bottom:20px" id="success-icon">
               <i class="ti ti-circle-check"></i>
             </div>
-            <h2 style="font-size:20px;font-weight:600;margin-bottom:10px">Order submitted!</h2>
-            <p style="font-size:14px;color:var(--text2);line-height:1.6;max-width:300px;margin-bottom:28px">
+            <h2 style="font-size:20px;font-weight:600;margin-bottom:10px" id="success-title">Order submitted!</h2>
+            <p style="font-size:14px;color:var(--text2);line-height:1.6;max-width:300px;margin-bottom:28px" id="success-text">
               The production manager has been notified and will review your order.
             </p>
             <button class="btn btn-primary" style="max-width:280px" id="btn-new-order">
@@ -370,6 +372,11 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
     }
   },
 
+  _renderOutbox() {
+    const el = document.getElementById('outbox-slot');
+    if (el) el.innerHTML = Outbox.pillHtml();
+  },
+
   startConnectionStatus() {
     DB.listenConnectionStatus(connected => {
       this._connState.connected = connected;
@@ -391,7 +398,7 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
     // stocktake count is in progress.
     AutoUpdate.start({
       onDiscover: v => { this._connState.latestVersion = v; this._renderLiveStatus(); },
-      isBusy:     () => !Order.isEmpty() || this.stCount() > 0,
+      isBusy:     () => !Order.isEmpty() || this.stCount() > 0 || Outbox.count() > 0,
     });
   },
 
@@ -619,10 +626,6 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
 
   confirmSubmit() {
     if(Order.isEmpty()){ alert('No items on this order.'); return; }
-    if (this._connState.connected === false) {
-      alert("You're currently offline — orders can't be submitted without a connection. Please reconnect and try again.");
-      return;
-    }
     const items=Order.items(this.materials);
     const lines=items.map(i=>`${i.partCode}  ×${i.qty}  ${i.description}`).join('\n');
     const ow=document.getElementById('overlay-wrap');
@@ -657,23 +660,34 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
       id:i.id,partCode:i.partCode,description:i.description,
       category:i.category,subcategory:i.subcategory,qtyType:i.qtyType||'',qty:i.qty,
     }));
-    // Submit can take a moment to fail outright when offline (App Check needs
-    // a live network round-trip for a token, so offline writes don't queue
-    // the way plain Firestore writes normally would) — keep the sheet open with
-    // a disabled, spinning button until the write settles. Disabling also blocks
-    // a double-tap from submitting the order twice.
+    // The order is written under an id made here and the sheet closes at
+    // once: "submitted" if the server confirms within a few seconds, else
+    // "queued" — the write waits on this device and goes when the connection
+    // returns (Outbox keeps a copy and re-sends if that queue is ever lost).
+    // Disabling the button blocks a double-tap from placing it twice.
     const yesBtn = document.getElementById('btn-confirm-yes');
     if (yesBtn) { yesBtn.disabled = true; yesBtn.innerHTML = '<i class="ti ti-loader" style="animation:spin 1s linear infinite"></i> Submitting…'; }
-    try {
-      await DB.submitOrder({ ref:this.orderRef, deviceName:DeviceName.get(), items, note:this._orderNote.trim() });
-      this._orderNote = '';
-      this.closeOverlay();
-      this.closePanel('review-panel');
-      this.openPanel('success-panel');
-    } catch(e) {
+    const order = { ref:this.orderRef, deviceName:DeviceName.get(), items, note:this._orderNote.trim(), placedAt: Date.now() };
+    let queued;
+    try { queued = DB.queueOrder(order); }
+    catch(e) {
       if (yesBtn) { yesBtn.disabled = false; yesBtn.innerHTML = '<i class="ti ti-send"></i> Confirm and submit'; }
-      alert("Couldn't submit the order — check your internet connection and try again.\n\n" + e.message);
+      alert("Couldn't place the order.\n\n" + e.message);
+      return;
     }
+    Outbox.add({ id: queued.id, ref: this.orderRef, payload: order, done: queued.done });
+    const sent = await Promise.race([queued.done.then(() => true, () => false), new Promise(r => setTimeout(() => r(false), 3000))]);
+    this._orderNote = '';
+    this.closeOverlay();
+    this.closePanel('review-panel');
+    this._showSuccess(sent);
+  },
+  _showSuccess(sent) {
+    const t = document.getElementById('success-title'), p = document.getElementById('success-text'), ic = document.getElementById('success-icon');
+    if (t)  t.textContent = sent ? 'Order submitted!' : 'Order queued';
+    if (p)  p.textContent = sent ? 'The production manager has been notified and will review your order.' : 'It will send itself when this device is back online.';
+    if (ic) ic.innerHTML = sent ? '<i class="ti ti-circle-check"></i>' : '<i class="ti ti-cloud-upload"></i>';
+    this.openPanel('success-panel');
   },
 
   // ══════════════════════════════════════════
@@ -768,7 +782,7 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
   async stTickItem(id) {
     if (this._stTickBusy.has(id)) return;
     if (this.stGet(id) <= 0) return;
-    if (this._connState.connected === false) {
+    if (this._connState.connected === false || navigator.onLine === false) {
       alert("You're currently offline — counts can't be recorded without a connection."); return;
     }
     const m = this.materials.find(x => x.id == id); if (!m) return;
@@ -815,7 +829,7 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
     if (this._stBusy) return; // double-tap guard
     const items = this.stItems();
     if (!items.length) { document.getElementById('overlay-wrap').innerHTML=''; return; }
-    if (this._connState.connected === false) {
+    if (this._connState.connected === false || navigator.onLine === false) {
       alert("You're currently offline — stocktakes can't be submitted without a connection."); return;
     }
     this._stBusy = true;

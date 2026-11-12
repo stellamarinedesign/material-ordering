@@ -10,8 +10,8 @@
   <link rel="icon" type="image/png" href="favicon.png">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
   <link rel="stylesheet" href="fonts/tabler-icons.min.css">
-  <link rel="stylesheet" href="css/style.css?v=2026-10-22.3">
-  <link rel="stylesheet" href="css/themes.css?v=2026-10-22.3">
+  <link rel="stylesheet" href="css/style.css?v=2026-11-06.1">
+  <link rel="stylesheet" href="css/themes.css?v=2026-11-06.1">
 </head>
 <body>
 <div id="root"></div>
@@ -20,12 +20,12 @@
 <!-- APP CHECK: remove this line to disable App Check (also remove init block in firebase-sync.js) -->
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-check-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
-<script src="js/shared.js?v=2026-10-22.3"></script>
-<script src="js/firebase-sync.js?v=2026-10-22.3"></script>
-<script src="js/auth.js?v=2026-10-22.3"></script>
-<script src="js/intake.js?v=2026-10-22.3"></script>
-<script src="js/catalogue.js?v=2026-10-22.3"></script>
-<script src="js/accounts.js?v=2026-10-22.3"></script>
+<script src="js/shared.js?v=2026-11-06.1"></script>
+<script src="js/firebase-sync.js?v=2026-11-06.1"></script>
+<script src="js/auth.js?v=2026-11-06.1"></script>
+<script src="js/intake.js?v=2026-11-06.1"></script>
+<script src="js/catalogue.js?v=2026-11-06.1"></script>
+<script src="js/accounts.js?v=2026-11-06.1"></script>
 <!-- Vendored xlsx-js-style (SheetJS fork with cell styling) — stocktake Excel exports -->
 <script src="js/xlsx-style.min.js"></script>
 <!-- Vendored ExcelJS — used only for the consumables export, which embeds drawn
@@ -1789,7 +1789,7 @@ const Manager = {
   async mstTickItem(id) {
     if (this._mstTickBusy.has(id)) return;
     if (this.mstGet(id) <= 0) return;
-    if (this._connState.connected === false) { alert("You're currently offline — counts can't be recorded without a connection."); return; }
+    if (this._connState.connected === false || navigator.onLine === false) { alert("You're currently offline — counts can't be recorded without a connection."); return; }
     const m = this.materials.find(x => x.id == id); if (!m) return;
     this._mstTickBusy.add(id);
     try {
@@ -1830,7 +1830,7 @@ const Manager = {
     if (this._mstBusy) return;
     const items = this.mstItems();
     if (!items.length) { document.getElementById('overlay-wrap').innerHTML=''; return; }
-    if (this._connState.connected === false) { alert("You're currently offline — stocktakes can't be submitted without a connection."); return; }
+    if (this._connState.connected === false || navigator.onLine === false) { alert("You're currently offline — stocktakes can't be submitted without a connection."); return; }
     this._mstBusy = true;
     const btn = document.getElementById('btn-mst-confirm');
     if (btn) { btn.disabled = true; btn.innerHTML = '<i class="ti ti-loader" style="animation:spin 1s linear infinite"></i> Submitting…'; }
@@ -2576,7 +2576,12 @@ const Manager = {
       const hasPendingOutside = items.some(i => !i.emailed && !i.rejected && !inDeliveryGroup.has(`${o._id}:::${String(i.id)}`));
       if (!hasPendingOutside && this._orderHasPendingItems(o)) return '';
     }
-    const ts = o.submittedAt?.toDate ? fmtTime(o.submittedAt.toDate()) : fmtTime(o.submittedAt);
+    // Received by the server — and when the device placed it, if that was
+    // noticeably earlier (an order that waited offline on an iPad).
+    const received = o.submittedAt?.toDate ? o.submittedAt.toDate() : null;
+    const placed   = o.placedAt ? new Date(o.placedAt) : null;
+    const ts = (received ? fmtTime(received) : fmtTime(o.submittedAt))
+      + (received && placed && received - placed > 90000 ? ` · placed ${fmtTime(placed)}` : '');
     const isPending = this._orderHasPendingItems(o);
     const isSent    = this._orderIsFullySent(o);
     const isRejected = o.status === 'rejected';
@@ -3178,7 +3183,7 @@ const Manager = {
   async noAddToOrders() {
     if (this._opBusy.has('noAdd')) return; // double-tap would submit a duplicate order doc
     if (this.noCount() === 0) { alert('No items on this order.'); return; }
-    if (this._connState.connected === false) {
+    if (this._connState.connected === false || navigator.onLine === false) {
       alert("You're currently offline — orders can't be submitted without a connection."); return;
     }
     this._opBusy.add('noAdd');
@@ -3462,7 +3467,7 @@ const Manager = {
   async receiveSubmit() {
     const items = this.receiveItems();
     if (!items.length) { alert('Select at least one item received.'); return; }
-    if (this._connState.connected === false) {
+    if (this._connState.connected === false || navigator.onLine === false) {
       alert("You're currently offline — stock can't be updated without a connection."); return;
     }
     const reference = document.getElementById('receive-reference')?.value.trim();

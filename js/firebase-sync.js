@@ -1,4 +1,4 @@
-// firebase-sync.js — v2026-10-22.3
+// firebase-sync.js — v2026-11-06.1
 let _db = null, _configured = false, _config = null, _second = null;
 
 // Signed-in email for stamping writes (null when the device isn't signed in —
@@ -54,6 +54,13 @@ const DB = {
       // ── END APP CHECK INIT ────────────────────────────────────────
 
       _db = firebase.firestore();
+      // ON-DEVICE STORE. Writes made offline are kept in IndexedDB, survive a
+      // reload or app restart, and send themselves in order when the
+      // connection returns; reads come from the last data seen. One store per
+      // origin (synchronizeTabs): the manager PC may have several tabs open,
+      // and each iPad page is its own context.
+      try { await _db.enablePersistence({ synchronizeTabs: true }); }
+      catch (e) { console.warn('[Firestore] no on-device store — queued writes will not survive a reload:', (e && e.code) || e); }
       _configured = true;
       return true;
     }
@@ -119,6 +126,31 @@ const DB = {
     return ref.id;
   },
 
+  // The offline-safe way to place an order (worker page). The order is written
+  // under an id made on the device, and this returns AT ONCE with { id, done }:
+  // `done` is the server's confirmation, which may be a long time coming. The
+  // write waits in the on-device store meanwhile (see init) and goes by itself
+  // when the connection returns. A re-send under the same id overwrites rather
+  // than duplicates — see Outbox in shared.js.
+  queueOrder(order, id) {
+    if (!this.isReady()) throw new Error('Firebase not initialised');
+    const ref = id ? _db.collection('orders').doc(id) : _db.collection('orders').doc();
+    const done = ref.set({
+      ...order, status: 'pending', authEmail: _who(),
+      placedAt: order.placedAt || Date.now(),                        // the device's clock: when it was placed
+      submittedAt: firebase.firestore.FieldValue.serverTimestamp(),   // the server's: when it arrived
+    });
+    return { id: ref.id, done };
+  },
+  // Follows one order's write: callback({ exists, pending, fromCache }) on
+  // every change, or ({ error }) if the listener is refused.
+  watchOrderWrite(id, callback) {
+    if (!this.isReady()) return ()=>{};
+    return _db.collection('orders').doc(id).onSnapshot({ includeMetadataChanges: true },
+      snap => callback({ exists: snap.exists, pending: snap.metadata.hasPendingWrites, fromCache: snap.metadata.fromCache }),
+      err  => callback({ error: err }));
+  },
+
   // _pendingWrite: true while a doc's latest write came from THIS client and hasn't
   // been acked by the server yet (Firestore latency compensation). The manager page
   // uses it to tell its own just-created orders apart from ones arriving from other
@@ -141,14 +173,22 @@ const DB = {
   // served from cache while offline, or a pending local write.
   listenConnectionStatus(callback) {
     if (!this.isReady()) { callback(false); return ()=>{}; }
-    let settled = false;
+    let settled = false, live = false;
     const unsub = _db.collection('meta').doc('version').onSnapshot(
       { includeMetadataChanges: true },
-      snap => { settled = true; callback(!snap.metadata.fromCache); },
+      snap => {
+        if (!snap.metadata.fromCache) { settled = live = true; callback(true); }
+        // From cache: with the on-device store that is simply the first thing
+        // every page sees, so it says nothing until a live snapshot has been
+        // seen — after which a cached one means the connection was lost.
+        else if (live) { live = false; callback(false); }
+      },
       ()   => { settled = true; callback(false); }
     );
-    // Fallback in case neither callback fires within a few seconds
-    // (e.g. a fully offline device that never gets even a cached read).
+    // The browser knows it has no network before Firestore does.
+    window.addEventListener('offline', () => { settled = true; live = false; callback(false); });
+    // Fallback in case no live snapshot arrives within a few seconds
+    // (a fully offline device, or one still waiting on its first connection).
     setTimeout(() => { if (!settled) callback(false); }, 5000);
     return unsub;
   },

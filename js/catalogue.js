@@ -1,4 +1,4 @@
-// catalogue.js — v2026-10-22.3
+// catalogue.js — v2026-11-06.1
 //
 // Manager page only: the materials catalogue (Settings → Materials catalogue).
 // The list every page orders from lives in the database (meta/catalogMaterials,

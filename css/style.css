@@ -1128,6 +1128,22 @@ button.bc-chip { font-family: var(--mono); line-height: inherit; }
 }
 .cat-apply span { flex: 1; font-size: 12px; color: var(--text2); }
 
+/* ═══ OUTBOX — orders waiting to send (Outbox in js/shared.js) ═══ */
+.outbox-pill {
+  display: inline-flex; align-items: center; gap: 5px; height: 30px; padding: 0 11px;
+  border-radius: 20px; border: 1px solid var(--amber-text); background: var(--amber-bg);
+  color: var(--amber-text); font-size: 12px; font-weight: 600; cursor: pointer; white-space: nowrap;
+}
+.outbox-pill.failed { border-color: var(--red-text); background: var(--red-bg); color: var(--red-text); }
+.outbox-pill .ti { font-size: 14px; }
+.outbox-list { display: flex; flex-direction: column; gap: 6px; max-height: 50vh; overflow: auto; }
+.outbox-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 9px 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg);
+}
+.outbox-ref { font-size: 13px; font-family: var(--mono); color: var(--text); }
+.outbox-sub { font-size: 12px; color: var(--text3); margin-top: 2px; }
+
 /* ═══ ACCOUNTS & ACCESS (js/auth.js, js/accounts.js) ═══ */
 /* Full-screen block: signed in but not listed, or not a manager on the manager page */
 #auth-block {

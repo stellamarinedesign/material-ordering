@@ -1,9 +1,9 @@
-// shared.js — v2026-10-22.3
+// shared.js — v2026-11-06.1
 
 // The build date plus that day's counter — "2026-10-06.2" is the second build
 // on 6 Oct 2026 (the production board's scheme). Set by tools/bump-version.py;
 // shown to people with a leading "v" (see verLabel).
-const APP_VERSION = '2026-10-22.3';
+const APP_VERSION = '2026-11-06.1';
 
 // Numeric version comparison, part by part. Returns true if `a` is strictly
 // newer than `b`. Reads both the dated form and the "v0.56"-style numbers used
@@ -579,6 +579,122 @@ const Order = {
     }).filter(Boolean);
   },
 };
+
+// ── OUTBOX ──────────────────────────────────────────────────────────────
+// Orders placed on this device that the server has not yet confirmed. The
+// write itself sits in Firestore's on-device queue (DB.init) and goes on its
+// own when the connection returns; this is the belt to those braces: a copy
+// of each order kept here until the server confirms it, re-sent under the
+// same id (so never duplicated) if that queue is ever lost, and the "waiting
+// to send" count the header shows. Entries: { id, ref, payload, placedAt,
+// tries, lastTry, failed? }.
+const Outbox = {
+  _key: 'mo_outbox', _entries: [], _watchers: {}, _onChange: null, _resumed: false,
+  MAX_AUTO_TRIES: 3,
+
+  start(key, onChange) {
+    this._key = key || this._key; this._onChange = onChange || null;
+    try { this._entries = JSON.parse(localStorage.getItem(this._key) || '[]'); } catch { this._entries = []; }
+    if (!Array.isArray(this._entries)) this._entries = [];
+    window.addEventListener('online', () => this.retryFailed());
+    this._render();
+  },
+  // Follow the kept entries in the database — once there is a signed-in
+  // account, since the listeners need one. Safe to call again.
+  resume() {
+    this._resumed = true;
+    this._entries.forEach(e => this._watch(e));
+    this.retryFailed();
+  },
+  list()        { return this._entries.slice(); },
+  count()       { return this._entries.length; },
+  failedCount() { return this._entries.filter(e => e.failed).length; },
+
+  // Right after DB.queueOrder: keep the copy and follow the write.
+  add({ id, ref, payload, done }) {
+    const en = { id, ref: ref || '', payload, placedAt: payload.placedAt || Date.now(), tries: 1, lastTry: Date.now() };
+    this._entries.push(en);
+    this._save(); this._render();
+    this._follow(id, done);
+    if (this._resumed) this._watch(en);
+  },
+  _follow(id, done) {
+    if (!done || !done.then) return;
+    done.then(() => this._confirm(id), e => this._fail(id, e));
+  },
+  _get(id) { return this._entries.find(e => e.id === id); },
+  _confirm(id) {
+    if (!this._get(id)) return;
+    this._entries = this._entries.filter(e => e.id !== id);
+    this._unwatch(id); this._save(); this._render();
+  },
+  _fail(id, e) {
+    const en = this._get(id); if (!en) return;
+    en.failed = (e && e.code === 'permission-denied') ? 'refused by the server' : ((e && e.message) || 'not sent');
+    this._save(); this._render();
+  },
+  // Re-send the kept copy under the same id (overwrites, never duplicates).
+  // Automatic retries are few and spaced out; a tap on Retry is always allowed.
+  _timers: {},
+  retry(id, manual) {
+    const en = this._get(id);
+    if (!en || typeof DB === 'undefined' || !DB.isReady()) return;
+    if (!manual && en.tries >= this.MAX_AUTO_TRIES) return;
+    const wait = 8000 - (Date.now() - (en.lastTry || 0));
+    if (wait > 0) {                       // one attempt at a time: come back when the window has passed
+      if (!this._timers[id]) this._timers[id] = setTimeout(() => { delete this._timers[id]; this.retry(id, manual); }, wait);
+      return;
+    }
+    en.tries++; en.lastTry = Date.now(); delete en.failed;
+    this._save(); this._render();
+    try { const { done } = DB.queueOrder(en.payload, en.id); this._follow(en.id, done); }
+    catch (e) { this._fail(en.id, e); }
+  },
+  retryFailed() { this._entries.filter(e => e.failed).forEach(e => this.retry(e.id, false)); },
+  // What the database says about the write: the server has it → done; the
+  // server says there is no such order and nothing is queued → re-send the copy.
+  _watch(en) {
+    if (this._watchers[en.id] || typeof DB === 'undefined' || !DB.watchOrderWrite) return;
+    this._watchers[en.id] = DB.watchOrderWrite(en.id, s => {
+      if (s.error) { this._fail(en.id, s.error); return; }
+      if (s.exists && !s.pending && !s.fromCache) this._confirm(en.id);
+      else if (!s.exists && !s.fromCache) this.retry(en.id, false);
+      // exists + pending: still queued on this device. !exists + fromCache: offline, nothing known yet — wait.
+    });
+  },
+  _unwatch(id) { const u = this._watchers[id]; if (u) { try { u(); } catch {} delete this._watchers[id]; } if (this._timers[id]) { clearTimeout(this._timers[id]); delete this._timers[id]; } },
+  _save() { try { localStorage.setItem(this._key, JSON.stringify(this._entries)); } catch {} },
+  _render() {
+    if (this._onChange) this._onChange(this);
+    if (document.getElementById('outbox-card')) this.openList();
+  },
+
+  // ── the header pill, and the list behind it ──
+  pillHtml() {
+    const n = this.count(); if (!n) return '';
+    const failed = this.failedCount();
+    return `<button class="outbox-pill${failed ? ' failed' : ''}" data-outbox><i class="ti ${failed ? 'ti-alert-triangle' : 'ti-cloud-upload'}"></i> ${n} waiting to send</button>`;
+  },
+  openList() {
+    let ow = document.getElementById('overlay-wrap');
+    if (!ow) { ow = document.createElement('div'); ow.id = 'overlay-wrap'; document.body.appendChild(ow); }
+    const rows = this._entries.map(e => `<div class="outbox-row">
+        <div><div class="outbox-ref">${esc(e.ref || e.id)}</div><div class="outbox-sub">placed ${esc(fmtTime(new Date(e.placedAt)))}${e.failed ? ' · ' + esc(e.failed) : ''}</div></div>
+        ${e.failed ? `<button class="btn-sm" data-outbox-retry="${esc(e.id)}">Retry</button>` : '<i class="ti ti-cloud-upload" style="color:var(--text3)"></i>'}
+      </div>`).join('');
+    ow.innerHTML = `<div class="success-overlay"><div class="success-card" id="outbox-card" style="max-width:380px;text-align:left">
+        <h3 style="text-align:center">Waiting to send</h3>
+        <div class="outbox-list">${rows || '<div class="outbox-sub">Nothing waiting.</div>'}</div>
+        <button class="btn btn-outline" id="outbox-close" style="width:100%;margin-top:14px">Close</button>
+      </div></div>`;
+    document.getElementById('outbox-close').addEventListener('click', () => { ow.innerHTML = ''; });
+  },
+};
+document.addEventListener('click', e => {
+  if (e.target.closest('[data-outbox]')) Outbox.openList();
+  const r = e.target.closest('[data-outbox-retry]');
+  if (r) Outbox.retry(r.dataset.outboxRetry, true);
+});
 
 // Generate a stable Firestore document ID for a consumable item.
 // Uses real part code if available; otherwise slugifies description.
