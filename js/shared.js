@@ -1,9 +1,9 @@
-// shared.js — v2026-11-12.1
+// shared.js — v2026-11-23.1
 
 // The build date plus that day's counter — "2026-10-06.2" is the second build
 // on 6 Oct 2026 (the production board's scheme). Set by tools/bump-version.py;
 // shown to people with a leading "v" (see verLabel).
-const APP_VERSION = '2026-11-12.1';
+const APP_VERSION = '2026-11-23.1';
 
 // Numeric version comparison, part by part. Returns true if `a` is strictly
 // newer than `b`. Reads both the dated form and the "v0.56"-style numbers used
@@ -675,23 +675,65 @@ const Outbox = {
     const failed = this.failedCount();
     return `<button class="outbox-pill${failed ? ' failed' : ''}" data-outbox><i class="ti ${failed ? 'ti-alert-triangle' : 'ti-cloud-upload'}"></i> ${n} waiting to send</button>`;
   },
+  // Each waiting order opens to its lines — what was asked for and how many
+  // — so it can be read off the screen (and phoned through) if the connection
+  // stays down. _open: which ones are open, kept across re-renders.
+  _open: new Set(),
+  _detailHtml(e) {
+    const items = (e.payload && e.payload.items) || [];
+    const note  = e.payload && e.payload.note;
+    return items.map(i => `<div class="outbox-line">
+        <div class="outbox-qty">${esc(orderQtyDisplay(i, i.qty))}</div>
+        <div><div class="outbox-desc">${descHtml(i.description || '')}</div>${i.partCode && !Data.isDummyCode(i.partCode) ? `<div class="outbox-code">${esc(i.partCode)}</div>` : ''}</div>
+      </div>`).join('') + (note ? `<div class="outbox-note">${esc(note)}</div>` : '');
+  },
   openList() {
     let ow = document.getElementById('overlay-wrap');
     if (!ow) { ow = document.createElement('div'); ow.id = 'overlay-wrap'; document.body.appendChild(ow); }
-    const rows = this._entries.map(e => `<div class="outbox-row">
-        <div><div class="outbox-ref">${esc(e.ref || e.id)}</div><div class="outbox-sub">placed ${esc(fmtTime(new Date(e.placedAt)))}${e.failed ? ' · ' + esc(e.failed) : ''}</div></div>
-        ${e.failed ? `<button class="btn-sm" data-outbox-retry="${esc(e.id)}">Retry</button>` : '<i class="ti ti-cloud-upload" style="color:var(--text3)"></i>'}
-      </div>`).join('');
-    ow.innerHTML = `<div class="success-overlay"><div class="success-card" id="outbox-card" style="max-width:380px;text-align:left">
+    const prev = document.querySelector('#outbox-card .outbox-list');
+    const top = prev ? prev.scrollTop : 0;      // re-rendered while open (an order went): stay where the reader was
+    const rows = this._entries.map(e => {
+      const open = this._open.has(e.id), n = ((e.payload && e.payload.items) || []).length;
+      return `<div class="outbox-item">
+        <div class="outbox-top">
+          <button class="outbox-head" data-outbox-toggle="${esc(e.id)}" aria-expanded="${open}" aria-controls="outbox-d-${esc(e.id)}">
+            <span class="outbox-head-text"><span class="outbox-ref">${esc(e.ref || e.id)}</span><span class="outbox-sub">placed ${esc(fmtTime(new Date(e.placedAt)))} · ${n} line${n === 1 ? '' : 's'}${e.failed ? ' · ' + esc(e.failed) : ''}</span></span>
+            <i class="ti ti-chevron-${open ? 'up' : 'down'}"></i>
+          </button>
+          ${e.failed ? `<button class="btn-sm outbox-retry" data-outbox-retry="${esc(e.id)}">Retry</button>` : ''}
+        </div>
+        <div class="outbox-detail" id="outbox-d-${esc(e.id)}"${open ? '' : ' hidden'}>${this._detailHtml(e)}</div>
+      </div>`;
+    }).join('');
+    ow.innerHTML = `<div class="success-overlay"><div class="success-card" id="outbox-card" style="max-width:440px;text-align:left">
         <h3 style="text-align:center">Waiting to send</h3>
         <div class="outbox-list">${rows || '<div class="outbox-sub">Nothing waiting.</div>'}</div>
         <button class="btn btn-outline" id="outbox-close" style="width:100%;margin-top:14px">Close</button>
       </div></div>`;
     document.getElementById('outbox-close').addEventListener('click', () => { ow.innerHTML = ''; });
+    const list = ow.querySelector('.outbox-list'); if (list) list.scrollTop = top;
+  },
+  // Open or close one order in place — no re-render, so nothing jumps.
+  toggle(id) {
+    const open = !this._open.has(id);
+    if (open) this._open.add(id); else this._open.delete(id);
+    const btn = [...document.querySelectorAll('[data-outbox-toggle]')].find(b => b.dataset.outboxToggle === id);
+    if (!btn) return;
+    btn.setAttribute('aria-expanded', open);
+    btn.querySelector('.ti').className = `ti ti-chevron-${open ? 'up' : 'down'}`;
+    const d = document.getElementById('outbox-d-' + id); if (d) d.hidden = !open;
   },
 };
 document.addEventListener('click', e => {
-  if (e.target.closest('[data-outbox]')) Outbox.openList();
+  if (e.target.closest('[data-outbox]')) {
+    // Opened from the pill: start closed — unless there is only one order
+    // waiting, which is the one they came to read.
+    Outbox._open.clear();
+    if (Outbox.count() === 1) Outbox._open.add(Outbox.list()[0].id);
+    Outbox.openList();
+  }
+  const t = e.target.closest('[data-outbox-toggle]');
+  if (t) Outbox.toggle(t.dataset.outboxToggle);
   const r = e.target.closest('[data-outbox-retry]');
   if (r) Outbox.retry(r.dataset.outboxRetry, true);
 });
