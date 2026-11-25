@@ -14,8 +14,8 @@
   <link rel="icon" type="image/png" href="favicon.png">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
   <link rel="stylesheet" href="fonts/tabler-icons.min.css">
-  <link rel="stylesheet" href="css/style.css?v=2026-11-23.1">
-  <link rel="stylesheet" href="css/themes.css?v=2026-11-23.1">
+  <link rel="stylesheet" href="css/style.css?v=2026-11-25.1">
+  <link rel="stylesheet" href="css/themes.css?v=2026-11-25.1">
   <style>
     .mat-bin {
       width:30px; height:32px; display:flex; align-items:center; justify-content:center;
@@ -94,9 +94,9 @@
 <!-- APP CHECK: remove this line to disable App Check (also remove init block in firebase-sync.js) -->
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-check-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
-<script src="js/shared.js?v=2026-11-23.1"></script>
-<script src="js/firebase-sync.js?v=2026-11-23.1"></script>
-<script src="js/auth.js?v=2026-11-23.1"></script>
+<script src="js/shared.js?v=2026-11-25.1"></script>
+<script src="js/firebase-sync.js?v=2026-11-25.1"></script>
+<script src="js/auth.js?v=2026-11-25.1"></script>
 <script>
 const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker global
   activeCat:  null,
@@ -128,7 +128,8 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
     const ok = await DB.init(FirebaseConfig.get());
     if (!ok) { this.showSetup('Could not connect to the database.'); return; }
     this.materials = await Data.load('./materials.csv');
-    Outbox.start('mo_outbox', () => this._renderOutbox());
+    // Test mode has its own list, so a waiting order only ever goes to the database it was made for.
+    Outbox.start(`mo_outbox${FirebaseConfig.isTestMode() ? '_test' : ''}`, () => this._renderOutbox());
     Auth.deviceName = DeviceName;
     Auth.start(user => { if (user) Outbox.resume(); });
     DB.onDenied = () => Auth.denied();
@@ -252,6 +253,9 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
             <p style="font-size:14px;color:var(--text2);line-height:1.6;max-width:300px;margin-bottom:28px" id="success-text">
               The production manager has been notified and will review your order.
             </p>
+            <button class="btn btn-primary" style="max-width:280px;margin-bottom:8px" id="btn-success-retry" data-outbox-retry="" hidden>
+              <i class="ti ti-refresh"></i> Retry
+            </button>
             <button class="btn btn-primary" style="max-width:280px" id="btn-new-order">
               <i class="ti ti-plus"></i> Start new order
             </button>
@@ -293,10 +297,24 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
       if (tick) { e.stopPropagation(); this.stTickItem(+tick.dataset.stTick); }
     });
     document.getElementById('mat-list').addEventListener('change', e => {
-      const inp  = e.target.closest('[data-qid]');
       const sinp = e.target.closest('[data-st-qid]');
-      if (inp)  this.setQty(+inp.dataset.qid, inp.value);
       if (sinp) this.stSetQty(+sinp.dataset.stQid, sinp.value);
+    });
+    // Typed order quantities (QtyField): the list takes 0 as "not on the order"; the
+    // review has its own Remove.
+    const itemOf = id => this.materials.find(m => m.id == id);
+    QtyField.attach(document.getElementById('mat-list'), '[data-qid]', {
+      zero: true,
+      item: el => itemOf(el.dataset.qid),
+      get:  el => Order.get(+el.dataset.qid),
+      set:  (el, qty) => Order.set(+el.dataset.qid, qty),
+      live: el => { this._cardState(el); this.updateBadge(); },
+    });
+    QtyField.attach(document.getElementById('review-contents'), '[data-rqid]', {
+      item: el => itemOf(el.dataset.rqid),
+      get:  el => Order.get(+el.dataset.rqid),
+      set:  (el, qty) => Order.set(+el.dataset.rqid, qty),
+      live: el => this._reviewState(el),
     });
 
     document.getElementById('review-contents').addEventListener('click', e => {
@@ -306,10 +324,6 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
       if (dec) this.revAdj(+dec.dataset.rdec, -1);
       if (inc) this.revAdj(+inc.dataset.rinc,  1);
       if (rem) this.removeItem(+rem.dataset.rrem);
-    });
-    document.getElementById('review-contents').addEventListener('change', e => {
-      const inp = e.target.closest('[data-rqid]');
-      if (inp) this.revSet(+inp.dataset.rqid, inp.value);
     });
     // The review re-renders on every qty change, so the note is kept in state.
     document.getElementById('review-contents').addEventListener('input', e => {
@@ -375,12 +389,14 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
   _renderOutbox() {
     const el = document.getElementById('outbox-slot');
     if (el) el.innerHTML = Outbox.pillHtml();
+    if (document.getElementById('success-panel')?.classList.contains('open')) this._renderSuccess();
   },
 
   startConnectionStatus() {
     DB.listenConnectionStatus(connected => {
       this._connState.connected = connected;
       this._renderLiveStatus();
+      this._renderOutbox();
     });
   },
 
@@ -430,14 +446,34 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
     const filtered=Data.filter(this.materials,this.activeCat,this.activeSub,q);
     const list=document.getElementById('mat-list'); if(!list) return;
     if(!filtered.length){list.innerHTML=`<div class="empty-state"><i class="ti ti-package-off"></i><p>No materials found.</p></div>`;return;}
+    const restoreFocus = captureInputFocus(); // live data re-renders mid-typing
     if (this._stocktakeMode) {
-      const restoreFocus = captureInputFocus(); // live stock updates re-render mid-typing
       const stockMap = new Map(this._matStock.map(r => [r._id, r]));
       list.innerHTML = filtered.map(m => this._stCard(m, stockMap)).join('');
-      restoreFocus();
     } else {
       list.innerHTML=filtered.map(m=>this._matCard(m)).join('');
     }
+    restoreFocus();
+  },
+
+  // A quantity typed on a card: mark the card in place. No redraw, so the field keeps
+  // its caret and the next tap lands where it was aimed.
+  _cardState(el) {
+    const on = Order.get(+el.dataset.qid) > 0, card = el.closest('.mat-card'); if (!card) return;
+    card.classList.toggle('in-order', on);
+    const add = card.querySelector('.add-btn');
+    if (add) { add.classList.toggle('in-order', on); add.innerHTML = `<i class="ti ${on ? 'ti-check' : 'ti-plus'}"></i>`; }
+  },
+  _reviewState(el) {
+    const id = +el.dataset.rqid, q = el.closest('.order-item')?.querySelector('.order-item-qty');
+    if (q) q.textContent = `× ${Order.get(id)}`;
+    const t = document.querySelector('#review-contents .order-summary-row.total span:last-child');
+    if (t) t.textContent = this._total();
+    this.updateBadge(); this.renderList();
+  },
+  _total() {
+    const items = Order.items(this.materials);
+    return `${round2(items.reduce((s,i)=>s+i.qty,0))} across ${items.length} line${items.length!==1?'s':''}`;
   },
 
   _matCard(m) {
@@ -453,7 +489,7 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
       </div>
       <div class="mat-controls">
         <button class="qty-btn" data-dec="${m.id}">−</button>
-        <input class="qty-input" type="number" min="0" step="1" value="${qty}" data-qid="${m.id}">
+        <input class="qty-input" ${QtyField.attrs(m)} value="${qty || ''}" data-qid="${m.id}">
         <button class="qty-btn" data-inc="${m.id}">+</button>
         <button class="add-btn ${inOrder?'in-order':''}" data-add="${m.id}">
           <i class="ti ${inOrder?'ti-check':'ti-plus'}"></i>
@@ -497,11 +533,9 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
   },
 
   adj(id,d)     { Order.adjust(id,d);           this._changed(); },
-  setQty(id,v)  { Order.set(id,parseInt(v)||0); this._changed(); },
   quickAdd(id)  { if(!Order.get(id)) Order.set(id,1); this._changed(); },
   zeroItem(id)  { Order.remove(id); this._changed(); },
   revAdj(id,d)  { Order.adjust(id,d);           this.updateBadge(); this._syncReview(); },
-  revSet(id,v)  { Order.set(id,parseInt(v)||0); this.updateBadge(); this._syncReview(); },
   removeItem(id){ Order.remove(id);              this.updateBadge(); this._syncReview(); },
   clearOrder()  { if(!confirm('Clear all items?')) return; Order.clear(); this._orderNote=''; this.updateBadge(); this._syncReview(); this.closePanel('review-panel'); },
 
@@ -607,7 +641,7 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
         </div>
         <div class="order-item-foot">
           <button class="qty-btn" data-rdec="${i.id}">−</button>
-          <input class="qty-input" type="number" min="1" step="1" value="${i.qty}" data-rqid="${i.id}">
+          <input class="qty-input" ${QtyField.attrs(i)} value="${i.qty}" data-rqid="${i.id}">
           <button class="qty-btn" data-rinc="${i.id}">+</button>
           <button class="remove-btn" data-rrem="${i.id}"><i class="ti ti-x"></i> Remove</button>
         </div>
@@ -615,7 +649,7 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
       <div class="order-summary-card">
         <div class="order-summary-row total">
           <span>Total items</span>
-          <span>${items.reduce((s,i)=>s+i.qty,0)} across ${items.length} line${items.length!==1?'s':''}</span>
+          <span>${this._total()}</span>
         </div>
       </div>`+`
       <div class="order-note-card">
@@ -638,6 +672,7 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
             border-radius:var(--radius);margin-bottom:12px;white-space:pre-wrap;line-height:1.6">${esc(lines)}</pre>
           ${this._orderNote.trim() ? `<div class="order-note-preview"><i class="ti ti-message-2"></i> ${esc(this._orderNote.trim())}</div>` : ''}
           <p>The production manager will review and forward to purchasing.</p>
+          <div class="inline-error" id="submit-error" role="alert" hidden style="margin-bottom:10px"></div>
           <div class="sheet-btns">
             <button class="btn btn-orange" id="btn-confirm-yes"><i class="ti ti-send"></i> Confirm and submit</button>
             <button class="btn btn-outline" id="btn-confirm-no">Cancel</button>
@@ -666,28 +701,46 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
     // returns (Outbox keeps a copy and re-sends if that queue is ever lost).
     // Disabling the button blocks a double-tap from placing it twice.
     const yesBtn = document.getElementById('btn-confirm-yes');
+    if (yesBtn && yesBtn.disabled) return;
+    const noBtn = document.getElementById('btn-confirm-no');
     if (yesBtn) { yesBtn.disabled = true; yesBtn.innerHTML = '<i class="ti ti-loader" style="animation:spin 1s linear infinite"></i> Submitting…'; }
+    if (noBtn)  noBtn.disabled = true;   // it is on its way: there is nothing left to cancel
     const order = { ref:this.orderRef, deviceName:DeviceName.get(), items, note:this._orderNote.trim(), placedAt: Date.now() };
     let queued;
     try { queued = DB.queueOrder(order); }
     catch(e) {
+      console.error('Order not placed:', e);
       if (yesBtn) { yesBtn.disabled = false; yesBtn.innerHTML = '<i class="ti ti-send"></i> Confirm and submit'; }
-      alert("Couldn't place the order.\n\n" + e.message);
+      if (noBtn)  noBtn.disabled = false;
+      inlineError('submit-error', `Not submitted: ${whyFailed(e)}. Your order is still here. Tap Confirm and submit to try again.`);
       return;
     }
     Outbox.add({ id: queued.id, ref: this.orderRef, payload: order, done: queued.done });
-    const sent = await Promise.race([queued.done.then(() => true, () => false), new Promise(r => setTimeout(() => r(false), 3000))]);
+    await Promise.race([queued.done.catch(() => {}), new Promise(r => setTimeout(r, 3000))]);
     this._orderNote = '';
     this.closeOverlay();
     this.closePanel('review-panel');
-    this._showSuccess(sent);
-  },
-  _showSuccess(sent) {
-    const t = document.getElementById('success-title'), p = document.getElementById('success-text'), ic = document.getElementById('success-icon');
-    if (t)  t.textContent = sent ? 'Order submitted!' : 'Order queued';
-    if (p)  p.textContent = sent ? 'The production manager has been notified and will review your order.' : 'It will send itself when this device is back online.';
-    if (ic) ic.innerHTML = sent ? '<i class="ti ti-circle-check"></i>' : '<i class="ti ti-cloud-upload"></i>';
+    this._lastOrderId = queued.id;
+    this._renderSuccess();
     this.openPanel('success-panel');
+  },
+  // What became of the order just placed. Three different outcomes, and it follows the
+  // order while it is on screen: a queued one that goes through turns to submitted, one
+  // the server refuses says so.
+  _renderSuccess() {
+    if (!this._lastOrderId) return;
+    const st = Outbox.state(this._lastOrderId);
+    const offline = this._connState.connected === false || navigator.onLine === false;
+    const [cls, icon, title, text] =
+      st === 'sent'   ? ['green', 'ti-circle-check', 'Order submitted!', 'The production manager has been notified and will review your order.'] :
+      st === 'failed' ? ['red', 'ti-alert-triangle', 'Order not sent', 'The server refused it. It is saved on this device. Tap Retry.'] :
+                        ['amber', 'ti-cloud-upload', 'Order queued', offline ? 'It will send itself when this device is back online.' : 'The connection is slow. It will send itself.'];
+    const set = (id, fn) => { const el = document.getElementById(id); if (el) fn(el); };
+    set('success-title', el => { el.textContent = title; });
+    set('success-text',  el => { el.textContent = text; });
+    set('success-icon',  el => { el.className = `success-icon ${cls}`; el.innerHTML = `<i class="ti ${icon}"></i>`; });
+    set('btn-success-retry', el => { el.hidden = st !== 'failed'; el.dataset.outboxRetry = this._lastOrderId; });
+    set('btn-new-order', el => { el.classList.toggle('btn-primary', st !== 'failed'); el.classList.toggle('btn-outline', st === 'failed'); });
   },
 
   // ══════════════════════════════════════════
@@ -788,11 +841,14 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
     const m = this.materials.find(x => x.id == id); if (!m) return;
     this._stTickBusy.add(id);
     try {
-      await DB.recordStocktake([this._stPayload(m)], DeviceName.get());
+      const payload = [this._stPayload(m)];
+      await DB.recordStocktake(payload, DeviceName.get(), OpId.for(`tick:${id}`, payload));
+      OpId.done(`tick:${id}`);
       delete this._st._items[id]; delete this._stModes[id];
       this._updateStBadge(); this.renderList();
     } catch(e) {
-      alert('Could not record that count — please try again.\n\n' + e.message);
+      console.error('Count not recorded:', e);
+      alert(`Count not recorded: ${whyFailed(e)}. Tap the tick to try again.`);
     } finally { this._stTickBusy.delete(id); }
   },
 
@@ -817,6 +873,7 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
           <h3>Submit stocktake</h3>
           <p style="margin-bottom:8px">${items.length} item${items.length!==1?'s':''} · recorded as <strong>${esc(DeviceName.get())}</strong></p>
           <div class="signout-item-list">${lines}</div>
+          <div class="inline-error" id="st-error" role="alert" hidden style="margin-top:10px"></div>
           <button class="btn btn-primary" id="btn-st-confirm" style="width:100%;margin-top:12px"><i class="ti ti-check"></i> Confirm stocktake</button>
           <button class="btn btn-outline" id="btn-st-cancel" style="width:100%;margin-top:8px">Cancel</button>
         </div>
@@ -833,10 +890,14 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
       alert("You're currently offline — stocktakes can't be submitted without a connection."); return;
     }
     this._stBusy = true;
-    const btn = document.getElementById('btn-st-confirm');
-    if (btn) { btn.disabled = true; btn.innerHTML = '<i class="ti ti-loader" style="animation:spin 1s linear infinite"></i> Submitting…'; }
+    inlineError('st-error', '');
+    const btn = document.getElementById('btn-st-confirm'), cancel = document.getElementById('btn-st-cancel');
+    if (cancel) cancel.disabled = true;
+    if (btn) { btn.disabled = true; btn.innerHTML = `<i class="ti ti-loader" style="animation:spin 1s linear infinite"></i> Saving ${items.length} count${items.length!==1?'s':''}…`; }
     try {
-      await DB.recordStocktake(items.map(m => this._stPayload(m)), DeviceName.get());
+      const payload = items.map(m => this._stPayload(m));
+      await DB.recordStocktake(payload, DeviceName.get(), OpId.for('stocktake', payload));
+      OpId.done('stocktake');
       this._st._items = {}; this._stModes = {};
       this._updateStBadge(); this.renderList();
       const ow = document.getElementById('overlay-wrap');
@@ -851,13 +912,15 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
         </div>`;
       document.getElementById('btn-st-done').addEventListener('click', () => { ow.innerHTML=''; });
     } catch(e) {
+      console.error('Stocktake not saved:', e);
+      if (cancel) cancel.disabled = false;
       if (btn) { btn.disabled = false; btn.innerHTML = '<i class="ti ti-check"></i> Confirm stocktake'; }
-      alert('Submit failed — please try again.\n\n' + e.message);
+      inlineError('st-error', `Not saved: ${whyFailed(e)}.${nothingDone(e, 'Nothing was recorded.')} Tap Confirm stocktake to try again.`);
     } finally { this._stBusy = false; }
   },
 
   newOrder() {
-    Order.clear(); this._orderNote=''; this.orderRef=genRef(); this.activeCat=null; this.activeSub=null;
+    Order.clear(); this._orderNote=''; this._lastOrderId=null; this.orderRef=genRef(); this.activeCat=null; this.activeSub=null;
     this.closePanel('success-panel'); this.updateBadge();
     const ref=document.getElementById('order-ref'); if(ref) ref.textContent=this.orderRef;
     const srch=document.getElementById('search');   if(srch) srch.value='';

@@ -323,6 +323,7 @@ button { cursor: pointer; }
   display: flex; align-items: center; justify-content: center; gap: 8px;
   border: 1px solid transparent;
 }
+.btn[hidden], .btn-sm[hidden] { display: none; }
 .btn-primary { background: var(--accent); color: var(--accent-text); }
 .btn-primary:active { opacity: 0.85; }
 .btn-outline { background: var(--surface); border-color: var(--border); color: var(--text); }
@@ -696,14 +697,14 @@ button { cursor: pointer; }
 .intake-card.open { border-color: var(--border2); }
 
 .intake-card-hdr {
-  display: flex; align-items: center; justify-content: space-between;
+  display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap;
   padding: 12px 14px; gap: 10px; cursor: pointer; user-select: none;
 }
 .intake-card-hdr:hover { background: var(--bg); }
-.intake-card-title { flex: 1; min-width: 0; }
+.intake-card-title { flex: 1 1 170px; min-width: 0; }   /* on a phone the buttons drop below rather than crush it */
 .intake-card-ref { font-size: 14px; font-weight: 600; font-family: var(--mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .intake-card-meta { font-size: 11px; color: var(--text3); margin-top: 2px; }
-.intake-card-right { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.intake-card-right { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px; margin-left: auto; }
 .intake-chevron { color: var(--text3); font-size: 15px; }
 
 /* Status badge (inline pill) */
@@ -1136,6 +1137,45 @@ button.bc-chip { font-family: var(--mono); line-height: inherit; }
   padding: 11px 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg);
 }
 .st-export-card .btn:disabled { opacity: 0.45; }
+
+/* ═══ SAVING, FAILING, ASKING (js/shared.js) ═══ */
+.btn:disabled, .btn-sm:disabled { opacity: 0.55; cursor: default; }
+/* A failure, kept beside the button that failed until the next try */
+.inline-error {
+  padding: 9px 12px; border: 1px solid var(--red-text); border-radius: var(--radius);
+  background: var(--red-bg); color: var(--red-text); font-size: 13px; line-height: 1.45; text-align: left; text-wrap: pretty;
+}
+.inline-error[hidden] { display: none; }
+.panel > .inline-error { margin: 10px 16px; }
+.intake-failed { margin: 0 14px 12px; }
+.success-icon.amber { background: var(--amber-bg); color: var(--amber-text); }
+.success-icon.red   { background: var(--red-bg);   color: var(--red-text); }
+/* A question with two named answers (Ask.confirm) */
+#ask-wrap .success-overlay { z-index: 130; }
+.ask-card { max-width: 400px; }
+.ask-card h3 { text-wrap: balance; }
+.ask-card .btn + .btn { margin-top: 8px; }
+.ask-rows { max-height: 46vh; overflow-y: auto; margin: 4px 0 16px; border: 1px solid var(--border); border-radius: var(--radius); text-align: left; }
+.ask-row { display: flex; align-items: baseline; justify-content: space-between; gap: 14px; padding: 8px 12px; font-size: 13px; color: var(--text); border-bottom: 1px solid var(--border); }
+.ask-row:last-child { border-bottom: none; }
+.ask-val { font-family: var(--mono); font-weight: 600; white-space: nowrap; font-variant-numeric: tabular-nums; }
+/* A typed quantity that was refused, and why */
+.qty-input.qty-bad, .qty-row .qty-edit.qty-bad { border-color: var(--red-text); color: var(--red-text); }
+/* it takes the unit's line, so nothing below moves under the next tap */
+.qty-note { font-size: 11px; font-weight: 600; color: var(--red-text); margin-top: 1px; }
+.mat-info:has(.qty-note) .mat-unit, .order-item:has(.qty-note) .order-item-unit, .signout-item-info:has(.qty-note) .signout-item-unit { display: none; }
+/* Delivery cards: staged ticks not saved yet, and a save in progress */
+.intake-unsaved-tag, .intake-saving {
+  display: inline-flex; align-items: center; gap: 4px; white-space: nowrap;
+  font-size: 11px; font-weight: 600; padding: 3px 8px; border-radius: 20px;
+}
+.intake-unsaved-tag { background: var(--amber-bg); color: var(--amber-text); }
+.intake-saving { background: var(--bg2); color: var(--text2); }
+.intake-saving .ti { animation: spin 1s linear infinite; }
+.intake-discard-btn {
+  font-size: 11px; font-weight: 600; padding: 5px 10px; border-radius: var(--radius);
+  border: 1px solid transparent; background: none; color: var(--text2); cursor: pointer;
+}
 
 /* ═══ OUTBOX — orders waiting to send (Outbox in js/shared.js) ═══ */
 .outbox-pill {

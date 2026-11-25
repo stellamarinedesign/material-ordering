@@ -13,8 +13,8 @@
   <link rel="icon" type="image/png" href="favicon.png">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
   <link rel="stylesheet" href="fonts/tabler-icons.min.css">
-  <link rel="stylesheet" href="css/style.css?v=2026-11-23.1">
-  <link rel="stylesheet" href="css/themes.css?v=2026-11-23.1">
+  <link rel="stylesheet" href="css/style.css?v=2026-11-25.1">
+  <link rel="stylesheet" href="css/themes.css?v=2026-11-25.1">
   <style>
     .cons-stock-badge {
       font-size: 11px; font-family: var(--mono); padding: 2px 8px;
@@ -119,9 +119,9 @@
 <!-- APP CHECK: remove this line to disable App Check (also remove init block in firebase-sync.js) -->
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-check-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
-<script src="js/shared.js?v=2026-11-23.1"></script>
-<script src="js/firebase-sync.js?v=2026-11-23.1"></script>
-<script src="js/auth.js?v=2026-11-23.1"></script>
+<script src="js/shared.js?v=2026-11-25.1"></script>
+<script src="js/firebase-sync.js?v=2026-11-25.1"></script>
+<script src="js/auth.js?v=2026-11-25.1"></script>
 <script>
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.getRegistrations().then(rs => rs.forEach(r => r.unregister()));
@@ -250,8 +250,21 @@ const ConsApp = {
       const tile = e.target.closest('[data-tile]');
       if (tile) this.adj(+tile.dataset.tile, 1);
     });
-    document.getElementById('cons-mat-list').addEventListener('change', e => {
-      const inp = e.target.closest('[data-qid]'); if (inp) this.setQty(+inp.dataset.qid, inp.value);
+    QtyField.attach(document.getElementById('cons-mat-list'), '[data-qid]', {
+      zero: true,
+      item: el => this.consumables.find(m => m.id == el.dataset.qid),
+      get:  el => this.get(+el.dataset.qid),
+      set:  (el, qty) => this.set(+el.dataset.qid, qty),
+      live: el => {
+        const tile = el.closest('.cons-tile'), qty = this.get(+el.dataset.qid);
+        if (tile) {
+          tile.classList.toggle('in-order', qty > 0);
+          let bubble = tile.querySelector('.cons-tile-qty');
+          if (qty > 0 && !bubble) { bubble = document.createElement('span'); bubble.className = 'cons-tile-qty'; tile.querySelector('.cons-tile-img').appendChild(bubble); }
+          if (bubble) { if (qty > 0) bubble.textContent = qty; else bubble.remove(); }
+        }
+        this._updateBadge();
+      },
     });
     // A tile photo that 404s: remember its key so it's not requested again, and drop the
     // <img> so the category icon beneath shows through. Error events don't bubble — capture.
@@ -282,7 +295,10 @@ const ConsApp = {
     // field first. Guarded because renderShell also runs after first-time setup.
     if (!this._scannerStarted) {
       this._scannerStarted = true;
-      BarcodeScanner.start(code => this._onScan(code));
+      BarcodeScanner.start(code => this._onScan(code), {
+        // A scan made while a name or a quantity is being typed is still a scan.
+        through: el => el.id === 'overlay-tradesman-name' || el.classList.contains('qty-input'),
+      });
     }
   },
 
@@ -384,8 +400,7 @@ const ConsApp = {
     if (avail !== null) qty = Math.min(qty, avail);
     if (qty <= 0) delete this._items[id]; else this._items[id]=qty;
   },
-  adj(id,d)      { this.set(id, this.get(id)+d); this._changed(); },
-  setQty(id,v)   { this.set(id, parseInt(v)||0); this._changed(); },
+  adj(id,d)      { this.set(id, round2(this.get(id)+d)); this._changed(); },
   // Secondary "take a box" action for boxed items — adds a whole box's worth of
   // individual units (clamped to available stock by set()). Individual +/− stays primary.
   addBox(id)     { const m = this.consumables.find(x=>x.id==id); if (!hasBoxTracking(m)) return; this.set(id, this.get(id) + m.boxSize); this._changed(); },
@@ -404,6 +419,7 @@ const ConsApp = {
       else this._promptLinkBarcode(code);
       return;
     }
+    if (this._checkoutBusy) { this._toast('Signing out. Scan again in a moment.', true); return; }
     if (!m) { this._toast('Barcode not set up yet — see the manager to link it', true); return; }
     const isBoxed = hasBoxTracking(m);
     const before  = this.get(m.id);
@@ -504,8 +520,12 @@ const ConsApp = {
     }).filter(Boolean);
   },
 
+  _cartId: null,   // from the first try to sign this cart out until it is empty: a try that failed never counts twice
   _changed() {
+    if (!this.count()) this._cartId = null;
     this._updateBadge(); this.renderList();
+    // A scan with the sign-out dialog open lands in its list.
+    if (document.getElementById('signout-item-list')) this._refreshSignOutItemsOnly();
   },
   _updateBadge() {
     const b = document.getElementById('cons-badge'); if (!b) return;
@@ -547,6 +567,7 @@ const ConsApp = {
       return;
     }
 
+    const restoreFocus = captureInputFocus(); // stock updates re-render mid-typing
     const tiles = filtered.map(m => {
       const qty    = this.get(m.id);
       const inOrder= qty > 0;
@@ -587,7 +608,7 @@ const ConsApp = {
           <div class="cons-tile-name">${descHtml(m.description)}</div>
           <div class="cons-tile-controls">
             <button class="qty-btn" data-dec="${m.id}">−</button>
-            <input class="qty-input" type="number" min="0" ${avail!==null?`max="${avail}"`:''} step="1" value="${qty}" data-qid="${m.id}">
+            <input class="qty-input" ${QtyField.attrs(m)} ${avail!==null?`max="${avail}"`:''} value="${qty || ''}" data-qid="${m.id}">
             <button class="qty-btn" data-inc="${m.id}">+</button>
           </div>
           ${isBoxed ? `<button class="cons-box-btn" data-box="${m.id}"><i class="ti ti-box-seam"></i> Take a ${esc(m.boxUnit||'Box')} (${m.boxSize})</button>` : ''}
@@ -595,6 +616,7 @@ const ConsApp = {
       </div>`;
     }).join('');
     list.innerHTML = `<div class="cons-grid">${tiles}</div>`;
+    restoreFocus();
   },
 
   openPanel(id)  { document.getElementById(id)?.classList.add('open'); },
@@ -703,16 +725,12 @@ const ConsApp = {
     this._renderSignOutOverlay();
   },
 
-  _renderSignOutOverlay() {
+  // The dialog's item rows, and the note above them. Drawn on their own so a scan, a
+  // quantity change or a stock update never touches the name being typed.
+  _signOutParts() {
     const items = this.items();
-    if (!items.length) { document.getElementById('overlay-wrap').innerHTML = ''; return; }
-
-    const warnings = items.filter(i => {
-      const avail = this._availableQty(i);
-      return avail !== null && i.qty > avail;
-    });
-
-    const itemRows = items.map(i => {
+    const over  = items.some(i => { const a = this._availableQty(i); return a !== null && i.qty > a; });
+    const rows  = items.map(i => {
       const avail     = this._availableQty(i);
       const overLimit = avail !== null && i.qty > avail;
       return `<div class="signout-item-row${overLimit?' over-limit':''}">
@@ -722,12 +740,22 @@ const ConsApp = {
         </div>
         <div class="signout-item-controls">
           <button class="qty-btn" data-so-dec="${i.id}">−</button>
-          <input class="qty-input" type="number" min="1" ${avail!==null?`max="${avail}"`:''} step="1" value="${i.qty}" data-so-qid="${i.id}">
+          <input class="qty-input" ${QtyField.attrs(i)} ${avail!==null?`max="${avail}"`:''} value="${i.qty}" data-so-qid="${i.id}">
           <button class="qty-btn" data-so-inc="${i.id}">+</button>
           <button class="remove-btn" data-so-rem="${i.id}"><i class="ti ti-x"></i></button>
         </div>
       </div>`;
     }).join('');
+    const warning = over ? `
+            <div style="background:var(--amber-bg);border:1px solid var(--amber-text);border-radius:var(--radius);padding:8px 10px;font-size:12px;color:var(--amber-text);margin-bottom:8px;text-align:left">
+              <i class="ti ti-alert-triangle"></i> Some quantities exceed current stock.
+            </div>` : '';
+    return { rows, warning };
+  },
+
+  _renderSignOutOverlay() {
+    if (!this.count()) { document.getElementById('overlay-wrap').innerHTML = ''; return; }
+    const { rows: itemRows, warning } = this._signOutParts();
 
     const ow = document.getElementById('overlay-wrap');
     ow.innerHTML = `
@@ -739,10 +767,8 @@ const ConsApp = {
           ${this._recentNames().length ? `<div class="recent-names" id="recent-names">
             ${this._recentNames().map(n => `<button class="recent-name-chip" data-name="${esc(n)}">${esc(n)}</button>`).join('')}
           </div>` : ''}
-          ${warnings.length ? `
-            <div style="background:var(--amber-bg);border:1px solid var(--amber-text);border-radius:var(--radius);padding:8px 10px;font-size:12px;color:var(--amber-text);margin-bottom:8px;text-align:left">
-              <i class="ti ti-alert-triangle"></i> Some quantities exceed current stock.
-            </div>` : ''}
+          <div class="inline-error" id="signout-error" role="alert" hidden style="margin-bottom:8px"></div>
+          <div id="signout-warning">${warning}</div>
           <div class="signout-item-list" id="signout-item-list">${itemRows}</div>
           <button class="btn btn-primary" id="btn-overlay-confirm" style="width:100%;margin-top:12px">
             <i class="ti ti-check"></i> Confirm Item Sign Out
@@ -759,19 +785,24 @@ const ConsApp = {
     document.getElementById('recent-names')?.addEventListener('click', e => {
       const chip = e.target.closest('[data-name]'); if (!chip) return;
       nameInput.value = chip.dataset.name;
+      inlineError('signout-error', '');
     });
+    nameInput.addEventListener('input', () => inlineError('signout-error', ''));
 
     document.getElementById('signout-item-list').addEventListener('click', e => {
       const dec = e.target.closest('[data-so-dec]');
       const inc = e.target.closest('[data-so-inc]');
       const rem = e.target.closest('[data-so-rem]');
-      if (dec) { this.adj(+dec.dataset.soDec, -1); this._refreshSignOutItemsOnly(); }
-      if (inc) { this.adj(+inc.dataset.soInc,  1); this._refreshSignOutItemsOnly(); }
-      if (rem) { this.zero(+rem.dataset.soRem); this._refreshSignOutOrClose(); }
+      if (this._checkoutBusy) return;
+      if (dec) this.adj(+dec.dataset.soDec, -1);
+      if (inc) this.adj(+inc.dataset.soInc,  1);
+      if (rem) this.zero(+rem.dataset.soRem);
     });
-    document.getElementById('signout-item-list').addEventListener('change', e => {
-      const inp = e.target.closest('[data-so-qid]');
-      if (inp) { this.setQty(+inp.dataset.soQid, inp.value); this._refreshSignOutItemsOnly(); }
+    QtyField.attach(document.getElementById('signout-item-list'), '[data-so-qid]', {
+      item: el => this.consumables.find(m => m.id == el.dataset.soQid),
+      get:  el => this.get(+el.dataset.soQid),
+      set:  (el, qty) => this.set(+el.dataset.soQid, qty),
+      live: () => { this._updateBadge(); this.renderList(); },
     });
 
     const confirm = () => this._doCheckout(nameInput.value.trim());
@@ -780,19 +811,16 @@ const ConsApp = {
     nameInput.addEventListener('keydown', e => { if (e.key === 'Enter') confirm(); });
   },
 
-  // Re-render just the item list + name value preserved, after a qty change inside the overlay
+  // Redraw the dialog's items in place; taking the last one off closes it.
   _refreshSignOutItemsOnly() {
-    const nameVal = document.getElementById('overlay-tradesman-name')?.value || '';
-    this._renderSignOutOverlay();
-    const nameInput = document.getElementById('overlay-tradesman-name');
-    if (nameInput) nameInput.value = nameVal;
-  },
-
-  // If removing the last item empties the cart, close the overlay entirely; otherwise refresh
-  _refreshSignOutOrClose() {
-    if (this.count() === 0) { document.getElementById('overlay-wrap').innerHTML = ''; this._changed(); return; }
-    this._refreshSignOutItemsOnly();
-    this._changed();
+    if (this._checkoutBusy) return;
+    const list = document.getElementById('signout-item-list'); if (!list) return;
+    if (!this.count()) { document.getElementById('overlay-wrap').innerHTML = ''; return; }
+    const { rows, warning } = this._signOutParts();
+    const restoreFocus = captureInputFocus();
+    list.innerHTML = rows;
+    const w = document.getElementById('signout-warning'); if (w) w.innerHTML = warning;
+    restoreFocus();
   },
 
   // Writes the stock adjustments once a name has been entered
@@ -801,7 +829,12 @@ const ConsApp = {
     // on the name field calls this directly — without the flag, a second Enter during
     // the awaits would deduct every item's stock a second time.
     if (this._checkoutBusy) return;
-    if (!tradesmanName) { alert('Please enter your name to confirm.'); return; }
+    // A name has letters in it: a barcode or a blank is not one.
+    if (!/\p{L}/u.test(tradesmanName)) {
+      inlineError('signout-error', 'Enter your name first.');
+      document.getElementById('overlay-tradesman-name')?.focus();
+      return;
+    }
     const items = this.items();
     if (!items.length) { document.getElementById('overlay-wrap').innerHTML=''; return; }
     if (this._connState.connected === false || navigator.onLine === false) {
@@ -821,15 +854,21 @@ const ConsApp = {
       const deviceName = ConsumablesDeviceName.get();
       const by = deviceName ? `${deviceName} — ${tradesmanName}` : tradesmanName;
       const sessionId = genRef();
+      this._cartId = this._cartId || `${genRef()}-${Date.now()}`;
 
       const btn = document.getElementById('btn-overlay-confirm');
-      if (btn) { btn.disabled = true; btn.innerHTML = '<i class="ti ti-loader" style="animation:spin 1s linear infinite"></i> Processing…'; }
+      const cancel = document.getElementById('btn-overlay-cancel');
+      if (cancel) cancel.disabled = true;
+      if (btn) { btn.disabled = true; btn.innerHTML = '<i class="ti ti-loader" style="animation:spin 1s linear infinite"></i> Signing out…'; }
 
       const errors = [];
       const failedIds = new Set();
       for (const item of items) {
         try {
-          await DB.adjustStock(stockId(item), item.description, -item.qty, 'checkout', by, sessionId);
+          const op = `signout:${item.id}`;
+          await DB.adjustStock(stockId(item), item.description, -item.qty, 'checkout', by, sessionId, null,
+            OpId.for(op, { cart: this._cartId, qty: item.qty, by }));
+          OpId.done(op);
         } catch(e) {
           failedIds.add(item.id);
           if (e.message === 'INSUFFICIENT_STOCK') errors.push(`${item.description}: insufficient stock`);

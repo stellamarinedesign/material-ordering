@@ -1,9 +1,9 @@
-// shared.js — v2026-11-23.1
+// shared.js — v2026-11-25.1
 
 // The build date plus that day's counter — "2026-10-06.2" is the second build
 // on 6 Oct 2026 (the production board's scheme). Set by tools/bump-version.py;
 // shown to people with a leading "v" (see verLabel).
-const APP_VERSION = '2026-11-23.1';
+const APP_VERSION = '2026-11-25.1';
 
 // Numeric version comparison, part by part. Returns true if `a` is strictly
 // newer than `b`. Reads both the dated form and the "v0.56"-style numbers used
@@ -36,8 +36,8 @@ const DEFAULT_MATERIALS = [
 ];
 
 const DEFAULT_SETTINGS = {
-  supplierEmail:        'procurement@supplier.com',
-  ccEmail:              'orders@yourcompany.com',
+  supplierEmail:        '',     // set per PC under Settings → Email; nothing sends without it
+  ccEmail:              '',
   deliveryNote:         'Please confirm availability and expected delivery date.',
   emailSubject:         '{orderType} - {category} - {date}',
   bulkConsumablesSubject: '{orderType} - {date}',
@@ -111,12 +111,19 @@ const DeviceName = {
   isSet()    { return !!this.get(); },
 };
 
+// The defaults used to be example addresses, on other people's domains. A PC
+// that saved its settings back then still holds them: they count as not set.
+const EXAMPLE_ADDRESSES = new Set(['procurement@supplier.com', 'orders@yourcompany.com']);
 const Settings = {
   get() {
+    let out = { ...DEFAULT_SETTINGS };
     try {
       const s = localStorage.getItem('mo_settings');
-      return s ? { ...DEFAULT_SETTINGS, ...JSON.parse(s) } : { ...DEFAULT_SETTINGS };
-    } catch { return { ...DEFAULT_SETTINGS }; }
+      if (s) out = { ...out, ...JSON.parse(s) };
+    } catch {}
+    for (const k of ['supplierEmail', 'ccEmail'])
+      if (EXAMPLE_ADDRESSES.has(String(out[k] || '').trim().toLowerCase())) out[k] = '';
+    return out;
   },
   save(obj) {
     const m = { ...this.get(), ...obj };
@@ -568,7 +575,7 @@ const Order = {
   _items: {},
   get(id)       { return this._items[id]||0; },
   set(id,qty)   { if(qty<=0) delete this._items[id]; else this._items[id]=qty; },
-  adjust(id,d)  { this.set(id,(this._items[id]||0)+d); },
+  adjust(id,d)  { this.set(id, round2((this._items[id]||0)+d)); },
   remove(id)    { delete this._items[id]; },
   clear()       { this._items={}; },
   count()       { return Object.keys(this._items).length; },
@@ -607,6 +614,8 @@ const Outbox = {
     this.retryFailed();
   },
   list()        { return this._entries.slice(); },
+  // Where one order has got to: 'sent' (the server has it), 'failed' or 'waiting'.
+  state(id)     { const en = this._get(id); return !en ? 'sent' : en.failed ? 'failed' : 'waiting'; },
   count()       { return this._entries.length; },
   failedCount() { return this._entries.filter(e => e.failed).length; },
 
@@ -640,7 +649,7 @@ const Outbox = {
     const en = this._get(id);
     if (!en || typeof DB === 'undefined' || !DB.isReady()) return;
     if (!manual && en.tries >= this.MAX_AUTO_TRIES) return;
-    const wait = 8000 - (Date.now() - (en.lastTry || 0));
+    const wait = manual && en.failed ? 0 : 8000 - (Date.now() - (en.lastTry || 0));   // a failed try is over: nothing to wait for
     if (wait > 0) {                       // one attempt at a time: come back when the window has passed
       if (!this._timers[id]) this._timers[id] = setTimeout(() => { delete this._timers[id]; this.retry(id, manual); }, wait);
       return;
@@ -672,8 +681,9 @@ const Outbox = {
   // ── the header pill, and the list behind it ──
   pillHtml() {
     const n = this.count(); if (!n) return '';
-    const failed = this.failedCount();
-    return `<button class="outbox-pill${failed ? ' failed' : ''}" data-outbox><i class="ti ${failed ? 'ti-alert-triangle' : 'ti-cloud-upload'}"></i> ${n} waiting to send</button>`;
+    const failed = this.failedCount(), waiting = n - failed;
+    const label = [failed ? `${failed} not sent` : '', waiting ? `${waiting} waiting to send` : ''].filter(Boolean).join(' · ');
+    return `<button class="outbox-pill${failed ? ' failed' : ''}" data-outbox><i class="ti ${failed ? 'ti-alert-triangle' : 'ti-cloud-upload'}"></i> ${label}</button>`;
   },
   // Each waiting order opens to its lines — what was asked for and how many
   // — so it can be read off the screen (and phoned through) if the connection
@@ -706,7 +716,7 @@ const Outbox = {
       </div>`;
     }).join('');
     ow.innerHTML = `<div class="success-overlay"><div class="success-card" id="outbox-card" style="max-width:440px;text-align:left">
-        <h3 style="text-align:center">Waiting to send</h3>
+        <h3 style="text-align:center">${this.failedCount() && this.failedCount() === this.count() ? 'Not sent' : 'Waiting to send'}</h3>
         <div class="outbox-list">${rows || '<div class="outbox-sub">Nothing waiting.</div>'}</div>
         <button class="btn btn-outline" id="outbox-close" style="width:100%;margin-top:14px">Close</button>
       </div></div>`;
@@ -839,38 +849,63 @@ function orderQtyDisplay(item, qty) {
 // tap into a field first.
 //
 // When the cursor IS in a text field the scan is left alone to type normally, so the
-// existing "tap the search box and scan" behaviour still works and we never double up.
+// existing "tap the search box and scan" behaviour still works and we never double up
+// — except in fields the page names with `through`: a person's name or a quantity must
+// never swallow a barcode. There the field is put back as it was and the code goes
+// where a scan always goes. Runs in the capture phase so the scanner's own Enter can
+// be stopped before the field's handler sees it.
 const BarcodeScanner = {
   MAX_GAP:  60,   // ms between keys — slower than this reads as human typing
   MIN_LEN:  4,    // shorter bursts are ignored
   END_WAIT: 90,   // ms of quiet that ends a scan when the scanner sends no Enter
-  _buf: '', _last: 0, _timer: null,
+  LATE_ENTER: 500, // ms after a scan in which an Enter is still the scanner's
+  _buf: '', _last: 0, _timer: null, _field: null, _fieldWas: '', _enterUntil: 0,
 
-  start(onScan) {
+  start(onScan, opts) {
+    const through = opts && opts.through;
     document.addEventListener('keydown', e => {
       const el = document.activeElement;
-      if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) {
-        this._buf = ''; return;   // typing into a field — leave it be
-      }
+      const inField = !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable);
+      const guarded = inField && !!through && through(el);
+      if (inField && !guarded) { this._buf = ''; return; }   // typing into a field — leave it be
+
       const now = Date.now();
-      if (now - this._last > this.MAX_GAP) this._buf = '';
+      if (e.key === 'Enter' && now < this._enterUntil) {      // the Enter that came late
+        this._enterUntil = 0; e.preventDefault(); e.stopPropagation(); return;
+      }
+      if (e.repeat || now - this._last > this.MAX_GAP) this._buf = '';
       this._last = now;
       clearTimeout(this._timer);
 
       if (e.key === 'Enter') {
-        if (this._buf.trim().length >= this.MIN_LEN) e.preventDefault();
-        this._flush(onScan);
-      } else if (e.key.length === 1) {
+        if (this._isScan()) { e.preventDefault(); e.stopPropagation(); this._flush(onScan); this._enterUntil = 0; }
+        else this._buf = '';
+      } else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        if (!this._buf) { this._field = guarded ? el : null; this._fieldWas = guarded ? el.value : ''; }
         this._buf += e.key;
-        this._timer = setTimeout(() => this._flush(onScan), this.END_WAIT);
+        this._timer = setTimeout(() => { if (this._isScan()) this._flush(onScan); else this._buf = ''; }, this.END_WAIT);
       }
-    });
+    }, true);
+  },
+
+  // In a name field only a burst with a digit in it counts: nobody's name has one.
+  _isScan() {
+    const code = this._buf.trim();
+    if (code.length < this.MIN_LEN) return false;
+    return !(this._field && this._field.type === 'text' && !/\d/.test(code));
   },
 
   _flush(onScan) {
     const code = this._buf.trim();
     this._buf = '';
-    if (code.length >= this.MIN_LEN) onScan(code);
+    this._enterUntil = Date.now() + this.LATE_ENTER;
+    const f = this._field; this._field = null;
+    if (f) {
+      f.value = this._fieldWas;
+      f.dispatchEvent(new Event('input',  { bubbles: true }));
+      f.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+    onScan(code);
   },
 };
 
@@ -969,6 +1004,7 @@ const AutoUpdate = {
     if (document.querySelector('.panel.open')) return true;        // any slide-in panel
     const ow = document.getElementById('overlay-wrap');
     if (ow && ow.innerHTML.trim()) return true;                    // any dialog/overlay
+    if (document.getElementById('ask-wrap')) return true;          // a question waiting for its answer
     const el = document.activeElement;                             // walked away mid-entry
     if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') && el.value) return true;
     return this._opts.isBusy ? !!this._opts.isBusy() : false;
@@ -1047,30 +1083,204 @@ function esc(str) {
     .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
 
-// Captures which input/textarea currently has focus (plus its caret and un-committed
-// value) and returns a restore function to call after an innerHTML/outerHTML
-// re-render. Live Firestore snapshots re-render whole lists, which otherwise steals
-// focus mid-typing and can drop keystrokes still inside a debounce window.
-// Elements are re-found by id, or by the data-attribute pairs intake rows use.
-function captureInputFocus() {
-  const el = document.activeElement;
-  if (!el || (el.tagName !== 'INPUT' && el.tagName !== 'TEXTAREA')) return () => {};
-  let selector = null;
-  if (el.id) selector = `#${CSS.escape(el.id)}`;
-  else if (el.dataset.notesItem)   selector = `[data-notes-item="${el.dataset.notesItem}"][data-notes-order="${el.dataset.notesOrder}"]`;
-  else if (el.dataset.partialItem) selector = `[data-partial-item="${el.dataset.partialItem}"][data-partial-order="${el.dataset.partialOrder}"]`;
-  if (!selector) return () => {};
-  const value = el.value;
-  let selStart = null, selEnd = null;
-  try { selStart = el.selectionStart; selEnd = el.selectionEnd; } catch {} // number inputs throw
-  return () => {
-    const nel = document.querySelector(selector);
-    if (!nel) return;
-    nel.value = value;
-    nel.focus({ preventScroll: true });
-    if (selStart != null) { try { nel.setSelectionRange(selStart, selEnd); } catch {} }
-  };
+// Live data redraws whole lists, which throws away the fields in them: the one
+// being typed in loses focus, and anything typed but not yet used is wiped. Call
+// before a redraw; the function it returns puts all of that back afterwards.
+//
+// Fields are found again by id, or by their data- attributes inside the nearest
+// box with an id (the same attributes are used in several lists). What is kept:
+//   - the focused field: its text and caret, unless it was already accepted
+//   - other fields typed in but not used yet (the stock cards' add/remove boxes)
+// A field that edits the page's own state (it has data- attributes) is drawn from
+// that state, so once accepted the redraw is right and nothing is put back.
+document.addEventListener('input',  e => { e.target._accepted = false; }, true);
+document.addEventListener('change', e => { e.target._accepted = true;  }, true);
+function fieldSelector(el) {
+  if (el.id) return '#' + CSS.escape(el.id);
+  const own = [...el.attributes].filter(a => a.name.startsWith('data-'))
+    .map(a => `[${a.name}="${a.value.replace(/["\\]/g, '\\$&')}"]`).join('');
+  if (!own) return null;
+  const box = el.parentElement && el.parentElement.closest('[id]');
+  return (box ? '#' + CSS.escape(box.id) + ' ' : '') + own;
 }
+function captureInputFocus() {
+  // Some browsers send "left the field" when a field is taken off the page by a
+  // redraw. Nobody left it, so nothing is accepted until the redraw is over.
+  QtyField.redrawing = true;
+  setTimeout(() => { QtyField.redrawing = false; }, 0);
+  const kept = [];
+  document.querySelectorAll('input, textarea').forEach(el => {
+    if (/^(checkbox|radio|file|button|submit)$/.test(el.type)) return;
+    const focused = el === document.activeElement;
+    if (!focused && el.value === el.defaultValue) return;
+    const selector = fieldSelector(el); if (!selector) return;
+    const own = [...el.attributes].some(a => a.name.startsWith('data-'));
+    if (!focused && own) return;
+    let start = null, end = null;
+    if (focused) { try { start = el.selectionStart; end = el.selectionEnd; } catch {} } // number inputs throw
+    const typed = el._typed === undefined ? el.value !== el.defaultValue : el._typed;
+    kept.push({ el, selector, focused, own, typed, value: el.value, was: el.defaultValue, start, end });
+  });
+  return () => kept.forEach(k => {
+    if (k.el.isConnected) return;                       // not redrawn after all
+    const nel = document.querySelector(k.selector); if (!nel) return;
+    const keep = k.focused
+      ? k.typed && (k.el._qtyLive ? k.value.trim() === '' : !(k.own && k.el._accepted))
+      : nel.defaultValue === k.was;
+    if (keep) nel.value = k.value;
+    if (!k.focused) return;
+    for (const p of ['_before', '_qtyLive', '_typed', '_accepted']) nel[p] = k.el[p];
+    QtyField.quiet = true;                              // back where they were, not a fresh tap
+    try { nel.focus({ preventScroll: true }); } finally { QtyField.quiet = false; }
+    if (k.start != null) { try { nel.setSelectionRange(k.start, k.end); } catch {} }
+  });
+}
+
+// ── QUANTITY FIELDS ──────────────────────────────────────────────────────
+// One behaviour for every quantity that is typed:
+//   - tapping in selects what is there; nothing entered shows as empty, not 0
+//   - what is typed counts at once, so a tap on +/− or Review never misses it
+//   - leaving a field empty puts the last quantity back: it never removes a line
+//   - units sold by measure (metres, grams) take decimals. The rest are whole, and
+//     a decimal is refused with a note rather than quietly cut short
+const MEASURED_UNITS = new Set(['metre', 'meter', 'm', 'mm', 'gram', 'g', 'kilogram', 'kg', 'litre', 'l', 'ml']);
+function qtyAllowsDecimals(item) {
+  return !!item && !hasBoxTracking(item) && MEASURED_UNITS.has(String(item.qtyType || '').trim().toLowerCase());
+}
+function round2(n) { return Math.round(n * 100) / 100; }
+const QtyField = {
+  quiet: false,      // focus being put back by a redraw
+  redrawing: false,  // see captureInputFocus
+
+  // The attributes of a quantity <input>; add the value and the data- attribute.
+  attrs(item) {
+    const d = qtyAllowsDecimals(item);
+    return `type="number" min="0" step="${d ? 'any' : '1'}" inputmode="${d ? 'decimal' : 'numeric'}" placeholder="0" autocomplete="off"`;
+  },
+  // What is in the field: { blank } | { bad: 'why' } | { qty }
+  read(el, item) {
+    if (el.validity && el.validity.badInput) return { bad: 'Numbers only' };
+    const raw = String(el.value).trim().replace(',', '.');
+    if (!raw) return { blank: true };
+    const n = Number(raw);
+    if (!isFinite(n) || n < 0) return { bad: 'Numbers only' };
+    if (n % 1 && !qtyAllowsDecimals(item)) return { bad: 'Whole numbers only' };
+    return { qty: round2(n) };
+  },
+  // o: { item(el), get(el) -> qty, set(el, qty), live(el)?, zero?, later? }
+  //   live  — called after each accepted change, to update the card in place
+  //   zero  — typing 0 takes the item off (otherwise the last quantity comes back)
+  //   later — the value is saved to the database, so only once the field is left
+  attach(box, sel, o) {
+    const find = e => e.target.closest && e.target.closest(sel);
+    box.addEventListener('focusin', e => {
+      const el = find(e); if (!el || this.quiet) return;
+      el._before = o.get(el); el._qtyLive = !o.later; el._typed = false;
+      setTimeout(() => { if (document.activeElement === el) { try { el.select(); } catch {} } }, 0);
+    });
+    box.addEventListener('input', e => {
+      const el = find(e); if (!el) return;
+      el._typed = true; el._qtyLive = !o.later;
+      this._note(el, '');
+      if (o.later) return;
+      if (el._before === undefined) el._before = o.get(el);
+      const r = this.read(el, o.item(el));
+      if (r.qty > 0) { o.set(el, r.qty); if (o.live) o.live(el); }
+    });
+    const settle = e => {
+      const el = find(e); if (!el || !el._typed || this.redrawing) return;
+      el._typed = false;
+      const r = this.read(el, o.item(el));
+      const refused = r.blank || r.bad || (r.qty === 0 && !o.zero);
+      if (!refused) { if (o.get(el) !== r.qty) o.set(el, r.qty); }
+      else if (!o.later && o.get(el) !== el._before) o.set(el, el._before);   // a live order was never touched
+      const shown = o.later && !refused ? r.qty : o.get(el);      // a cart may cap it (stock on hand)
+      el.value = shown > 0 || (o.later && shown === 0) ? String(shown) : '';
+      el.defaultValue = el.value;
+      el._before = shown;
+      if (r.bad) this._note(el, r.bad);
+      if (o.live) o.live(el);
+    };
+    box.addEventListener('change', settle);
+    box.addEventListener('focusout', settle);
+  },
+  // Why a value was refused, on the line under the description.
+  _note(el, msg) {
+    el.classList.toggle('qty-bad', !!msg);
+    const row = el.closest('.mat-card, .order-item, .signout-item-row, .order-line, .combined-main-row, .combined-sub-row, .cons-tile');
+    if (!row) return;
+    let n = row.querySelector('.qty-note');
+    if (!msg) { if (n) n.remove(); return; }
+    if (!n) {
+      n = document.createElement('div'); n.className = 'qty-note'; n.setAttribute('role', 'alert');
+      (row.querySelector('.mat-info, .order-item-row > div, .signout-item-info, .order-line-info, .combined-main-info, .combined-sub-device, .cons-tile-body') || row).appendChild(n);
+    }
+    n.textContent = msg;
+  },
+};
+
+// ── QUESTIONS AND FAILURES ───────────────────────────────────────────────
+// A question with two answers that each say what they do. Resolves true or false;
+// Esc and the backdrop are the safe answer.
+const Ask = {
+  _open: null,
+  confirm({ title, body, rows, yes, no, danger }) {
+    return new Promise(resolve => {
+      if (this._open) this._open(false);   // one at a time: an earlier one gets the safe answer
+      const from = document.activeElement;
+      const w = document.createElement('div'); w.id = 'ask-wrap';
+      w.innerHTML = `<div class="success-overlay"><div class="success-card ask-card" role="alertdialog" aria-modal="true" aria-labelledby="ask-title">
+          <h3 id="ask-title">${esc(title)}</h3>
+          ${body ? `<p>${esc(body)}</p>` : ''}
+          ${rows && rows.length ? `<div class="ask-rows">${rows.map(r => `<div class="ask-row"><span>${esc(r[0])}</span><span class="ask-val">${esc(r[1])}</span></div>`).join('')}</div>` : ''}
+          <button class="btn btn-primary" data-ask="yes">${esc(yes)}</button>
+          <button class="btn btn-outline" data-ask="no">${esc(no)}</button>
+        </div></div>`;
+      const done = v => {
+        document.removeEventListener('keydown', key, true);
+        w.remove(); this._open = null;
+        try { if (from && from.isConnected) from.focus({ preventScroll: true }); } catch {}
+        resolve(v);
+      };
+      const key = e => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); done(false); } };
+      w.addEventListener('click', e => {
+        const b = e.target.closest('[data-ask]');
+        if (b) done(b.dataset.ask === 'yes');
+        else if (e.target.classList.contains('success-overlay')) done(false);
+      });
+      document.addEventListener('keydown', key, true);
+      this._open = done;
+      document.body.appendChild(w);
+      w.querySelector(`[data-ask="${danger ? 'no' : 'yes'}"]`).focus();
+    });
+  },
+};
+// Why a write didn't go through, in words for whoever is holding the device.
+function whyFailed(e) {
+  const code = (e && e.code) || '', msg = (e && e.message) || '';
+  if (navigator.onLine === false || /unavailable|deadline-exceeded/.test(code) || /offline/i.test(msg)) return 'the connection dropped';
+  if (/permission-denied/.test(code)) return 'this sign-in is not allowed to';
+  return 'the database refused it';
+}
+// "Nothing was saved" can only be promised when the server answered: a dropped connection
+// may have lost the reply, not the write. (Trying again is safe either way.)
+function nothingDone(e, words) { return whyFailed(e) === 'the connection dropped' ? '' : ` ${words}`; }
+// A failure stays on screen beside the button that failed. Empty clears it.
+function inlineError(id, msg) {
+  const el = document.getElementById(id); if (!el) return;
+  el.textContent = msg || ''; el.hidden = !msg;
+}
+// The same id for the same content until it is done, so a write that went through
+// but whose reply was lost can be tried again without counting twice.
+const OpId = {
+  _open: {},
+  for(key, payload) {
+    const sig = JSON.stringify(payload), cur = this._open[key];
+    if (cur && cur.sig === sig) return cur.id;
+    return (this._open[key] = { sig, id: `OP-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}` }).id;
+  },
+  done(key) { delete this._open[key]; },
+};
 
 // Apply all template placeholders to a string (works for both subject and body)
 function genRef() {

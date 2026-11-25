@@ -1,4 +1,4 @@
-// intake.js — v2026-11-23.1
+// intake.js — v2026-11-25.1
 // Shared intake rendering module used by warehouse.html and manager.html.
 
 const Intake = {
@@ -105,6 +105,198 @@ const Intake = {
       const s = (merged[String(i.id)] || {}).status;
       return !!s && s !== 'pending';
     });
+  },
+
+  // ── KEPT DRAFTS ──────────────────────────────────────────────────────
+  // Staged ticks are kept on this device until they are saved, so a reload, a flat
+  // battery or an update never loses a half-checked delivery. One store per page, and
+  // a separate one in test mode.
+  draftKey(page) { return `mo_drafts_${page}${FirebaseConfig.isTestMode() ? '_test' : ''}`; },
+  _readDrafts(key) {
+    try { const v = JSON.parse(localStorage.getItem(key) || '{}'); return v && typeof v === 'object' ? v : {}; } catch { return {}; }
+  },
+  loadDrafts(page) {
+    const kept = this._readDrafts(this.draftKey(page)), cutoff = Date.now() - 14 * 86400000, map = new Map();
+    for (const [groupKey, v] of Object.entries(kept)) if (v && v.d && v.at > cutoff) map.set(groupKey, v.d);
+    return map;
+  },
+  keepDrafts(page, map) {
+    const key = this.draftKey(page), old = this._readDrafts(key), out = {};
+    for (const [groupKey, d] of map) {
+      if (!d || !Object.keys(d).length) continue;
+      const prev = old[groupKey];
+      out[groupKey] = prev && JSON.stringify(prev.d) === JSON.stringify(d) ? prev : { at: Date.now(), d };
+    }
+    try { localStorage.setItem(key, JSON.stringify(out)); } catch {}
+  },
+  // Whether someone is part-way through a delivery (for the idle auto-update). Ticks
+  // left for half an hour no longer hold it up: they are kept, and come back.
+  draftsInHand(page) {
+    const since = Date.now() - 30 * 60000;
+    return this._saving.size > 0 || Object.values(this._readDrafts(this.draftKey(page))).some(v => v && v.at > since);
+  },
+
+  // Whether a draft really differs from what is saved: ticking a line and unticking it
+  // again leaves nothing to save.
+  draftChanges(entries, draftForCard) {
+    if (!draftForCard) return false;
+    const norm = s => JSON.stringify([s.status || null, s.qtyReceived ?? null, s.outstandingQty || 0, (s.notes || '').trim(), !!s.followUpDone]);
+    return entries.some(({ order, item }) => {
+      const patch = draftForCard[`${order._id}::${item.id}`];
+      if (!patch) return false;
+      const saved = ((order.intake && order.intake.items) || {})[String(item.id)] || {};
+      return norm(saved) !== norm({ ...saved, ...patch });
+    });
+  },
+
+  // ── SAVING ───────────────────────────────────────────────────────────
+  // Shared by the warehouse and manager pages. One card saves once at a time: while it
+  // does, its button shows what is happening and can't be pressed. A failure stays on
+  // the card until the next try.
+  _saving: new Map(),   // groupKey -> label
+  _failed: new Map(),   // groupKey -> message
+  isSaving(groupKey) { return this._saving.has(groupKey); },
+  bareKey(cardKey) { return cardKey.endsWith('|||bo') ? cardKey.slice(0, -5) : cardKey; },
+
+  // host: { page, drafts, by, find(groupKey) -> group, redraw(group) }
+  // confirm=true (Confirm) needs every line actioned; false (Save) keeps partial progress.
+  async saveCard(host, cardKey, confirm) {
+    const groupKey = this.bareKey(cardKey);
+    if (this.isSaving(groupKey)) return;
+    const group = host.find(groupKey); if (!group) return;
+    const draft = host.drafts.get(groupKey); if (!draft) return;
+    if (confirm && !this.canConfirmEntries(group.entries, draft)) return;
+
+    const sent   = { ...draft };   // what this save covers; anything ticked meanwhile stays staged
+    const merged = this.mergeDraftEntries(group.entries, sent);
+
+    // Flat display: entries sharing the same mergeKey (same material across orders) show
+    // as one row keyed to the first entry's order. Propagate that representative's STATUS,
+    // outstanding and follow-up state to all other same-material entries — but not its
+    // qtyReceived or notes, which describe the delivery total, not each order's share.
+    // (Without propagating outstanding/follow-up, clearing them on a merged row would
+    // leave the other orders' lines still flagged on the Back Orders / follow-up views.)
+    const byMergeKey = new Map();
+    const propagated = new Set();
+    for (const e of group.entries) {
+      const k = this.mergeKey(e.item);
+      if (!byMergeKey.has(k)) byMergeKey.set(k, []);
+      byMergeKey.get(k).push(e);
+    }
+    for (const itemEntries of byMergeKey.values()) {
+      if (itemEntries.length < 2) continue;
+      const rep = merged[`${itemEntries[0].order._id}::${itemEntries[0].item.id}`];
+      if (!rep || rep.status === undefined) continue;
+      for (const { order, item } of itemEntries.slice(1)) {
+        const ck = `${order._id}::${item.id}`;
+        merged[ck] = {
+          ...(merged[ck] || {}),
+          status: rep.status,
+          outstandingQty: rep.outstandingQty ?? 0,
+          followUpDone: rep.followUpDone ?? false,
+        };
+        propagated.add(ck);
+      }
+    }
+
+    // Per-order PATCH of bare-keyed entries — DB.updateIntake merges it into the saved
+    // map inside a transaction. Only entries this edit actually touched (staged in the
+    // draft, or propagated above) go in the patch — including untouched items would
+    // overwrite a concurrent device's fresher write with our stale snapshot of it.
+    const byOrder = new Map();
+    const skipped = new Set();
+    for (const { order, item } of group.entries) {
+      const ck = `${order._id}::${item.id}`;
+      if (sent[ck] === undefined && !propagated.has(ck)) continue;
+      const entry = merged[ck];
+      if (!entry) continue;
+      // On a partial save, skip partial-without-qty — writing it would make the card appear
+      // resolved (partial is in RESOLVED_STATUSES) even though the qty hasn't been entered.
+      if (!confirm && entry.status === 'partial' && !entry.qtyReceived) { skipped.add(ck); continue; }
+      if (!byOrder.has(order._id)) byOrder.set(order._id, {});
+      byOrder.get(order._id)[String(item.id)] = entry;
+    }
+
+    this._saving.set(groupKey, 'Saving…'); this._failed.delete(groupKey);
+    host.redraw(group);
+    let saved = false;
+    try {
+      if (navigator.onLine === false) throw Object.assign(new Error('offline'), { code: 'unavailable' });
+      await Promise.all([...byOrder.entries()].map(([orderId, patch]) => DB.updateIntake(orderId, patch, host.by())));
+      saved = true;
+      const now = host.drafts.get(groupKey) || {}, left = {};
+      for (const k of Object.keys(now)) if (skipped.has(k) || now[k] !== sent[k]) left[k] = now[k];
+      if (Object.keys(left).length) host.drafts.set(groupKey, left); else host.drafts.delete(groupKey);
+      this.keepDrafts(host.page, host.drafts);
+    } catch (e) {
+      console.error('Delivery save failed:', e);
+      this._failed.set(groupKey, `Not saved: ${whyFailed(e)}. Tap ${confirm ? 'Confirm' : 'Save'} to try again.`);
+    } finally {
+      this._saving.delete(groupKey);
+      host.redraw(host.find(groupKey) || group);
+    }
+    // On a full Confirm of a consumables delivery, offer to add what was received to stock.
+    if (saved && confirm) await this.offerStock(host, group, merged);
+  },
+
+  // "Add to stock" / "Update stock" on a resolved delivery card — the received
+  // quantities already saved, without touching the confirmation.
+  async applyStock(host, cardKey) {
+    const group = host.find(this.bareKey(cardKey)); if (!group) return;
+    await this.offerStock(host, group, this.mergeDraftEntries(group.entries, null));
+  },
+
+  // Brings consumables stock into line with a delivery's received quantities: OK → the
+  // full ordered qty, Partial → the received qty, Missing/Back order → nothing; boxed
+  // items convert boxes → units. Each line remembers what it last put into stock, so a
+  // first apply adds the full amount and a later miscount fix moves just the difference
+  // (DB.applyDeliveryStock). Nothing to do when already in step. Materials have no stock.
+  async offerStock(host, group, merged) {
+    const isMat = !group.entries[0].order.type || group.entries[0].order.type === 'materials';
+    if (isMat || this.isSaving(group.groupKey)) return;
+    const changes = this.deliveryStockDeltas(group.entries, merged);
+    const moves   = changes.filter(c => c.delta !== 0);
+    if (!moves.length) return;
+    const first = changes.every(c => c.prev === 0);
+    this._saving.set(group.groupKey, first ? 'Add to stock?' : 'Update stock?');   // one question at a time per delivery
+    host.redraw(group);
+    let go = await Ask.confirm({
+      title: first ? 'Add these to stock?' : 'Update stock to match this delivery?',
+      rows: moves.map(c => [c.item.description, `${c.delta > 0 ? '+' : '−'}${Math.abs(c.delta)} ${c.item.qtyType || 'units'}`]),
+      yes: first ? 'Add to stock' : 'Update stock', no: 'Not now',
+    });
+    while (go) {
+      this._saving.set(group.groupKey, first ? 'Adding…' : 'Updating…'); this._failed.delete(group.groupKey);
+      host.redraw(group);
+      try {
+        if (navigator.onLine === false) throw Object.assign(new Error('offline'), { code: 'unavailable' });
+        const units = new Map(this.deliveryStockStamp(group.entries, merged).map(s => [`${s.orderId}::${s.itemId}`, s.units]));
+        await DB.applyDeliveryStock(group.entries.map(({ order, item }) => ({
+          orderId: order._id, itemId: String(item.id), sid: stockId(item), description: item.description,
+          units: units.get(`${order._id}::${item.id}`) || 0,
+        })), `${host.by()} — Delivery: ${group.category}`, genRef());
+        go = false;
+      } catch (e) {
+        console.error('Stock update failed:', e);
+        const why = whyFailed(e);
+        this._failed.set(group.groupKey, `Stock not changed: ${why}. Tap ${first ? 'Add to stock' : 'Update stock'} to try again.`);
+        // A confirmed delivery may already have left this list, card and all: ask here too.
+        go = await Ask.confirm({ title: 'Stock not changed', body: `${why[0].toUpperCase()}${why.slice(1)}.${nothingDone(e, `Nothing was ${first ? 'added' : 'moved'}.`)}`, yes: 'Try again', no: 'Later' });
+      }
+    }
+    this._saving.delete(group.groupKey);
+    host.redraw(host.find(group.groupKey) || group);
+  },
+
+  // Throws away a card's staged ticks, after asking.
+  async discard(host, cardKey) {
+    const groupKey = this.bareKey(cardKey);
+    if (this.isSaving(groupKey)) return;
+    const group = host.find(groupKey); if (!group) return;
+    if (!await Ask.confirm({ title: 'Discard the unsaved changes?', body: group.category, yes: 'Discard changes', no: 'Keep changes', danger: true })) return;
+    host.drafts.delete(groupKey); this._failed.delete(groupKey);
+    this.keepDrafts(host.page, host.drafts);
+    host.redraw(group);
   },
 
   // ── ENTRIES-AWARE VARIANTS (a delivery can now span multiple orders) ──
@@ -249,7 +441,7 @@ const Intake = {
   // ── CATEGORY-BASED RENDERING (Deliveries page + Sent tab) ─────────────
   // Each "unit" is one delivery — everything emailed together in one real send, which
   // may span multiple orders. Grouped by item.deliveryId (stamped when an item is marked
-  // emailed — see DB.markCategoryEmailed/markAllEmailed) so orders that contributed to the
+  // emailed — see DB.markLinesEmailed/saveEmailedOrder) so orders that contributed to the
   // same email collapse into one card. Items from before deliveryId existed fall back to
   // a per-order-per-category key — no retroactive merging for those (that's what the
   // Combine debug tool is for).
@@ -374,8 +566,10 @@ const Intake = {
     const status = this.computeCategoryStatusEntries(entries);
     const badgeStatus = isCancelledCard ? 'cancelled' : status;
     const suffix = isDerived ? ' — Back Order' : '';
-    const hasDraft   = !readOnly && draftForCard && Object.keys(draftForCard).length > 0;
+    const hasDraft   = !readOnly && this.draftChanges(entries, draftForCard);
     const canConfirm = hasDraft && this.canConfirmEntries(entries, draftForCard);
+    const saving     = readOnly ? '' : (this._saving.get(groupKey) || '');
+    const failed     = readOnly ? '' : (this._failed.get(groupKey) || '');
 
     // Follow-up tag — any line short with no explanation (see needsFollowUp). Reflects
     // staged edits too, so resolving it on the card clears the tag immediately.
@@ -426,14 +620,18 @@ const Intake = {
           </div>
           <div class="intake-card-right">
             ${readOnly && showRestore ? `<button class="intake-restore-btn" data-restore="${esc(groupKey)}" title="Restore to active tracking"><i class="ti ti-arrow-back-up"></i> Restore</button>` : ''}
-            ${isOpen && hasDraft && !canConfirm ? `<button class="intake-save-btn" data-save="${esc(cardKey)}" title="Save progress — some items still need a status"><i class="ti ti-device-floppy"></i> Save</button>` : ''}
-            ${isOpen && hasDraft && canConfirm ? `<button class="intake-confirm-btn" data-confirm="${esc(cardKey)}" title="Confirm and save changes"><i class="ti ti-check"></i> Confirm</button>` : ''}
+            ${saving ? `<span class="intake-saving"><i class="ti ti-loader-2"></i> ${esc(saving)}</span>` : ''}
+            ${hasDraft && !saving ? `<span class="intake-unsaved-tag"><i class="ti ti-pencil"></i> Unsaved</span>` : ''}
+            ${isOpen && hasDraft && !saving ? `<button class="intake-discard-btn" data-discard="${esc(cardKey)}">Discard</button>` : ''}
+            ${isOpen && hasDraft && !canConfirm && !saving ? `<button class="intake-save-btn" data-save="${esc(cardKey)}" title="Save progress — some items still need a status"><i class="ti ti-device-floppy"></i> Save</button>` : ''}
+            ${isOpen && hasDraft && canConfirm && !saving ? `<button class="intake-confirm-btn" data-confirm="${esc(cardKey)}" title="Confirm and save changes"><i class="ti ti-check"></i> Confirm</button>` : ''}
             ${followUpTag}
-            ${stockTag}
+            ${saving || hasDraft ? '' : stockTag}
             ${this.statusBadge(badgeStatus)}
             <i class="ti ${isOpen ? 'ti-chevron-up' : 'ti-chevron-down'} intake-chevron"></i>
           </div>
         </div>
+        ${failed ? `<div class="inline-error intake-failed" role="alert">${esc(failed)}</div>` : ''}
         ${isOpen ? `<div class="intake-card-body">
           ${this._renderMergedEntries(entries, { draftForCard, readOnly })}
         </div>` : ''}
@@ -643,8 +841,9 @@ const Intake = {
   // Attach all intake interactions to a container element.
   // callbacks: { onAction(orderId, itemId, action), onQtyChange(orderId, itemId, qty),
   //   onNoteChange(orderId, itemId, text), onRerender(cardKey), onConfirm(cardKey),
-  //   onSave(cardKey), onRestore(groupKey) }
+  //   onSave(cardKey), onDiscard(cardKey), onRestore(groupKey) }
   attachListeners(container, callbacks) {
+    let _noteTimer = null;
     container.addEventListener('click', e => {
       // Confirm button — sits inside the header, must be checked before the toggle handler.
       const confirmBtn = e.target.closest('[data-confirm]');
@@ -658,6 +857,13 @@ const Intake = {
       const saveBtn = e.target.closest('[data-save]');
       if (saveBtn) {
         if (callbacks.onSave) callbacks.onSave(saveBtn.dataset.save);
+        return;
+      }
+
+      // Discard the staged, unsaved ticks on this card.
+      const discardBtn = e.target.closest('[data-discard]');
+      if (discardBtn) {
+        if (callbacks.onDiscard) callbacks.onDiscard(discardBtn.dataset.discard);
         return;
       }
 
@@ -727,9 +933,14 @@ const Intake = {
       if (out && callbacks.onOutstandingChange) {
         callbacks.onOutstandingChange(out.dataset.outstandingOrder, out.dataset.outstandingItem, parseInt(out.value) || 0);
       }
+      // Leaving a note takes it at once: a Confirm straight after typing must include it.
+      const ta = e.target.closest('[data-notes-item]');
+      if (ta && callbacks.onNoteChange) {
+        clearTimeout(_noteTimer);
+        callbacks.onNoteChange(ta.dataset.notesOrder, ta.dataset.notesItem, ta.value);
+      }
     });
 
-    let _noteTimer = null;
     container.addEventListener('input', e => {
       const ta = e.target.closest('[data-notes-item]');
       if (ta && callbacks.onNoteChange) {

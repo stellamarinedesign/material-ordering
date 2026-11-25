@@ -10,8 +10,8 @@
   <link rel="icon" type="image/png" href="favicon.png">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
   <link rel="stylesheet" href="fonts/tabler-icons.min.css">
-  <link rel="stylesheet" href="css/style.css?v=2026-11-23.1">
-  <link rel="stylesheet" href="css/themes.css?v=2026-11-23.1">
+  <link rel="stylesheet" href="css/style.css?v=2026-11-25.1">
+  <link rel="stylesheet" href="css/themes.css?v=2026-11-25.1">
 </head>
 <body>
 <div id="root"></div>
@@ -20,12 +20,12 @@
 <!-- APP CHECK: remove this line to disable App Check (also remove init block in firebase-sync.js) -->
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-check-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
-<script src="js/shared.js?v=2026-11-23.1"></script>
-<script src="js/firebase-sync.js?v=2026-11-23.1"></script>
-<script src="js/auth.js?v=2026-11-23.1"></script>
-<script src="js/intake.js?v=2026-11-23.1"></script>
-<script src="js/catalogue.js?v=2026-11-23.1"></script>
-<script src="js/accounts.js?v=2026-11-23.1"></script>
+<script src="js/shared.js?v=2026-11-25.1"></script>
+<script src="js/firebase-sync.js?v=2026-11-25.1"></script>
+<script src="js/auth.js?v=2026-11-25.1"></script>
+<script src="js/intake.js?v=2026-11-25.1"></script>
+<script src="js/catalogue.js?v=2026-11-25.1"></script>
+<script src="js/accounts.js?v=2026-11-25.1"></script>
 <!-- Vendored xlsx-js-style (SheetJS fork with cell styling) — stocktake Excel exports -->
 <script src="js/xlsx-style.min.js"></script>
 <!-- Vendored ExcelJS — used only for the consumables export, which embeds drawn
@@ -53,11 +53,12 @@ const Manager = {
   _seenOrderIds:     null,   // null = not yet seeded; Set once first listener fires
   _myOrderIds:       new Set(),
   _newOrderCount:    0,
-  // Local-only exclusions: Set of "category|partCode|orderId" strings
+  // Lines left out of the next email: "category|partCode|orderId", and part codes shown
+  // as one merged row: "category|partCode" (how they are shown; the quantity is always
+  // added up from the live lines). Neither touches the database; both are kept on this
+  // PC until the category is emailed (_keepStaged).
   _combExcluded: new Set(),
-  // Local-only merges: Map of "category|partCode" -> {qty, deviceNames, orderId}
-  // When a merge key exists, that partCode is shown as a single merged row
-  _combMerged: new Map(),
+  _combMerged:   new Set(),
 
   mainTab:   'queue',
   materials:    [],
@@ -68,11 +69,9 @@ const Manager = {
   _cats:     [],
   _subs:     [],
   _no:       { _items: {} },  // materials cart (New Order tab)
-  _pendingEmailMeta: null,
-  _noEmailCategory:  null,
-  // Tracks the Firestore order doc created when the first New Order category email is
-  // sent (mirrors _coOrderId below). Cleared when the cart is fully emptied.
-  _noOrderId: null,
+  // The email on screen: what it covers and what Send will record. There is only ever
+  // one, and closing the panel drops it — see _openEmail.
+  _emailDraft: null,
   _noNote:    '',           // note to self/other managers, typed on the New Order confirmation
   _noteEditing: new Set(),  // queue cards with the note editor open
 
@@ -82,17 +81,13 @@ const Manager = {
   _coActiveSub:     null,
   _coCats:          [],
   _coSubs:          [],
-  _coEmailCategory: null,
-  // Tracks the Firestore order doc created when the first CO category email is sent.
-  // Cleared when the cart is fully emptied after the last email.
-  _coOrderId:   null,
-  _coOrderRef:  null,
+  _coOrderRef:  null,   // one reference for everything emailed from the same cart
 
   // Intake tab state
   _intakeFilter:      { materials: 'outstanding', consumables: 'outstanding' },
   _intakeOpenOrders:  new Set(),
-  // cardKey ("orderId|||category") -> { [itemId]: {status, qtyReceived, notes} } —
-  // staged intake edits not yet saved to Firestore (see intakeConfirm).
+  // groupKey -> { "orderId::itemId": {status, qtyReceived, notes} } — staged intake
+  // edits not yet saved to Firestore, kept on this PC (Intake.keepDrafts).
   _intakeDrafts:      new Map(),
   // Edit mode (combine/cancel deliveries) — manager.html only.
   _editMode:          { materials: false, consumables: false },
@@ -164,6 +159,8 @@ const Manager = {
     Auth.start(() => Auth.guardManagerPage());
     DB.onDenied = () => Auth.denied();
     this.orderRef  = genRef();
+    this._intakeDrafts = Intake.loadDrafts('manager');
+    this._loadStaged();
     this.renderShell();
     const verEl = document.getElementById('app-version');
     if (verEl) verEl.textContent = verLabel(APP_VERSION);
@@ -235,13 +232,14 @@ const Manager = {
     // Idle auto-reload (matters when this page is opened on an iPad for barcode
     // setup; harmless on the PC). Never while anything is part-done: a draft
     // materials/consumables order, receive-stock entries, an in-progress
-    // stocktake count, or delivery edit mode selections.
+    // stocktake count, delivery edit mode selections, or a delivery being ticked off.
     AutoUpdate.start({
       onDiscover: v => { this._connState.latestVersion = v; this._renderLiveStatus(); },
       isBusy:     () => this.noCount() > 0 || this.coCount() > 0
         || Object.keys(this._receive._items).length > 0
         || Object.keys(this._mstCart).length > 0
-        || this._editMode.materials || this._editMode.consumables,
+        || this._editMode.materials || this._editMode.consumables
+        || this._opBusy.size > 0 || Intake.draftsInHand('manager'),
     });
   },
 
@@ -508,12 +506,14 @@ const Manager = {
           </div>
         </div>
 
-        <!-- EMAIL PANEL -->        <div class="panel" id="email-panel">
+        <!-- EMAIL PANEL -->
+        <div class="panel" id="email-panel">
           <div class="panel-header">
             <button class="back-btn" id="btn-close-email"><i class="ti ti-chevron-left"></i>Back</button>
             <div class="panel-title" id="email-panel-title">Order Email</div>
             <button class="btn-green btn" id="btn-send-email" style="width:auto;padding:7px 14px;font-size:13px"><i class="ti ti-send"></i>Send</button>
           </div>
+          <div class="inline-error" id="email-error" role="alert" hidden></div>
           <div class="email-fields">
             <div class="email-field"><label>To</label><input type="email" id="email-to"></div>
             <div class="email-field"><label>CC</label><input type="email" id="email-cc"></div>
@@ -594,6 +594,7 @@ const Manager = {
           </div></div></div>
           <div class="app-scroll" id="receive-scroll"><div class="col"><div class="mat-list" id="receive-mat-list"></div></div></div>
           <div class="action-bar"><div class="action-bar-inner">
+            <div class="inline-error" id="receive-error" role="alert" hidden></div>
             <button class="btn btn-danger" id="btn-receive-clear-main"><i class="ti ti-x"></i> Clear order</button>
             <button class="btn btn-primary" id="btn-receive-submit" style="margin-top:2px"><i class="ti ti-truck-delivery"></i>Confirm Stock Received
               <span class="sidebar-count zero" id="receive-badge" style="margin-left:4px">0</span>
@@ -656,7 +657,8 @@ const Manager = {
     document.getElementById('btn-close-catalogue').addEventListener('click', () => Catalogue.close());
     Catalogue.mount(this);
     Accounts.mount();
-    document.getElementById('btn-close-email')    .addEventListener('click', () => this.closePanel('email-panel'));
+    document.getElementById('btn-close-email')    .addEventListener('click', () => { if (!this._opBusy.has('email')) this.closePanel('email-panel'); });
+    document.getElementById('email-to')           .addEventListener('input', () => inlineError('email-error', ''));
     document.getElementById('btn-send-email')     .addEventListener('click', () => this.sendEmail());
     document.getElementById('main-tab-queue')     .addEventListener('click', () => this.setMainTab('queue'));
     document.getElementById('main-tab-new')       .addEventListener('click', () => this.setMainTab('new-order'));
@@ -756,6 +758,7 @@ const Manager = {
       onRerender:  (orderId)                 => this.intakeRerenderCard(orderId, 'materials'),
       onConfirm:   (cardKey)                 => this.intakeConfirm(cardKey),
       onSave:      (cardKey)                 => this.intakeSave(cardKey),
+      onDiscard:   (cardKey)                 => this.intakeDiscard(cardKey),
       onRestore:   (orderId)                 => this.intakeRestore(orderId),
     });
     Intake.attachListeners(document.getElementById('intake-list-cons'), {
@@ -768,6 +771,7 @@ const Manager = {
       onRerender:  (orderId)                 => this.intakeRerenderCard(orderId, 'consumables'),
       onConfirm:   (cardKey)                 => this.intakeConfirm(cardKey),
       onSave:      (cardKey)                 => this.intakeSave(cardKey),
+      onDiscard:   (cardKey)                 => this.intakeDiscard(cardKey),
       onRestore:   (orderId)                 => this.intakeRestore(orderId),
       onApplyStock:(cardKey)                 => this.intakeApplyStock(cardKey),
     });
@@ -776,12 +780,12 @@ const Manager = {
     document.getElementById('btn-no-add-to-orders').addEventListener('click', () => this.noAddToOrders());
     document.getElementById('btn-no-clear-main').addEventListener('click', () => {
       if (!confirm('Clear all items?')) return;
-      this._no._items = {}; this._noNote = '';
+      this._no._items = {}; this._noNote = ''; this.orderRef = genRef();
       this._updateNoBadge(); this.renderNoList(); this.closePanel('no-review-panel');
     });
     document.getElementById('btn-no-clear-inner').addEventListener('click', () => {
       if (!confirm('Clear all items?')) return;
-      this._no._items = {}; this._noNote = '';
+      this._no._items = {}; this._noNote = ''; this.orderRef = genRef();
       this._updateNoBadge(); this.renderNoList(); this.closePanel('no-review-panel');
     });
 
@@ -801,14 +805,12 @@ const Manager = {
       if (add) { e.stopPropagation(); this.coQuickAdd(+add.dataset.add); }
       if (bin) { e.stopPropagation(); this.coZero(+bin.dataset.bin); }
     });
-    document.getElementById('co-mat-list').addEventListener('change', e => {
-      const inp = e.target.closest('[data-qid]'); if (inp) this.coSetQty(+inp.dataset.qid, inp.value);
-    });
+    this._cartFields('co-mat-list', 'qid', () => this.consumables, 'co');
     document.getElementById('co-search').addEventListener('input', () => this.renderCoList());
     document.getElementById('btn-co-review').addEventListener('click', () => this.coOpenReview());
     document.getElementById('btn-co-clear-main').addEventListener('click', () => {
       if (!confirm('Clear all items?')) return;
-      this._co._items = {}; this._coOrderId = null; this._coOrderRef = null;
+      this._co._items = {}; this._coOrderRef = null;
       this._updateCoBadge(); this.renderCoList(); this.closePanel('co-review-panel');
     });
     document.getElementById('btn-close-co-review').addEventListener('click', () => this.closePanel('co-review-panel'));
@@ -818,9 +820,7 @@ const Manager = {
       if (inc) this.coAdj(+inc.dataset.rinc,  1);
       if (rem) this.coZero(+rem.dataset.rrem);
     });
-    document.getElementById('co-review-contents').addEventListener('change', e => {
-      const inp = e.target.closest('[data-rqid]'); if (inp) this.coSetQty(+inp.dataset.rqid, inp.value);
-    });
+    this._cartFields('co-review-contents', 'rqid', () => this.consumables, 'co');
     document.getElementById('co-email-buttons').addEventListener('click', e => {
       const all = e.target.closest('[data-co-email-all]');
       const cat = e.target.closest('[data-co-cat]');
@@ -829,7 +829,7 @@ const Manager = {
       else if (cat) this.coOpenCategoryEmail(cat.dataset.coCat);
       else if (clr) {
         if (!confirm('Clear all items?')) return;
-        this._co._items = {}; this._coOrderId = null; this._coOrderRef = null;
+        this._co._items = {}; this._coOrderRef = null;
         this._updateCoBadge(); this.renderCoList(); this.closePanel('co-review-panel');
       }
     });
@@ -850,15 +850,14 @@ const Manager = {
       if (add) { e.stopPropagation(); this.receiveQuickAdd(+add.dataset.add); }
       if (bin) { e.stopPropagation(); this.receiveZero(+bin.dataset.bin); }
     });
-    document.getElementById('receive-mat-list').addEventListener('change', e => {
-      const inp = e.target.closest('[data-qid]'); if (inp) this.receiveSetQty(+inp.dataset.qid, inp.value);
-    });
+    this._cartFields('receive-mat-list', 'qid', () => this.consumables, 'receive');
     document.getElementById('receive-search').addEventListener('input', () => this.renderReceiveList());
     document.getElementById('btn-receive-submit').addEventListener('click', () => this.receiveSubmit());
     document.getElementById('btn-receive-clear-main').addEventListener('click', () => {
       if (!confirm('Clear all items?')) return;
       this._receive._items = {};
       document.getElementById('receive-reference').value = '';
+      inlineError('receive-error', '');
       this._updateReceiveBadge(); this.renderReceiveList();
     });
 
@@ -913,11 +912,19 @@ const Manager = {
       if (unmerge)    { e.stopPropagation(); this.unmergeLines(unmerge.dataset.unmerge, unmerge.dataset.partcode); return; }
       if (header)     { this.toggleCard(header.dataset.cardId); }
     });
-    queue.addEventListener('change', e => {
-      const inp  = e.target.closest('[data-qchange]');
-      const cinp = e.target.closest('[data-cqchange]');
-      if (inp)  { e.stopPropagation(); this.editQty(inp.dataset.qchange, +inp.dataset.idx, inp.value); }
-      if (cinp) { e.stopPropagation(); this.editCombinedSubQty(cinp.dataset.cqchange, cinp.dataset.orderId, cinp.dataset.partcode, cinp.value); }
+    // Quantities here are on live orders, so they save when the field is left.
+    const lineOf = el => {
+      const o = this.orders.find(x => x._id === (el.dataset.qchange || el.dataset.orderId));
+      return o && (el.dataset.qchange ? o.items[+el.dataset.idx]
+        : o.items.find(i => i.category === el.dataset.cqchange && i.partCode === el.dataset.partcode && !i.emailed));
+    };
+    QtyField.attach(queue, '[data-qchange], [data-cqchange]', {
+      later: true, zero: true,
+      item: el => lineOf(el),
+      get:  el => (lineOf(el) || {}).qty || 0,
+      set:  (el, qty) => el.dataset.qchange
+        ? this.editQty(el.dataset.qchange, +el.dataset.idx, qty)
+        : this.editCombinedSubQty(el.dataset.cqchange, el.dataset.orderId, el.dataset.partcode, qty),
     });
     // Capture phase for combined +/- so they fire before the header toggle check
     queue.addEventListener('click', e => {
@@ -942,9 +949,7 @@ const Manager = {
       if (add) { e.stopPropagation(); this.noQuickAdd(+add.dataset.add); }
       if (bin) { e.stopPropagation(); this.noZero(+bin.dataset.bin); }
     });
-    document.getElementById('no-mat-list').addEventListener('change', e => {
-      const inp = e.target.closest('[data-qid]'); if (inp) this.noSetQty(+inp.dataset.qid, inp.value);
-    });
+    this._cartFields('no-mat-list', 'qid', () => this.materials, 'no');
     document.getElementById('no-search').addEventListener('input', () => this.renderNoList());
     document.getElementById('no-review-contents').addEventListener('click', e => {
       const dec=e.target.closest('[data-rdec]'), inc=e.target.closest('[data-rinc]'), rem=e.target.closest('[data-rrem]');
@@ -952,9 +957,7 @@ const Manager = {
       if (inc) this.noRevAdj(+inc.dataset.rinc,  1);
       if (rem) this.noZero(+rem.dataset.rrem);
     });
-    document.getElementById('no-review-contents').addEventListener('change', e => {
-      const inp = e.target.closest('[data-rqid]'); if (inp) this.noRevSet(+inp.dataset.rqid, inp.value);
-    });
+    this._cartFields('no-review-contents', 'rqid', () => this.materials, 'no');
     document.getElementById('no-review-contents').addEventListener('input', e => {
       if (e.target.id === 'no-order-note') this._noNote = e.target.value;
     });
@@ -995,8 +998,7 @@ const Manager = {
       else if (s) { this._stockActiveSub = s.dataset.stockSub === '__all__' ? null : s.dataset.stockSub; this.renderStockTabs(); this.renderStockList(); }
     });
     document.getElementById('btn-receive-stock').addEventListener('click', () => {
-      this._receive._items = {}; this._receiveActiveCat = null; this._receiveActiveSub = null;
-      document.getElementById('receive-reference').value = '';
+      this._receiveActiveCat = null; this._receiveActiveSub = null;
       this.renderReceiveTabs(); this.renderReceiveList(); this._updateReceiveBadge();
       this.openPanel('receive-panel');
     });
@@ -1076,7 +1078,11 @@ const Manager = {
   },
 
   openPanel(id)  { document.getElementById(id)?.classList.add('open'); },
-  closePanel(id) { document.getElementById(id)?.classList.remove('open'); },
+  closePanel(id) {
+    document.getElementById(id)?.classList.remove('open');
+    // An email that was backed out of is gone: nothing sent later may carry it along.
+    if (id === 'email-panel') { this._emailDraft = null; inlineError('email-error', ''); }
+  },
 
   setMainTab(tab) {
     this.mainTab = tab;
@@ -1286,6 +1292,7 @@ const Manager = {
     const group = this._intakeFindGroup(groupKey);
     if (!group) return;
     const draftForCard = this._intakeDrafts.get(groupKey);
+    Intake.keepDrafts('manager', this._intakeDrafts);
     const restoreFocus = captureInputFocus(); // notes debounce re-renders while typing
 
     const fullSafe = groupKey.replace(/[^a-zA-Z0-9]/g, '_');
@@ -1305,131 +1312,19 @@ const Manager = {
     }
   },
 
-  // Shared write path for Save and Confirm. When requireFullyActioned=true (Confirm),
-  // validates that every item has been actioned before writing. When false (Save), writes
-  // whatever partial progress is staged — useful for preserving work-in-progress across reloads.
-  async _intakeWrite(cardKey, requireFullyActioned) {
-    let groupKey = cardKey;
-    if (groupKey.endsWith('|||bo')) groupKey = groupKey.slice(0, -5);
-
-    const group = this._intakeFindGroup(groupKey); if (!group) return;
-    const draft = this._intakeDrafts.get(groupKey); if (!draft) return;
-
-    if (requireFullyActioned && !Intake.canConfirmEntries(group.entries, draft)) return;
-
-    const merged = Intake.mergeDraftEntries(group.entries, draft);
-
-    // Flat display: entries sharing the same mergeKey (same material across orders) show
-    // as one row keyed to the first entry's order. Propagate that representative's STATUS,
-    // outstanding and follow-up state to all other same-material entries — but not its
-    // qtyReceived or notes, which describe the delivery total, not each order's share.
-    // (Without propagating outstanding/follow-up, clearing them on a merged row would
-    // leave the other orders' lines still flagged on the Back Orders / follow-up views.)
-    const byMergeKey = new Map();
-    const propagated = new Set();
-    for (const e of group.entries) {
-      const k = Intake.mergeKey(e.item);
-      if (!byMergeKey.has(k)) byMergeKey.set(k, []);
-      byMergeKey.get(k).push(e);
-    }
-    for (const itemEntries of byMergeKey.values()) {
-      if (itemEntries.length < 2) continue;
-      const rep = merged[`${itemEntries[0].order._id}::${itemEntries[0].item.id}`];
-      if (!rep || rep.status === undefined) continue;
-      for (const { order, item } of itemEntries.slice(1)) {
-        const ck = `${order._id}::${item.id}`;
-        merged[ck] = {
-          ...(merged[ck] || {}),
-          status: rep.status,
-          outstandingQty: rep.outstandingQty ?? 0,
-          followUpDone: rep.followUpDone ?? false,
-        };
-        propagated.add(ck);
-      }
-    }
-
-    // Per-order PATCH of bare-keyed entries — DB.updateIntake merges it into the saved
-    // map inside a transaction. Only entries this edit actually touched (staged in the
-    // draft, or propagated above) go in the patch — including untouched items would
-    // overwrite a concurrent device's fresher write with our stale snapshot of it.
-    const byOrder = new Map();
-    const skippedKeys = new Set();
-    for (const { order, item } of group.entries) {
-      if (!byOrder.has(order._id)) byOrder.set(order._id, {});
-      const patch = byOrder.get(order._id);
-      const compositeKey = `${order._id}::${item.id}`;
-      if (draft[compositeKey] === undefined && !propagated.has(compositeKey)) continue;
-      const entry = merged[compositeKey];
-      if (!entry) continue;
-      // On a partial save, skip partial-without-qty — writing it would make the card appear
-      // resolved (partial is in RESOLVED_STATUSES) even though the qty hasn't been entered.
-      if (!requireFullyActioned && entry.status === 'partial' && !entry.qtyReceived) {
-        skippedKeys.add(compositeKey);
-        continue;
-      }
-      patch[String(item.id)] = entry;
-    }
-
-    const s  = Settings.get();
-    const by = (s.managerName || 'Manager').trim() || 'Manager';
-    try {
-      await Promise.all([...byOrder.entries()].map(([orderId, patch]) => DB.updateIntake(orderId, patch, by)));
-      // Keep skipped partial-without-qty selections staged so the user's Partial toggle
-      // survives the Save instead of silently resetting to pending.
-      const retained = {};
-      for (const key of skippedKeys) if (draft[key]) retained[key] = draft[key];
-      if (Object.keys(retained).length) this._intakeDrafts.set(groupKey, retained);
-      else this._intakeDrafts.delete(groupKey);
-      const isMat = !group.entries[0].order.type || group.entries[0].order.type === 'materials';
-      if (isMat) this.renderIntakeMat(); else this.renderIntakeCons();
-      // On a full Confirm of a consumables delivery, offer to add what was received to stock.
-      if (requireFullyActioned) await this._maybeApplyDeliveryStock(group, merged);
-    } catch (e) {
-      console.error('Save failed:', e);
-      alert('Save failed — please try again.');
-    }
+  // What the shared save code (Intake.saveCard and friends) needs from this page.
+  _intakeHost() {
+    return {
+      page: 'manager', drafts: this._intakeDrafts,
+      by:     () => (Settings.get().managerName || 'Manager').trim() || 'Manager',
+      find:   groupKey => this._intakeFindGroup(groupKey),
+      redraw: group => { if (!group.entries[0].order.type || group.entries[0].order.type === 'materials') this.renderIntakeMat(); else this.renderIntakeCons(); },
+    };
   },
-
-  async intakeConfirm(cardKey) { await this._intakeWrite(cardKey, true); },
-  async intakeSave(cardKey)    { await this._intakeWrite(cardKey, false); },
-
-  // After confirming a CONSUMABLES delivery (or via the "Add/Update to stock" tag),
-  // reconcile stock with the received quantities: OK → full ordered qty, Partial → the
-  // received qty, Missing/Backorder → nothing. Boxed items convert boxes → units. Each
-  // item remembers how much it last pushed to stock, so this posts only the DIFFERENCE —
-  // a first apply adds the full amount, a later miscount fix posts just the correction
-  // (positive or negative). Silent no-op when already in sync. Materials have no stock.
-  async _maybeApplyDeliveryStock(group, merged) {
-    const isMat = !group.entries[0].order.type || group.entries[0].order.type === 'materials';
-    if (isMat) return;
-    const changes = Intake.deliveryStockDeltas(group.entries, merged); // per-sid {item, current, prev, delta}
-    const stamp   = Intake.deliveryStockStamp(group.entries, merged);  // per-item applied units to record
-    const toPost  = changes.filter(c => c.delta !== 0);
-    if (!toPost.length) return; // nothing received, or already in sync
-    const firstTime = changes.every(c => c.prev === 0);
-    const lines = toPost.map(c => `• ${c.item.description}: ${c.delta > 0 ? '+' : ''}${c.delta} ${c.item.qtyType||'units'}`).join('\n');
-    const title = firstTime ? 'Add received quantities to consumables stock?' : 'Update consumables stock to match this delivery?';
-    if (!confirm(`${title}\n\n${lines}`)) return;
-    const s  = Settings.get();
-    const by = `${(s.managerName||'Manager').trim()||'Manager'} — Delivery: ${group.category}`;
-    try {
-      await DB.receiveDeliveryStock(toPost.map(c => ({ sid: stockId(c.item), description: c.item.description, units: c.delta })), by, genRef());
-      await DB.stampDeliveryStockApplied(stamp);
-    } catch (e) {
-      console.error('Stock update failed:', e);
-      alert('Stock update failed: ' + e.message);
-    }
-  },
-
-  // "Add to stock" from a resolved delivery card — applies the already-saved received
-  // quantities to stock later, without touching confirmation status.
-  async intakeApplyStock(cardKey) {
-    let groupKey = cardKey; if (groupKey.endsWith('|||bo')) groupKey = groupKey.slice(0, -5);
-    const group = this._intakeFindGroup(groupKey); if (!group) return;
-    const merged = Intake.mergeDraftEntries(group.entries, null);
-    await this._maybeApplyDeliveryStock(group, merged);
-    this.renderIntakeCons();
-  },
+  intakeConfirm(cardKey)    { return Intake.saveCard(this._intakeHost(), cardKey, true); },
+  intakeSave(cardKey)       { return Intake.saveCard(this._intakeHost(), cardKey, false); },
+  intakeDiscard(cardKey)    { return Intake.discard(this._intakeHost(), cardKey); },
+  intakeApplyStock(cardKey) { return Intake.applyStock(this._intakeHost(), cardKey); },
 
   // Restores a cancelled DELIVERY (by groupKey) — clears the cancelled marker on every
   // contributing order, not just the first one, so multi-order deliveries restore whole.
@@ -1793,11 +1688,14 @@ const Manager = {
     const m = this.materials.find(x => x.id == id); if (!m) return;
     this._mstTickBusy.add(id);
     try {
-      await DB.recordStocktake([this._mstPayload(m)], this._mstCountedBy());
+      const payload = [this._mstPayload(m)];
+      await DB.recordStocktake(payload, this._mstCountedBy(), OpId.for(`tick:${id}`, payload));
+      OpId.done(`tick:${id}`);
       delete this._mstCart[id]; delete this._mstModes[id];
       this._updateMstBadge(); this.renderStocktakeCount();
     } catch(e) {
-      alert('Could not record that count — please try again.\n\n' + e.message);
+      console.error('Count not recorded:', e);
+      alert(`Count not recorded: ${whyFailed(e)}. Tap the tick to try again.`);
     } finally { this._mstTickBusy.delete(id); }
   },
 
@@ -1818,6 +1716,7 @@ const Manager = {
           <h3>Submit stocktake</h3>
           <p style="margin-bottom:8px">${items.length} item${items.length!==1?'s':''} · recorded as <strong>${esc(this._mstCountedBy())}</strong></p>
           <div style="display:flex;flex-direction:column;gap:6px;max-height:300px;overflow-y:auto;text-align:left;margin-bottom:12px">${lines}</div>
+          <div class="inline-error" id="mst-error" role="alert" hidden style="margin-bottom:10px"></div>
           <button class="btn btn-primary" id="btn-mst-confirm" style="width:100%"><i class="ti ti-check"></i> Confirm stocktake</button>
           <button class="btn btn-outline" id="btn-mst-cancel" style="width:100%;margin-top:8px">Cancel</button>
         </div>
@@ -1832,10 +1731,14 @@ const Manager = {
     if (!items.length) { document.getElementById('overlay-wrap').innerHTML=''; return; }
     if (this._connState.connected === false || navigator.onLine === false) { alert("You're currently offline — stocktakes can't be submitted without a connection."); return; }
     this._mstBusy = true;
-    const btn = document.getElementById('btn-mst-confirm');
-    if (btn) { btn.disabled = true; btn.innerHTML = '<i class="ti ti-loader" style="animation:spin 1s linear infinite"></i> Submitting…'; }
+    inlineError('mst-error', '');
+    const btn = document.getElementById('btn-mst-confirm'), cancel = document.getElementById('btn-mst-cancel');
+    if (cancel) cancel.disabled = true;
+    if (btn) { btn.disabled = true; btn.innerHTML = `<i class="ti ti-loader" style="animation:spin 1s linear infinite"></i> Saving ${items.length} count${items.length !== 1 ? 's' : ''}…`; }
     try {
-      await DB.recordStocktake(items.map(m => this._mstPayload(m)), this._mstCountedBy());
+      const payload = items.map(m => this._mstPayload(m));
+      await DB.recordStocktake(payload, this._mstCountedBy(), OpId.for('stocktake', payload));
+      OpId.done('stocktake');
       this._mstCart = {}; this._mstModes = {};
       this._updateMstBadge(); this.renderStocktakeCount();
       const ow = document.getElementById('overlay-wrap');
@@ -1850,8 +1753,10 @@ const Manager = {
         </div>`;
       document.getElementById('btn-mst-done').addEventListener('click', () => { ow.innerHTML=''; });
     } catch(e) {
+      console.error('Stocktake not saved:', e);
+      if (cancel) cancel.disabled = false;
       if (btn) { btn.disabled = false; btn.innerHTML = '<i class="ti ti-check"></i> Confirm stocktake'; }
-      alert('Submit failed — please try again.\n\n' + e.message);
+      inlineError('mst-error', `Not saved: ${whyFailed(e)}.${nothingDone(e, 'Nothing was recorded.')} Tap Confirm stocktake to try again.`);
     } finally { this._mstBusy = false; }
   },
 
@@ -2013,7 +1918,7 @@ const Manager = {
   // belongs in Pending as long as it still has at least one item that hasn't been
   // turned into a delivery (emailed) or rejected. Computed live from item state
   // rather than the stored `status` field, since `status` is only ever updated by
-  // the specific action that changes it (e.g. markCategoryEmailed) — the Sent tab's
+  // the specific action that changes it (e.g. markLinesEmailed) — the Sent tab's
   // per-delivery grouping already works this way; this keeps the order-card list
   // and the pending-count badge consistent with it instead of trusting a field that
   // can go stale (e.g. legacy orders from before category-based sending existed).
@@ -2045,6 +1950,7 @@ const Manager = {
     if (this.unsubscribe) this.unsubscribe();
     this.unsubscribe = DB.listenOrders(orders => {
       this.orders = orders;
+      this._tidyStaged();
       const n = this._materialsOrders().filter(o => this._orderHasPendingItems(o)).length;
       ['pending-count','mob-pending-count','queue-pending-badge'].forEach(id => {
         const el = document.getElementById(id);
@@ -2167,7 +2073,6 @@ const Manager = {
           const itemRows = Object.values(g.byPartCode).map(pGroup => {
             const pcSafe = pGroup.partCode.replace(/[^a-zA-Z0-9]/g,'_');
             const mergeKey = `${cat}|${pGroup.partCode}`;
-            const merged = this._combMerged.get(mergeKey);
 
             // Filter out excluded lines for display purposes
             const visibleLines = pGroup.lines.filter(
@@ -2176,9 +2081,12 @@ const Manager = {
             const excludedLines = pGroup.lines.filter(
               line => this.isExcluded(cat, line.orderId, pGroup.partCode)
             );
+            const totalQty = round2(visibleLines.reduce((s, l) => s + l.qty, 0));
 
-            // If merged locally, show as a single merged row
-            if (merged) {
+            // If merged, show as a single row (while there is still more than one to merge)
+            if (this._combMerged.has(mergeKey) && visibleLines.length > 1) {
+              const names = [...new Set(visibleLines.map(l => l.deviceName).filter(Boolean))];
+              const merged = { qty: totalQty, deviceLabel: names.length === 1 ? names[0] : 'Merged' };
               return `<div class="combined-main-row">
                 <div class="combined-main-info">
                   <div class="combined-main-name">${descHtml(pGroup.description)}</div>
@@ -2210,7 +2118,6 @@ const Manager = {
             // stays as a top-level row even after that one line is excluded.
             const originallyHadSingleLine = pGroup.lines.length === 1;
             const singleLine = pGroup.lines[0];  // only used in the single-line branch
-            const totalQty = visibleLines.reduce((s,l)=>s+l.qty,0);
 
             if (originallyHadSingleLine) {
               // Single-order item — render as one top-level row.
@@ -2238,7 +2145,7 @@ const Manager = {
                     </div>`
                   : `<div class="qty-row" style="flex-shrink:0">
                       <button class="qty-btn" data-cqdec="${esc(cat)}" data-order-id="${esc(line.orderId)}" data-partcode="${esc(pGroup.partCode)}">−</button>
-                      <input class="qty-edit" type="number" min="0" step="1" value="${line.qty}"
+                      <input class="qty-edit" ${QtyField.attrs(line)} value="${line.qty}"
                         id="cqi-${catKey}-${pcSafe}-${esc(line.orderId)}"
                         data-cqchange="${esc(cat)}" data-order-id="${esc(line.orderId)}" data-partcode="${esc(pGroup.partCode)}">
                       <button class="qty-btn" data-cqinc="${esc(cat)}" data-order-id="${esc(line.orderId)}" data-partcode="${esc(pGroup.partCode)}">+</button>
@@ -2272,7 +2179,7 @@ const Manager = {
                   </div>
                   <div class="qty-row" style="flex-shrink:0">
                     <button class="qty-btn" data-cqdec="${esc(cat)}" data-order-id="${esc(line.orderId)}" data-partcode="${esc(pGroup.partCode)}">−</button>
-                    <input class="qty-edit" type="number" min="0" step="1" value="${line.qty}"
+                    <input class="qty-edit" ${QtyField.attrs(line)} value="${line.qty}"
                       id="cqi-${catKey}-${pcSafe}-${esc(line.orderId)}"
                       data-cqchange="${esc(cat)}" data-order-id="${esc(line.orderId)}" data-partcode="${esc(pGroup.partCode)}">
                     <button class="qty-btn" data-cqinc="${esc(cat)}" data-order-id="${esc(line.orderId)}" data-partcode="${esc(pGroup.partCode)}">+</button>
@@ -2476,12 +2383,14 @@ const Manager = {
   excludeCombinedLine(cat, orderId, partCode) {
     const key = `${cat}|${partCode}|${orderId}`;
     this._combExcluded.add(key);
+    this._keepStaged();
     this.renderQueue();
   },
 
   unexcludeLine(cat, orderId, partCode) {
     const key = `${cat}|${partCode}|${orderId}`;
     this._combExcluded.delete(key);
+    this._keepStaged();
     this.renderQueue();
   },
 
@@ -2489,39 +2398,48 @@ const Manager = {
     return this._combExcluded.has(`${cat}|${partCode}|${orderId}`);
   },
 
-  // Merge lines locally — store merged qty/device in _combMerged, don't touch Firebase
+  // Show a part code's lines as one row. Only how it is shown: the quantity is always
+  // added up from the live lines, so a later edit or a new order is never left behind.
   localMergeLines(cat, partCode) {
     if (!cat || !partCode) return;
-    const pendingOrders = this._materialsOrders().filter(o => this._orderHasPendingItems(o));
-    const key = `${cat}|${partCode}`;
-    // Collect all non-excluded lines for this partCode
-    const lines = [];
-    for (const order of pendingOrders) {
-      for (const item of (order.items || [])) {
-        if (item.emailed) continue;
-        if (item.category !== cat || item.partCode !== partCode) continue;
-        if (this.isExcluded(cat, order._id, partCode)) continue;
-        lines.push({ orderId: order._id, qty: item.qty, deviceName: order.deviceName || '' });
-      }
-    }
-    if (lines.length < 2) return;
-    const totalQty = lines.reduce((s, l) => s + l.qty, 0);
-    const deviceNames = [...new Set(lines.map(l => l.deviceName).filter(Boolean))];
-    this._combMerged.set(key, {
-      qty: totalQty,
-      deviceLabel: deviceNames.length > 1 ? 'Merged' : (deviceNames[0] || ''),
-      orderId: lines[0].orderId,  // representative order for qty editing
-    });
+    this._combMerged.add(`${cat}|${partCode}`);
+    this._keepStaged();
     this.renderQueue();
   },
 
   unmergeLines(cat, partCode) {
     this._combMerged.delete(`${cat}|${partCode}`);
+    this._keepStaged();
     this.renderQueue();
   },
 
-  isMerged(cat, partCode) {
-    return this._combMerged.has(`${cat}|${partCode}`);
+  // Excluded and merged lines survive a reload. Kept per database, and tidied as orders
+  // arrive: a line that is no longer waiting to be emailed has nothing to exclude.
+  _stagedKey() { return `mo_queue_staged${FirebaseConfig.isTestMode() ? '_test' : ''}`; },
+  _keepStaged() {
+    try { localStorage.setItem(this._stagedKey(), JSON.stringify({ excluded: [...this._combExcluded], merged: [...this._combMerged] })); } catch {}
+  },
+  _loadStaged() {
+    try {
+      const v = JSON.parse(localStorage.getItem(this._stagedKey()) || '{}');
+      this._combExcluded = new Set(v.excluded || []);
+      this._combMerged   = new Set(v.merged || []);
+    } catch {}
+  },
+  _tidyStaged() {
+    if (!this.orders.length || !(this._combExcluded.size || this._combMerged.size)) return;
+    const lines = new Set(), parts = new Set();
+    for (const o of this._materialsOrders()) {
+      if (o.status === 'rejected') continue;
+      for (const i of (o.items || [])) {
+        if (i.emailed || i.rejected) continue;
+        lines.add(`${i.category}|${i.partCode}|${o._id}`); parts.add(`${i.category}|${i.partCode}`);
+      }
+    }
+    const before = this._combExcluded.size + this._combMerged.size;
+    for (const k of [...this._combExcluded]) if (!lines.has(k)) this._combExcluded.delete(k);
+    for (const k of [...this._combMerged])   if (!parts.has(k)) this._combMerged.delete(k);
+    if (this._combExcluded.size + this._combMerged.size !== before) this._keepStaged();
   },
 
   async rejectOrder(id) {
@@ -2535,6 +2453,7 @@ const Manager = {
     for (const key of [...this._combExcluded]) {
       if (key.endsWith(`|${partCode}|${orderId}`)) this._combExcluded.delete(key);
     }
+    this._keepStaged();
     try { await DB.rejectItem(orderId, partCode); } catch(e) { alert('Reject failed: ' + e.message); }
   },
 
@@ -2573,23 +2492,23 @@ const Manager = {
     const items = [...order.items];
     const idx = items.findIndex(i => i.category === cat && i.partCode === partCode && !i.emailed);
     if (idx < 0) return;
-    const newQty = Math.max(0, (items[idx].qty || 0) + delta);
+    const newQty = Math.max(0, round2((items[idx].qty || 0) + delta));
     items[idx] = { ...items[idx], qty: newQty };
     const catKey = cat.replace(/\s/g, '_');
     const pcSafe = partCode.replace(/[^a-zA-Z0-9]/g,'_');
     const inp = document.getElementById(`cqi-${catKey}-${pcSafe}-${orderId}`);
-    if (inp) inp.value = newQty;
-    try { await DB.updateItems(orderId, items); } catch (e) { console.error(e); }
+    if (inp) { inp.value = newQty; inp.defaultValue = newQty; inp._before = newQty; }
+    try { await DB.updateItems(orderId, items); } catch (e) { console.error(e); alert(`Quantity not saved: ${whyFailed(e)}.`); this.renderQueue(); }
   },
 
-  async editCombinedSubQty(cat, orderId, partCode, val) {
+  async editCombinedSubQty(cat, orderId, partCode, qty) {
     if (!partCode) return;
     const order = this.orders.find(o => o._id === orderId); if (!order) return;
     const items = [...order.items];
     const idx = items.findIndex(i => i.category === cat && i.partCode === partCode && !i.emailed);
     if (idx < 0) return;
-    items[idx] = { ...items[idx], qty: Math.max(0, parseInt(val) || 0) };
-    try { await DB.updateItems(orderId, items); } catch (e) { console.error(e); }
+    items[idx] = { ...items[idx], qty };
+    try { await DB.updateItems(orderId, items); } catch (e) { console.error(e); alert(`Quantity not saved: ${whyFailed(e)}.`); this.renderQueue(); }
   },
 
   async deleteCombinedLine(cat, orderId, partCode) {
@@ -2670,7 +2589,7 @@ const Manager = {
               : isPending
                 ? `<div class="qty-row">
                     <button class="qty-btn" data-qdec="${o._id}" data-idx="${idx}">−</button>
-                    <input class="qty-edit" type="number" min="0" step="1" value="${item.qty}"
+                    <input class="qty-edit" ${QtyField.attrs(item)} value="${item.qty}"
                       data-qchange="${o._id}" data-idx="${idx}" id="qinp-${o._id}-${idx}">
                     <button class="qty-btn" data-qinc="${o._id}" data-idx="${idx}">+</button>
                   </div>
@@ -2842,7 +2761,7 @@ const Manager = {
           <div class="order-line-right">
             <div class="qty-row">
               <button class="qty-btn" data-qdec="${order._id}" data-idx="${idx}">−</button>
-              <input class="qty-edit" type="number" min="0" step="1" value="${i.qty}" data-qchange="${order._id}" data-idx="${idx}" id="qinp-${order._id}-${idx}">
+              <input class="qty-edit" ${QtyField.attrs(i)} value="${i.qty}" data-qchange="${order._id}" data-idx="${idx}" id="qinp-${order._id}-${idx}">
               <button class="qty-btn" data-qinc="${order._id}" data-idx="${idx}">+</button>
             </div>
             <span style="font-size:11px;color:var(--text3);font-family:var(--mono);margin-left:6px">${esc(i.qtyType||'')}</span>
@@ -2863,7 +2782,7 @@ const Manager = {
             <div class="order-line-right">
               <div class="qty-row">
                 <button class="qty-btn" data-qdec="${order._id}" data-idx="${idx}">−</button>
-                <input class="qty-edit" type="number" min="0" step="1" value="${i.qty}" data-qchange="${order._id}" data-idx="${idx}" id="qinp-${order._id}-${idx}">
+                <input class="qty-edit" ${QtyField.attrs(i)} value="${i.qty}" data-qchange="${order._id}" data-idx="${idx}" id="qinp-${order._id}-${idx}">
                 <button class="qty-btn" data-qinc="${order._id}" data-idx="${idx}">+</button>
               </div>
               <span style="font-size:11px;color:var(--text3);font-family:var(--mono);margin-left:6px">${esc(i.qtyType||'')}</span>
@@ -2907,17 +2826,17 @@ const Manager = {
   async stepQty(orderId, idx, delta) {
     const order = this.orders.find(o => o._id === orderId); if (!order) return;
     const items = [...order.items];
-    const newQty = Math.max(0, (items[idx].qty||0) + delta);
+    const newQty = Math.max(0, round2((items[idx].qty||0) + delta));
     items[idx] = { ...items[idx], qty: newQty };
     const inp = document.getElementById(`qinp-${orderId}-${idx}`);
-    if (inp) inp.value = newQty;
+    if (inp) { inp.value = newQty; inp.defaultValue = newQty; inp._before = newQty; }
     try { await DB.updateItems(orderId, items); } catch(e) { alert('Update failed: '+e.message); }
   },
 
-  async editQty(orderId, idx, val) {
+  async editQty(orderId, idx, qty) {
     const order = this.orders.find(o => o._id === orderId); if (!order) return;
     const items = [...order.items];
-    items[idx] = { ...items[idx], qty: Math.max(0, parseInt(val)||0) };
+    items[idx] = { ...items[idx], qty };
     try { await DB.updateItems(orderId, items); } catch(e) { alert('Update failed: '+e.message); }
   },
 
@@ -2941,147 +2860,84 @@ const Manager = {
   // ══════════════════════════════════════════
   openCategoryEmail(category) {
     const pendingOrders = this._materialsOrders().filter(o => this._orderHasPendingItems(o));
-    const mergedItems   = {};
-    const orderIds      = new Set();
-    const excludedByOrder = {};  // orderId -> [partCode, ...] excluded from this send
+    const byPart = new Map();
+    const lines  = [];   // exactly what the email will say, order by order
     for (const order of pendingOrders) {
       for (const item of (order.items || [])) {
         if (item.emailed || item.rejected || item.category !== category) continue;
-        if (this.isExcluded(category, order._id, item.partCode)) {
-          if (!excludedByOrder[order._id]) excludedByOrder[order._id] = [];
-          if (!excludedByOrder[order._id].includes(item.partCode)) {
-            excludedByOrder[order._id].push(item.partCode);
-          }
-          continue;
-        }
-        orderIds.add(order._id);
-        const mergeKey   = `${category}|${item.partCode}`;
-        const localMerge = this._combMerged.get(mergeKey);
-        if (localMerge) {
-          if (!mergedItems[item.partCode]) mergedItems[item.partCode] = { ...item, qty: localMerge.qty };
-          continue;
-        }
-        if (!mergedItems[item.partCode]) mergedItems[item.partCode] = { ...item, qty: 0 };
-        mergedItems[item.partCode].qty += item.qty;
+        if (this.isExcluded(category, order._id, item.partCode)) continue;
+        lines.push({ orderId: order._id, key: DB.lineKey(item), qty: item.qty });
+        const k = Intake.mergeKey(item);
+        if (!byPart.has(k)) byPart.set(k, { ...item, qty: 0 });
+        byPart.get(k).qty = round2(byPart.get(k).qty + (item.qty || 0));
       }
     }
-    const items = Object.values(mergedItems);
+    const items = [...byPart.values()];
     if (!items.length) { alert('No pending items for ' + category); return; }
-    const { subject, body } = buildCategoryEmail(items, category, 'Material Order');
+    this._openEmail({
+      kind: 'queue', category, lines,
+      // One deliveryId shared across every contributing order — this is what lets the
+      // Deliveries page and Sent tab collapse a multi-order send into one card instead
+      // of one per order.
+      deliveryId: genDeliveryId(),
+    }, category, buildCategoryEmail(items, category, 'Material Order'));
+  },
+
+  // Every email goes through here. The draft says what Send will record; opening one
+  // replaces any other, and closing the panel (closePanel) drops it.
+  _openEmail(draft, title, { subject, body }) {
     const s = Settings.get();
-    document.getElementById('email-panel-title').textContent = category;
+    this._emailDraft = draft;
+    inlineError('email-error', '');
+    this._emailSending(false);
+    document.getElementById('email-panel-title').textContent = title;
     document.getElementById('email-to').value      = s.supplierEmail;
     document.getElementById('email-cc').value      = s.ccEmail;
     document.getElementById('email-subject').value = subject;
     document.getElementById('email-body').value    = body;
-    // One deliveryId shared across every contributing order — this is what lets the
-    // Deliveries page and Sent tab collapse a multi-order send into one card instead of
-    // one per order.
-    this._pendingEmailMeta = { category, orderIds: [...orderIds], excludedByOrder, deliveryId: genDeliveryId() };
-    this._noEmailCategory  = null;
     this.openPanel('email-panel');
   },
 
+  _emailSending(on) {
+    const btn = document.getElementById('btn-send-email'), back = document.getElementById('btn-close-email');
+    if (btn)  { btn.disabled = on; btn.innerHTML = on ? '<i class="ti ti-loader" style="animation:spin 1s linear infinite"></i>Saving…' : '<i class="ti ti-send"></i>Send'; }
+    if (back) back.disabled = on;
+  },
+
+  // Records what the email covers, then opens it in Outlook. Nothing opens unless the
+  // record was saved, and a failure leaves the email and the cart as they were.
   async sendEmail() {
+    const draft = this._emailDraft;
+    if (!draft || this._opBusy.has('email')) return;
     const to      = document.getElementById('email-to').value.trim();
     const cc      = document.getElementById('email-cc').value.trim();
     const subject = document.getElementById('email-subject').value.trim();
     const body    = document.getElementById('email-body').value;
-
-    if (this._pendingEmailMeta) {
-      const { category, orderIds, excludedByOrder = {}, deliveryId } = this._pendingEmailMeta;
-      for (const id of orderIds) {
-        const excludePartCodes = excludedByOrder[id] || [];
-        try { await DB.markCategoryEmailed(id, category, excludePartCodes, deliveryId); } catch(e) { console.error(e); }
-      }
-      // Clear local exclusions for this category so skipped items are fresh for the next send
-      for (const key of [...this._combExcluded]) {
-        if (key.startsWith(`${category}|`)) this._combExcluded.delete(key);
-      }
-      this._pendingEmailMeta = null;
+    if (!to.includes('@')) {
+      inlineError('email-error', 'Enter a To address.');
+      document.getElementById('email-to').focus();
+      return;
     }
-
-    // New Order (materials) tab — save this cart session to Firestore on first email
-    // (mirrors the Consumables Order panel's already-correct pattern below), so the
-    // order actually shows up in Sent and becomes a trackable delivery instead of just
-    // opening a mailto and vanishing. Reuses the same doc for any further categories
-    // emailed from this cart before it's fully drained.
-    const nocat = this._noEmailCategory;
-    if (nocat) {
-      if (!this._noOrderId) {
-        const s          = Settings.get();
-        const deviceName = (s.managerName || 'Manager').trim() || 'Manager';
-        const allItems   = this.noItems().map(i => ({
-          id: i.id, partCode: i.partCode, description: i.description,
-          category: i.category, subcategory: i.subcategory,
-          qtyType: i.qtyType || '', qty: i.qty,
-        }));
-        try {
-          this._noOrderId = await DB.submitOrder({ ref: this.orderRef, deviceName, items: allItems, note: this._noNote.trim() });
-          this._myOrderIds.add(this._noOrderId);
-          if (this._seenOrderIds) this._seenOrderIds.add(this._noOrderId);
-        } catch(e) { console.error('New Order save failed:', e); }
-      }
-      if (this._noOrderId) {
-        try { await DB.markCategoryEmailed(this._noOrderId, nocat, [], genDeliveryId()); }
-        catch(e) { console.warn('New Order markEmailed failed:', e); }
-      }
-      Object.keys(this._no._items).forEach(id => {
-        const m = this.materials.find(x => x.id == id);
-        if (m && m.category === nocat) delete this._no._items[id];
-      });
-      this._noEmailCategory = null;
-      this._updateNoBadge();
-      this.renderNoList();
-      // Only reset once the cart is fully drained — categories still left un-emailed
-      // must stay associated with the same order doc for a later "Add to order queue".
-      if (this.noCount() === 0) { this._noOrderId = null; this.orderRef = genRef(); }
+    if (this._connState.connected === false || navigator.onLine === false) {
+      inlineError('email-error', 'Offline. Connect, then click Send.');
+      return;
     }
-
-    // Clear Consumables Order cart items for this category (or all) if applicable
-    const cocat = this._coEmailCategory;
-    if (cocat) {
-      // Save the full cart to Firestore on first email from this cart session
-      if (!this._coOrderId) {
-        const s          = Settings.get();
-        const deviceName = (s.managerName || 'Manager').trim() || 'Manager';
-        const ref        = this._coOrderRef || genRef();
-        this._coOrderRef = ref;
-        const allItems   = this.coItems().map(i => ({
-          id: i.id, partCode: i.partCode, description: i.description,
-          category: i.category, subcategory: i.subcategory,
-          qtyType: i.qtyType || '', qty: i.qty,
-          // Carry box info so the delivery + stock steps count boxed items in boxes.
-          boxSize: i.boxSize || 0, boxUnit: i.boxUnit || '',
-        }));
-        try {
-          this._coOrderId = await DB.submitConsumablesOrder({ ref, deviceName, items: allItems });
-          this._myOrderIds.add(this._coOrderId);
-          if (this._seenOrderIds) this._seenOrderIds.add(this._coOrderId);
-        } catch(e) { console.error('CO order save failed:', e); }
-      }
-      // Mark this category (or all) as emailed in the Firestore doc
-      if (this._coOrderId) {
-        try {
-          if (cocat === '__all__') await DB.markAllEmailed(this._coOrderId);
-          else await DB.markCategoryEmailed(this._coOrderId, cocat, [], genDeliveryId());
-        } catch(e) { console.warn('CO markEmailed failed:', e); }
-      }
-
-      if (cocat === '__all__') {
-        this._co._items = {};
-      } else {
-        Object.keys(this._co._items).forEach(id => {
-          const m = this.consumables.find(x => x.id == id);
-          if (m && m.category === cocat) delete this._co._items[id];
-        });
-      }
-      this._coEmailCategory = null;
-      this._updateCoBadge();
-      this.renderCoList();
-      if (this.coCount() === 0) { this._coOrderId = null; this._coOrderRef = null; }
+    this._opBusy.add('email');
+    inlineError('email-error', '');
+    this._emailSending(true);
+    try {
+      await this._recordEmail(draft);
+    } catch (e) {
+      console.error('Email not recorded:', e);
+      inlineError('email-error', e.code === 'draft-changed'
+        ? 'An order changed while this email was open. Go back and open the email again.'
+        : `Not sent: ${whyFailed(e)}.${nothingDone(e, 'Nothing was marked as emailed.')} Click Send to try again.`);
+      return;
+    } finally {
+      this._opBusy.delete('email');
+      this._emailSending(false);
     }
-
+    this._afterEmail(draft);
     this.closePanel('email-panel');
 
     const ow = document.getElementById('overlay-wrap');
@@ -3098,17 +2954,67 @@ const Manager = {
     setTimeout(() => { openMailto(to, cc, subject, body); }, 300);
   },
 
+  // Queue emails mark the orders' lines; emails from a cart save that cart's lines as an
+  // order of their own, already emailed. Either way it is one write — all or nothing —
+  // and safe to repeat.
+  async _recordEmail(draft) {
+    if (draft.kind === 'queue') { await DB.markLinesEmailed(draft.lines, draft.deliveryId); return; }
+    this._myOrderIds.add(draft.orderId);
+    if (this._seenOrderIds) this._seenOrderIds.add(draft.orderId);
+    await DB.saveEmailedOrder(draft.orderId, draft.order, draft.deliveryIds);
+  },
+
+  // What has been emailed leaves the queue's staging or the cart it came from.
+  _afterEmail(draft) {
+    if (draft.kind === 'queue') {
+      // Excluded lines are fresh for the next send; merged rows have nothing left to merge.
+      for (const set of [this._combExcluded, this._combMerged])
+        for (const key of [...set]) if (key.startsWith(`${draft.category}|`)) set.delete(key);
+      this._keepStaged();
+      this.renderQueue();
+      return;
+    }
+    const cart = draft.kind === 'newOrder' ? this._no : this._co;
+    for (const i of draft.order.items) delete cart._items[i.id];
+    if (draft.kind === 'newOrder') {
+      this._updateNoBadge(); this.renderNoList();
+      if (this.noCount() === 0) { this._noNote = ''; this.orderRef = genRef(); }
+    } else {
+      this._updateCoBadge(); this.renderCoList();
+      if (this.coCount() === 0) this._coOrderRef = null;
+    }
+  },
+
+  // The order an email from a cart will save: the lines in the email, nothing else. What
+  // is still in the cart stays there.
+  _cartDraft(kind, items, ref, extra) {
+    const deviceName = (Settings.get().managerName || 'Manager').trim() || 'Manager';
+    const deliveryIds = {};
+    for (const i of items) if (!deliveryIds[i.category]) deliveryIds[i.category] = genDeliveryId();   // one delivery per category
+    return {
+      kind, orderId: DB.newOrderId(), deliveryIds,
+      order: {
+        ref, deviceName, ...extra,
+        items: items.map(i => ({
+          id: i.id, partCode: i.partCode, description: i.description,
+          category: i.category, subcategory: i.subcategory,
+          qtyType: i.qtyType || '', qty: i.qty,
+          // Box info rides along so the delivery and stock steps count boxed items in boxes.
+          ...(kind === 'consumables' ? { boxSize: i.boxSize || 0, boxUnit: i.boxUnit || '' } : {}),
+        })),
+      },
+    };
+  },
+
   // ══════════════════════════════════════════
   // NEW ORDER TAB (materials only)
   // ══════════════════════════════════════════
   noGet(id)       { return this._no._items[id]||0; },
   noSet(id,qty)   { if(qty<=0) delete this._no._items[id]; else this._no._items[id]=qty; },
-  noAdj(id,d)     { this.noSet(id, this.noGet(id)+d); this._noChanged(); },
-  noSetQty(id,v)  { this.noSet(id, parseInt(v)||0);   this._noChanged(); },
+  noAdj(id,d)     { this.noSet(id, round2(this.noGet(id)+d)); this._noChanged(); },
   noQuickAdd(id)  { if(!this.noGet(id)) this.noSet(id,1); this._noChanged(); },
   noZero(id)      { delete this._no._items[id]; this._noChanged(); },
   noRevAdj(id,d)  { this.noAdj(id,d); },
-  noRevSet(id,v)  { this.noSetQty(id,v); },
   noCount()       { return Object.keys(this._no._items).length; },
   noItems()       {
     return Object.keys(this._no._items).map(id => {
@@ -3125,6 +3031,37 @@ const Manager = {
     const b = document.getElementById('new-order-badge'); if (!b) return;
     const n = this.noCount(); b.textContent = n; b.classList.toggle('zero', n === 0);
   },
+
+  // Typed quantities in the three carts (New Order, Consumables Order, Receive Stock) and
+  // their review lists — see QtyField. A list takes 0 as "not on the order"; a review
+  // has its own Remove.
+  _cartFields(boxId, attr, catalog, cart) {
+    const list = attr === 'qid', box = document.getElementById(boxId);
+    QtyField.attach(box, `[data-${attr}]`, {
+      zero: list,
+      item: el => catalog().find(m => m.id == el.dataset[attr]),
+      get:  el => this[cart + 'Get'](+el.dataset[attr]),
+      set:  (el, qty) => this[cart + 'Set'](+el.dataset[attr], qty),
+      live: el => {
+        const on = this[cart + 'Get'](+el.dataset[attr]) > 0;
+        const card = el.closest('.mat-card'), add = card && card.querySelector('.add-btn');
+        if (card) card.classList.toggle('in-order', on);
+        if (add)  { add.classList.toggle('in-order', on); add.innerHTML = `<i class="ti ${on ? 'ti-check' : 'ti-plus'}"></i>`; }
+        if (cart === 'no') this._updateNoBadge();
+        if (cart === 'co') this._updateCoBadge();
+        if (cart === 'receive') this._updateReceiveBadge();
+        if (!list) {                                  // the review: its line and its total, in place
+          this['render' + (cart === 'no' ? 'No' : 'Co') + 'List']();
+          const i = this[cart + 'Items']().find(x => x.id == el.dataset[attr]);
+          const q = el.closest('.order-item')?.querySelector('.order-item-qty');
+          if (q && i) q.textContent = cart === 'co' ? orderQtyDisplay(i, i.qty) : `× ${i.qty}`;
+          const t = box.querySelector('.order-summary-row.total span:last-child');
+          if (t) t.textContent = this._cartTotal(this[cart + 'Items']());
+        }
+      },
+    });
+  },
+  _cartTotal(items) { return `${round2(items.reduce((s, i) => s + i.qty, 0))} across ${items.length} line${items.length !== 1 ? 's' : ''}`; },
 
   renderNoTabs() {
     const wrap = document.getElementById('no-tabs-wrap'); if (!wrap) return;
@@ -3150,6 +3087,7 @@ const Manager = {
       list.innerHTML = `<div class="empty-state"><i class="ti ti-package-off"></i><p>No materials found.</p></div>`;
       return;
     }
+    const restoreFocus = captureInputFocus();
     list.innerHTML = filtered.map(m => {
       const qty = this.noGet(m.id), inOrder = qty > 0;
       const ci = CAT_ICONS[m.category] || CAT_ICONS.default;
@@ -3164,12 +3102,13 @@ const Manager = {
         </div>
         <div class="mat-controls">
           <button class="qty-btn" data-dec="${m.id}">−</button>
-          <input class="qty-input" type="number" min="0" step="1" value="${qty}" data-qid="${m.id}">
+          <input class="qty-input" ${QtyField.attrs(m)} value="${qty || ''}" data-qid="${m.id}">
           <button class="qty-btn" data-inc="${m.id}">+</button>
           <button class="add-btn ${inOrder?'in-order':''}" data-add="${m.id}"><i class="ti ${inOrder?'ti-check':'ti-plus'}"></i></button>
         </div>
       </div>`;
     }).join('');
+    restoreFocus();
   },
 
   noOpenReview() {
@@ -3195,7 +3134,7 @@ const Manager = {
         </div>
         <div class="order-item-foot">
           <button class="qty-btn" data-rdec="${i.id}">−</button>
-          <input class="qty-input" type="number" min="1" step="1" value="${i.qty}" data-rqid="${i.id}">
+          <input class="qty-input" ${QtyField.attrs(i)} value="${i.qty}" data-rqid="${i.id}">
           <button class="qty-btn" data-rinc="${i.id}">+</button>
           <button class="remove-btn" data-rrem="${i.id}"><i class="ti ti-x"></i> Remove</button>
         </div>
@@ -3204,7 +3143,7 @@ const Manager = {
       <div class="order-summary-card">
         <div class="order-summary-row total">
           <span>Total items</span>
-          <span>${items.reduce((s,i)=>s+i.qty,0)} across ${items.length} line${items.length!==1?'s':''}</span>
+          <span>${this._cartTotal(items)}</span>
         </div>
       </div>`+`
       <div class="order-note-card">
@@ -3222,17 +3161,9 @@ const Manager = {
   noOpenCategoryEmail(category) {
     const items = this.noItems().filter(i => i.category === category);
     if (!items.length) return;
-    const { subject, body } = buildCategoryEmail(items, category, 'Material Order');
-    const s = Settings.get();
-    document.getElementById('email-panel-title').textContent = category;
-    document.getElementById('email-to').value      = s.supplierEmail;
-    document.getElementById('email-cc').value      = s.ccEmail;
-    document.getElementById('email-subject').value = subject;
-    document.getElementById('email-body').value    = body;
-    this._pendingEmailMeta  = null;
-    this._noEmailCategory   = category;
     this.closePanel('no-review-panel');
-    this.openPanel('email-panel');
+    this._openEmail(this._cartDraft('newOrder', items, this.orderRef, { note: this._noNote.trim() }),
+      category, buildCategoryEmail(items, category, 'Material Order'));
   },
 
   // ══════════════════════════════════════════
@@ -3253,19 +3184,9 @@ const Manager = {
       qtyType: i.qtyType || '', qty: i.qty,
     }));
     try {
-      if (this._noOrderId) {
-        // Some categories from this cart session were already emailed and saved —
-        // append the remaining items to that same doc instead of creating a duplicate.
-        this._myOrderIds.add(this._noOrderId);
-        if (this._seenOrderIds) this._seenOrderIds.add(this._noOrderId);
-        await DB.appendItems(this._noOrderId, items);
-        if (this._noNote.trim()) await DB.updateOrderNote(this._noOrderId, this._noNote.trim());
-        this._noOrderId = null;
-      } else {
-        const submittedId = await DB.submitOrder({ ref: this.orderRef, deviceName, items, note: this._noNote.trim() });
-        this._myOrderIds.add(submittedId);
-        if (this._seenOrderIds) this._seenOrderIds.add(submittedId);
-      }
+      const submittedId = await DB.submitOrder({ ref: this.orderRef, deviceName, items, note: this._noNote.trim() });
+      this._myOrderIds.add(submittedId);
+      if (this._seenOrderIds) this._seenOrderIds.add(submittedId);
       this._no._items = {};
       this._noNote = '';
       this.orderRef = genRef();
@@ -3296,8 +3217,7 @@ const Manager = {
   // ══════════════════════════════════════════
   coGet(id)      { return this._co._items[id]||0; },
   coSet(id,qty)  { if(qty<=0) delete this._co._items[id]; else this._co._items[id]=qty; },
-  coAdj(id,d)    { this.coSet(id, this.coGet(id)+d); this._coChanged(); },
-  coSetQty(id,v) { this.coSet(id, parseInt(v)||0);   this._coChanged(); },
+  coAdj(id,d)    { this.coSet(id, round2(this.coGet(id)+d)); this._coChanged(); },
   coQuickAdd(id) { if(!this.coGet(id)) this.coSet(id,1); this._coChanged(); },
   coZero(id)     { delete this._co._items[id]; this._coChanged(); },
   coCount()      { return Object.keys(this._co._items).length; },
@@ -3342,6 +3262,7 @@ const Manager = {
       const tb = this._stockFor(stockId(b))?.tracked ? 0 : 1;
       return ta - tb || descCompare(a.description, b.description);
     });
+    const restoreFocus = captureInputFocus(); // stock updates re-render mid-typing
     list.innerHTML = sorted.map(m => {
       const qty = this.coGet(m.id), inOrder = qty > 0;
       const ci = CAT_ICONS[m.category] || CAT_ICONS.default;
@@ -3360,12 +3281,13 @@ const Manager = {
         </div>
         <div class="mat-controls">
           <button class="qty-btn" data-dec="${m.id}">−</button>
-          <input class="qty-input" type="number" min="0" step="1" value="${qty}" data-qid="${m.id}">
+          <input class="qty-input" ${QtyField.attrs(m)} value="${qty || ''}" data-qid="${m.id}">
           <button class="qty-btn" data-inc="${m.id}">+</button>
           <button class="add-btn ${inOrder?'in-order':''}" data-add="${m.id}"><i class="ti ${inOrder?'ti-check':'ti-plus'}"></i></button>
         </div>
       </div>`;
     }).join('');
+    restoreFocus();
   },
 
   coOpenReview() {
@@ -3391,7 +3313,7 @@ const Manager = {
         </div>
         <div class="order-item-foot">
           <button class="qty-btn" data-rdec="${i.id}">−</button>
-          <input class="qty-input" type="number" min="1" step="1" value="${i.qty}" data-rqid="${i.id}">
+          <input class="qty-input" ${QtyField.attrs(i)} value="${i.qty}" data-rqid="${i.id}">
           <button class="qty-btn" data-rinc="${i.id}">+</button>
           <button class="remove-btn" data-rrem="${i.id}"><i class="ti ti-x"></i> Remove</button>
         </div>
@@ -3400,7 +3322,7 @@ const Manager = {
       <div class="order-summary-card">
         <div class="order-summary-row total">
           <span>Total items</span>
-          <span>${items.reduce((s,i)=>s+i.qty,0)} across ${items.length} line${items.length!==1?'s':''}</span>
+          <span>${this._cartTotal(items)}</span>
         </div>
       </div>`;
     const cats = [...new Set(items.map(i => i.category))];
@@ -3417,35 +3339,20 @@ const Manager = {
   coOpenBulkEmail() {
     const items = this.coItems();
     if (!items.length) return;
-    const { subject, body } = buildBulkConsumablesEmail(items);
-    const s = Settings.get();
-    document.getElementById('email-panel-title').textContent = 'Consumables Order — All';
-    document.getElementById('email-to').value      = s.supplierEmail;
-    document.getElementById('email-cc').value      = s.ccEmail;
-    document.getElementById('email-subject').value = subject;
-    document.getElementById('email-body').value    = body;
-    this._pendingEmailMeta = null;
-    this._coEmailCategory  = '__all__';
-    this.closePanel('co-review-panel');
-    this.closePanel('cons-order-panel');
-    this.openPanel('email-panel');
+    this._coOpenEmail(items, 'Consumables Order — All', buildBulkConsumablesEmail(items));
   },
 
   coOpenCategoryEmail(category) {
     const items = this.coItems().filter(i => i.category === category);
     if (!items.length) return;
-    const { subject, body } = buildCategoryEmail(items, category, 'Consumables Order');
-    const s = Settings.get();
-    document.getElementById('email-panel-title').textContent = `Consumables Order — ${category}`;
-    document.getElementById('email-to').value      = s.supplierEmail;
-    document.getElementById('email-cc').value      = s.ccEmail;
-    document.getElementById('email-subject').value = subject;
-    document.getElementById('email-body').value    = body;
-    this._pendingEmailMeta = null;
-    this._coEmailCategory  = category;
+    this._coOpenEmail(items, `Consumables Order — ${category}`, buildCategoryEmail(items, category, 'Consumables Order'));
+  },
+
+  _coOpenEmail(items, title, email) {
+    if (!this._coOrderRef) this._coOrderRef = genRef();
     this.closePanel('co-review-panel');
     this.closePanel('cons-order-panel');
-    this.openPanel('email-panel');
+    this._openEmail(this._cartDraft('consumables', items, this._coOrderRef, { type: 'consumables' }), title, email);
   },
 
   // ══════════════════════════════════════════
@@ -3453,8 +3360,7 @@ const Manager = {
   // ══════════════════════════════════════════
   receiveGet(id)      { return this._receive._items[id]||0; },
   receiveSet(id,qty)  { if(qty<=0) delete this._receive._items[id]; else this._receive._items[id]=qty; },
-  receiveAdj(id,d)    { this.receiveSet(id, this.receiveGet(id)+d); this._receiveChanged(); },
-  receiveSetQty(id,v) { this.receiveSet(id, parseInt(v)||0);   this._receiveChanged(); },
+  receiveAdj(id,d)    { this.receiveSet(id, round2(this.receiveGet(id)+d)); this._receiveChanged(); },
   receiveQuickAdd(id) { if(!this.receiveGet(id)) this.receiveSet(id,1); this._receiveChanged(); },
   receiveZero(id)     { delete this._receive._items[id]; this._receiveChanged(); },
   receiveCount()      { return Object.keys(this._receive._items).length; },
@@ -3497,6 +3403,7 @@ const Manager = {
       const tb = this._stockFor(stockId(b))?.tracked ? 0 : 1;
       return ta - tb || descCompare(a.description, b.description);
     });
+    const restoreFocus = captureInputFocus(); // stock updates re-render mid-typing
     list.innerHTML = sorted.map(m => {
       const qty = this.receiveGet(m.id), inOrder = qty > 0;
       const ci = CAT_ICONS[m.category] || CAT_ICONS.default;
@@ -3514,20 +3421,23 @@ const Manager = {
         </div>
         <div class="mat-controls">
           <button class="qty-btn" data-dec="${m.id}">−</button>
-          <input class="qty-input" type="number" min="0" step="1" value="${qty}" data-qid="${m.id}">
+          <input class="qty-input" ${QtyField.attrs(m)} value="${qty || ''}" data-qid="${m.id}">
           <button class="qty-btn" data-inc="${m.id}">+</button>
           <button class="add-btn ${inOrder?'in-order':''}" data-add="${m.id}"><i class="ti ${inOrder?'ti-check':'ti-plus'}"></i></button>
         </div>
       </div>`;
     }).join('');
+    restoreFocus();
   },
 
   async receiveSubmit() {
+    if (this._opBusy.has('receive')) return;
     const items = this.receiveItems();
-    if (!items.length) { alert('Select at least one item received.'); return; }
+    if (!items.length) { inlineError('receive-error', 'Enter a quantity first.'); return; }
     if (this._connState.connected === false || navigator.onLine === false) {
-      alert("You're currently offline — stock can't be updated without a connection."); return;
+      inlineError('receive-error', 'Offline. Connect, then tap Confirm Stock Received.'); return;
     }
+    inlineError('receive-error', '');
     const reference = document.getElementById('receive-reference')?.value.trim();
     const s = Settings.get();
     const managerName = (s.managerName || 'Manager').trim() || 'Manager';
@@ -3535,27 +3445,33 @@ const Manager = {
     const sessionId = genRef();
 
     const btn = document.getElementById('btn-receive-submit');
-    if (btn) { btn.disabled = true; btn.innerHTML = '<i class="ti ti-loader" style="animation:spin 1s linear infinite"></i> Processing…'; }
-
-    const errors = [];
-    for (const item of items) {
-      const sid = stockId(item);
-      if (!this._stockFor(sid)?.tracked) {
-        try { await DB.enableTracking(sid); } catch(e) { errors.push(`${item.description}: ${e.message}`); continue; }
-      }
-      // For boxed items, the quantity entered represents whole boxes received —
-      // convert to individual units before writing to stock.
-      const delta = hasBoxTracking(item) ? item.qty * item.boxSize : item.qty;
-      try {
-        await DB.adjustStock(sid, item.description, delta, 'intake', by, sessionId, 'receive_stock');
-      } catch(e) { errors.push(`${item.description}: ${e.message}`); }
+    const busy = on => {
+      if (!btn) return;
+      btn.disabled = on;
+      btn.innerHTML = on ? `<i class="ti ti-loader" style="animation:spin 1s linear infinite"></i> Saving ${items.length} item${items.length !== 1 ? 's' : ''}…`
+        : '<i class="ti ti-truck-delivery"></i>Confirm Stock Received <span class="sidebar-count zero" id="receive-badge" style="margin-left:4px">0</span>';
+      document.getElementById('btn-receive-clear-main').disabled = on;
+      document.getElementById('btn-close-receive').disabled = on;
+    };
+    this._opBusy.add('receive');
+    busy(true);
+    // For boxed items the quantity entered is whole boxes: stock is kept in units.
+    const lines = items.map(i => ({ sid: stockId(i), description: i.description, units: hasBoxTracking(i) ? i.qty * i.boxSize : i.qty }));
+    try {
+      await DB.receiveStock(lines, by, sessionId, OpId.for('receive', { lines, reference }));
+      OpId.done('receive');
+    } catch (e) {
+      console.error('Receive stock failed:', e);
+      inlineError('receive-error', `Not received: ${whyFailed(e)}.${nothingDone(e, 'Nothing was added to stock.')} Tap Confirm Stock Received to try again.`);
+      return;
+    } finally {
+      this._opBusy.delete('receive');
+      busy(false);
+      this._updateReceiveBadge();
     }
 
-    if (btn) { btn.disabled = false; btn.innerHTML = '<i class="ti ti-truck-delivery"></i>Confirm Stock Received <span class="sidebar-count zero" id="receive-badge" style="margin-left:4px">0</span>'; }
-
-    if (errors.length) alert(`Some items failed:\n\n${errors.join('\n')}`);
-
     this._receive._items = {};
+    document.getElementById('receive-reference').value = '';
     this._updateReceiveBadge();
     this.renderReceiveList();
     this.closePanel('receive-panel');
@@ -3566,7 +3482,7 @@ const Manager = {
         <div class="success-card">
           <div class="success-icon green"><i class="ti ti-circle-check"></i></div>
           <h3>Stock received!</h3>
-          <p>Stock levels have been updated${reference ? ` and recorded under "${esc(reference)}"` : ''}.</p>
+          <p>${items.length} item${items.length !== 1 ? 's' : ''} added to stock${reference ? ` under "${esc(reference)}"` : ''}.</p>
           <button class="btn btn-primary" id="btn-done-receive">Done</button>
         </div>
       </div>`;
@@ -3732,6 +3648,7 @@ const Manager = {
         html += untracked.map(m => this._stockCard(m)).join('');
       }
     }
+    const restoreFocus = captureInputFocus(); // stock updates re-render mid-typing
     list.innerHTML = html;
 
     // Re-apply open state
@@ -3740,7 +3657,13 @@ const Manager = {
       const chev = document.getElementById(`stock-chev-${sid}`);
       if (body) { body.classList.add('open'); chev?.classList.add('open'); }
     }
+    restoreFocus();
   },
+
+  // Empties a stock card's field once its amount has been used. By id, after the write:
+  // the list may have been redrawn (and the typed amount put back) while it was going,
+  // and an amount left in the box invites a second tap.
+  _usedField(...ids) { ids.forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; }); },
 
   _stockCard(m) {
     const sid  = stockId(m);
@@ -3897,7 +3820,7 @@ const Manager = {
     this._opBusy.add(`intake:${sid}`);
     try {
       await DB.adjustStock(sid, item?.description || sid, delta, 'adjustment', by, genRef(), 'panel_intake');
-      if (el) el.value = '';
+      this._usedField(`si-intake-${sid}`);
     } catch(e) { alert('Intake failed: ' + e.message); }
     finally { this._opBusy.delete(`intake:${sid}`); }
   },
@@ -3919,7 +3842,7 @@ const Manager = {
     const by = (s.managerName || 'Manager').trim() || 'Manager';
     try {
       await DB.adjustStock(sid, item?.description || sid, -delta, 'adjustment', by, genRef(), 'remove');
-      if (el) el.value = '';
+      this._usedField(`si-remove-${sid}`);
     } catch(e) { alert('Remove failed: ' + e.message); }
   },
 
@@ -3937,7 +3860,7 @@ const Manager = {
     this._opBusy.add(`intakebox:${sid}`);
     try {
       await DB.adjustStock(sid, item?.description || sid, delta, 'adjustment', by, genRef(), 'panel_intake_box');
-      if (el) el.value = '';
+      this._usedField(`si-intake-box-${sid}`);
     } catch(e) { alert('Intake failed: ' + e.message); }
     finally { this._opBusy.delete(`intakebox:${sid}`); }
   },
@@ -3992,8 +3915,7 @@ const Manager = {
     const by = (s.managerName || 'Manager').trim() || 'Manager';
     try {
       await DB.setStock(sid, item?.description || sid, newQty, by, genRef());
-      if (boxesEl) boxesEl.value = '';
-      if (looseEl) looseEl.value = '';
+      this._usedField(`si-set-boxes-${sid}`, `si-set-loose-${sid}`);
     } catch(e) { alert('Override failed: ' + e.message); }
   },
 
@@ -4008,7 +3930,7 @@ const Manager = {
     const by = (s.managerName || 'Manager').trim() || 'Manager';
     try {
       await DB.setStock(sid, item?.description || sid, newQty, by, genRef());
-      if (el) el.value = '';
+      this._usedField(`si-set-${sid}`);
     } catch(e) { alert('Override failed: ' + e.message); }
   },
 
@@ -4905,15 +4827,15 @@ const Manager = {
           </div>
         </div>
       </div>
-      <div class="settings-section">
+      ${FirebaseConfig.isTestMode() ? `<div class="settings-section" data-master-only ${Auth.isMaster() ? "" : "hidden"}>
         <div class="settings-label">Testing</div>
         <div class="settings-card">
           <div class="settings-row">
-            <div><div class="settings-row-label">Clear all orders</div><div class="settings-row-sub">Permanently deletes all orders from Firebase</div></div>
-            <button class="btn-sm btn-sm-danger" id="btn-clear-orders">Clear all</button>
+            <div><div class="settings-row-label">Delete all orders</div><div class="settings-row-sub">Test database only</div></div>
+            <button class="btn-sm btn-sm-danger" id="btn-clear-orders">Delete all orders</button>
           </div>
         </div>
-      </div>`;
+      </div>` : ''}`;
 
     document.getElementById('btn-open-catalogue').addEventListener('click', () => Catalogue.open());
     document.getElementById('btn-enable-notif')?.addEventListener('click', async () => {
@@ -4929,9 +4851,10 @@ const Manager = {
     document.getElementById('btn-reset-template').addEventListener('click', () => {
       const ta = document.getElementById('s-template'); if (ta) ta.value = DEFAULT_SETTINGS.emailTemplate;
     });
-    document.getElementById('btn-clear-orders').addEventListener('click', async () => {
-      if (!confirm('Delete ALL orders from Firebase? This cannot be undone.')) return;
-      try { await DB.deleteAllOrders(); alert('All orders cleared.'); } catch(e) { alert('Failed: '+e.message); }
+    document.getElementById('btn-clear-orders')?.addEventListener('click', async () => {
+      if (!await Ask.confirm({ title: 'Delete every order in the test database?', body: 'This cannot be undone.', yes: 'Delete all orders', no: 'Keep orders', danger: true })) return;
+      try { await DB.deleteAllOrders(); this._toast('All test orders deleted'); }
+      catch(e) { console.error(e); this._toast(`Not deleted: ${whyFailed(e)}`, true); }
     });
   },
 

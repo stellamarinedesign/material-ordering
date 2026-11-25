@@ -10,8 +10,8 @@
   <link rel="icon" type="image/png" href="favicon.png">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
   <link rel="stylesheet" href="fonts/tabler-icons.min.css">
-  <link rel="stylesheet" href="css/style.css?v=2026-11-23.1">
-  <link rel="stylesheet" href="css/themes.css?v=2026-11-23.1">
+  <link rel="stylesheet" href="css/style.css?v=2026-11-25.1">
+  <link rel="stylesheet" href="css/themes.css?v=2026-11-25.1">
 </head>
 <body>
 <div id="root"></div>
@@ -20,10 +20,10 @@
 <!-- APP CHECK: remove this line to disable App Check (also remove init block in firebase-sync.js) -->
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-check-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
-<script src="js/shared.js?v=2026-11-23.1"></script>
-<script src="js/firebase-sync.js?v=2026-11-23.1"></script>
-<script src="js/auth.js?v=2026-11-23.1"></script>
-<script src="js/intake.js?v=2026-11-23.1"></script>
+<script src="js/shared.js?v=2026-11-25.1"></script>
+<script src="js/firebase-sync.js?v=2026-11-25.1"></script>
+<script src="js/auth.js?v=2026-11-25.1"></script>
+<script src="js/intake.js?v=2026-11-25.1"></script>
 <script>
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.getRegistrations().then(rs => rs.forEach(r => r.unregister()));
@@ -47,6 +47,7 @@ const Warehouse = {
     if (!ok) { this.showSetup('Could not connect to the database.'); return; }
     this.materials   = await Data.load('./materials.csv');
     this.consumables = await Data.loadConsumables('./consumables.csv');
+    this._drafts = Intake.loadDrafts('warehouse');   // ticks left unsaved on this device
     Auth.deviceName = WarehouseDeviceName;
     Auth.start();
     DB.onDenied = () => Auth.denied();
@@ -235,6 +236,7 @@ const Warehouse = {
       onRerender: (orderId)                 => this.rerenderCard(orderId, type),
       onConfirm:  (cardKey)                 => this.onConfirm(cardKey),
       onSave:     (cardKey)                 => this.onSave(cardKey),
+      onDiscard:  (cardKey)                 => this.onDiscard(cardKey),
       onApplyStock:(cardKey)                => this.applyStock(cardKey),
     });
   },
@@ -280,11 +282,11 @@ const Warehouse = {
   startVersionCheck() {
     DB.announceVersionIfNewer(APP_VERSION, isVersionNewer);
     DB.listenAppVersion(v => { this._connState.latestVersion = v; this._renderLiveStatus(); AutoUpdate.notifyVersion(v); });
-    // Idle auto-reload for the warehouse iPad. No cart to guard — intake edits
-    // save to Firestore as they're made, and the shared checks already block
-    // reloading while a panel/overlay is open or a field holds unsaved typing.
+    // Idle auto-reload for the warehouse iPad — never while a delivery is being
+    // ticked off (the ticks are staged until Save or Confirm).
     AutoUpdate.start({
       onDiscover: v => { this._connState.latestVersion = v; this._renderLiveStatus(); },
+      isBusy:     () => Intake.draftsInHand('warehouse'),
     });
   },
 
@@ -341,7 +343,8 @@ const Warehouse = {
     else this.renderList(t);
   },
 
-  // ── INTAKE MUTATIONS (staged in _drafts — nothing is saved until Confirm) ──
+  // ── INTAKE MUTATIONS (staged in _drafts, kept on this device — nothing reaches
+  // the database until Save or Confirm) ──
   // _drafts is keyed by groupKey; each draft's own entries use composite
   // "orderId::itemId" keys since a delivery can span multiple orders (see intake.js).
 
@@ -458,6 +461,7 @@ const Warehouse = {
     const group = this._findGroup(groupKey);
     if (!group) return;
     const draftForCard = this._drafts.get(groupKey);
+    Intake.keepDrafts('warehouse', this._drafts);
     const restoreFocus = captureInputFocus(); // notes debounce re-renders while typing
 
     const fullSafe = groupKey.replace(/[^a-zA-Z0-9]/g, '_');
@@ -477,118 +481,19 @@ const Warehouse = {
     }
   },
 
-  async _write(cardKey, requireFullyActioned) {
-    let groupKey = cardKey;
-    if (groupKey.endsWith('|||bo')) groupKey = groupKey.slice(0, -5);
-
-    const group = this._findGroup(groupKey); if (!group) return;
-    const draft = this._drafts.get(groupKey); if (!draft) return;
-
-    if (requireFullyActioned && !Intake.canConfirmEntries(group.entries, draft)) return;
-
-    const merged = Intake.mergeDraftEntries(group.entries, draft);
-
-    // Entries sharing a mergeKey display as one row — propagate the representative's
-    // STATUS, outstanding and follow-up state (not its qtyReceived/notes, which describe
-    // the delivery total rather than each order's share). See manager _intakeWrite.
-    const byMergeKey = new Map();
-    const propagated = new Set();
-    for (const e of group.entries) {
-      const k = Intake.mergeKey(e.item);
-      if (!byMergeKey.has(k)) byMergeKey.set(k, []);
-      byMergeKey.get(k).push(e);
-    }
-    for (const itemEntries of byMergeKey.values()) {
-      if (itemEntries.length < 2) continue;
-      const rep = merged[`${itemEntries[0].order._id}::${itemEntries[0].item.id}`];
-      if (!rep || rep.status === undefined) continue;
-      for (const { order, item } of itemEntries.slice(1)) {
-        const ck = `${order._id}::${item.id}`;
-        merged[ck] = {
-          ...(merged[ck] || {}),
-          status: rep.status,
-          outstandingQty: rep.outstandingQty ?? 0,
-          followUpDone: rep.followUpDone ?? false,
-        };
-        propagated.add(ck);
-      }
-    }
-
-    // Per-order PATCH — DB.updateIntake merges it transactionally with the saved map.
-    // Only entries this edit touched (draft or propagation) go in the patch, so a
-    // concurrent device's fresher writes to other items survive.
-    const byOrder = new Map();
-    const skippedKeys = new Set();
-    for (const { order, item } of group.entries) {
-      if (!byOrder.has(order._id)) byOrder.set(order._id, {});
-      const patch = byOrder.get(order._id);
-      const compositeKey = `${order._id}::${item.id}`;
-      if (draft[compositeKey] === undefined && !propagated.has(compositeKey)) continue;
-      const entry = merged[compositeKey];
-      if (!entry) continue;
-      // On a partial save, skip partial-without-qty — writing it would make the card
-      // appear resolved even though the qty hasn't been entered.
-      if (!requireFullyActioned && entry.status === 'partial' && !entry.qtyReceived) {
-        skippedKeys.add(compositeKey);
-        continue;
-      }
-      patch[String(item.id)] = entry;
-    }
-
-    try {
-      await Promise.all([...byOrder.entries()].map(([orderId, patch]) =>
-        DB.updateIntake(orderId, patch, WarehouseDeviceName.get())));
-      // Keep skipped partial-without-qty selections staged across the save.
-      const retained = {};
-      for (const key of skippedKeys) if (draft[key]) retained[key] = draft[key];
-      if (Object.keys(retained).length) this._drafts.set(groupKey, retained);
-      else this._drafts.delete(groupKey);
-      const isMat = !group.entries[0].order.type || group.entries[0].order.type === 'materials';
-      this.renderList(isMat ? 'materials' : 'consumables');
-      // On a full Confirm of a consumables delivery, offer to add received stock.
-      if (requireFullyActioned) await this._maybeApplyDeliveryStock(group, merged);
-    } catch (e) {
-      console.error('Save failed:', e);
-      alert('Save failed — please try again.');
-    }
+  // What the shared save code (Intake.saveCard and friends) needs from this page.
+  _host() {
+    return {
+      page: 'warehouse', drafts: this._drafts,
+      by:     () => WarehouseDeviceName.get() || 'Warehouse',
+      find:   groupKey => this._findGroup(groupKey),
+      redraw: group => this.renderList(!group.entries[0].order.type || group.entries[0].order.type === 'materials' ? 'materials' : 'consumables'),
+    };
   },
-
-  async onConfirm(cardKey) { await this._write(cardKey, true); },
-  async onSave(cardKey)    { await this._write(cardKey, false); },
-
-  // "Add to stock" from a resolved delivery card — applies the already-saved received
-  // quantities to stock later, without touching confirmation status.
-  async applyStock(cardKey) {
-    let groupKey = cardKey; if (groupKey.endsWith('|||bo')) groupKey = groupKey.slice(0, -5);
-    const group = this._findGroup(groupKey); if (!group) return;
-    const merged = Intake.mergeDraftEntries(group.entries, null);
-    await this._maybeApplyDeliveryStock(group, merged);
-    this.renderList('consumables');
-  },
-
-  // Offer to add a confirmed consumables delivery's received quantities to stock.
-  // Mirrors the manager version (see manager.html _maybeApplyDeliveryStock); recorded
-  // against the warehouse device name so it reads clearly in the manager's stock history.
-  async _maybeApplyDeliveryStock(group, merged) {
-    const isMat = !group.entries[0].order.type || group.entries[0].order.type === 'materials';
-    if (isMat) return;
-    const changes = Intake.deliveryStockDeltas(group.entries, merged);
-    const stamp   = Intake.deliveryStockStamp(group.entries, merged);
-    const toPost  = changes.filter(c => c.delta !== 0);
-    if (!toPost.length) return; // nothing received, or already in sync
-    const firstTime = changes.every(c => c.prev === 0);
-    const lines = toPost.map(c => `• ${c.item.description}: ${c.delta > 0 ? '+' : ''}${c.delta} ${c.item.qtyType||'units'}`).join('\n');
-    const title = firstTime ? 'Add received quantities to consumables stock?' : 'Update consumables stock to match this delivery?';
-    if (!confirm(`${title}\n\n${lines}`)) return;
-    const by = `${WarehouseDeviceName.get() || 'Warehouse'} — Delivery: ${group.category}`;
-    try {
-      await DB.receiveDeliveryStock(toPost.map(c => ({ sid: stockId(c.item), description: c.item.description, units: c.delta })), by, genRef());
-      await DB.stampDeliveryStockApplied(stamp);
-    } catch (e) {
-      console.error('Stock update failed:', e);
-      alert('Stock update failed: ' + e.message);
-    }
-  },
+  onConfirm(cardKey)  { return Intake.saveCard(this._host(), cardKey, true); },
+  onSave(cardKey)     { return Intake.saveCard(this._host(), cardKey, false); },
+  onDiscard(cardKey)  { return Intake.discard(this._host(), cardKey); },
+  applyStock(cardKey) { return Intake.applyStock(this._host(), cardKey); },
 };
 
 Warehouse.init();

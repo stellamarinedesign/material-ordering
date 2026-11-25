@@ -1,4 +1,4 @@
-// firebase-sync.js — v2026-11-23.1
+// firebase-sync.js — v2026-11-25.1
 let _db = null, _configured = false, _config = null, _second = null;
 
 // Signed-in email for stamping writes (null when the device isn't signed in —
@@ -7,6 +7,23 @@ let _db = null, _configured = false, _config = null, _second = null;
 function _who() {
   try { return (typeof firebase.auth === 'function' && firebase.auth().currentUser) ? (firebase.auth().currentUser.email || null) : null; }
   catch { return null; }
+}
+// A change that reads first, or touches several records. A connection that never answers
+// would leave its button locked on "Saving…" for good, so it gets 20 seconds and then
+// counts as dropped; nothing is sent after that. If the write had already left, it may
+// still land, so this is only for changes that are safe to repeat.
+const TX_WAIT = 20000;
+function _tx(fn) {
+  let over = false, timer;
+  const dropped = () => Object.assign(new Error('The connection dropped'), { code: 'deadline-exceeded' });
+  const slow = new Promise((_, no) => { timer = setTimeout(() => { over = true; no(dropped()); }, TX_WAIT); });
+  const work = _db.runTransaction(async tx => {
+    if (over) throw dropped();
+    const out = await fn(tx);
+    if (over) throw dropped();
+    return out;
+  });
+  return Promise.race([work, slow]).finally(() => clearTimeout(timer));
 }
 // Listener errors funnel here; a permission-denied means the rules now require
 // sign-in and this device has none — pages set DB.onDenied to prompt for it.
@@ -245,64 +262,61 @@ const DB = {
     });
   },
 
-  // Transactional append — used when a cart session's items need to land on an order
-  // doc that may have just been created/updated by a different action moments ago
-  // (e.g. New Order tab: email one category, then add the rest to the queue). The
-  // New Order/CO cart-saving pattern persists the WHOLE cart on the first email from
-  // a session, so by the time a later "add remaining to queue" runs, most items are
-  // already saved: those get their qty refreshed from the cart (the user may have
-  // edited quantities in between) rather than appended a second time. Emailed items
-  // are never touched — they've already been ordered.
-  async appendItems(orderId, newItems) {
+  // What identifies one line of an order, for matching an email's lines to the order.
+  lineKey(item) { return [item.id, item.partCode, item.category].map(v => String(v ?? '')).join('|'); },
+
+  // One email, one write. `lines` is exactly what the email said — [{ orderId, key
+  // (lineKey), qty }] — and all of them are marked emailed together or none is. If a
+  // line has been changed, removed or emailed from elsewhere since the email was
+  // written, nothing is marked and this throws code 'draft-changed', so an order is
+  // never recorded as sent with a quantity the supplier wasn't given.
+  // deliveryId is shared across every order in the email, which is what groups them
+  // into one delivery. A line that already carries it counts as done, so a try whose
+  // reply was lost can be repeated. A line emailed earlier keeps its own deliveryId.
+  async markLinesEmailed(lines, deliveryId) {
     if (!this.isReady()) throw new Error('Firebase not initialised');
-    const ref = _db.collection('orders').doc(orderId);
-    await _db.runTransaction(async tx => {
-      const doc = await tx.get(ref);
-      if (!doc.exists) throw new Error('Order not found');
-      const existing = doc.data().items || [];
-      const incomingById = new Map(newItems.map(i => [String(i.id), i]));
-      const merged = existing.map(i => {
-        const incoming = incomingById.get(String(i.id));
-        return incoming && !i.emailed ? { ...i, qty: incoming.qty } : i;
+    // A quantity edited a moment ago may still be on its way to the server.
+    if (_db.waitForPendingWrites)
+      await Promise.race([_db.waitForPendingWrites().catch(() => {}), new Promise(r => setTimeout(r, 3000))]);
+    const ids = [...new Set(lines.map(l => l.orderId))];
+    await _tx(async tx => {
+      const refs = ids.map(id => _db.collection('orders').doc(id));
+      const docs = await Promise.all(refs.map(r => tx.get(r)));
+      const changed = () => Object.assign(new Error('An order changed while its email was open'), { code: 'draft-changed' });
+      const updates = docs.map((doc, n) => {
+        if (!doc.exists) throw changed();
+        const want = lines.filter(l => l.orderId === ids[n]);
+        const items = (doc.data().items || []).map(item => {
+          const k = this.lineKey(item);
+          const i = want.findIndex(l => l.key === k && l.qty === item.qty);
+          if (i < 0 || item.rejected) return item;
+          if (item.emailed && item.deliveryId !== deliveryId) return item;
+          want.splice(i, 1);
+          return { ...item, emailed: true, deliveryId };
+        });
+        if (want.length) throw changed();
+        const live = items.filter(i => !i.rejected);
+        return { items, status: live.length > 0 && live.every(i => i.emailed) ? 'sent' : 'pending' };
       });
-      const existingIds = new Set(existing.map(i => String(i.id)));
-      const toAdd = newItems.filter(i => !existingIds.has(String(i.id)));
-      tx.update(ref, {
-        items: [...merged, ...toAdd],
-        updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
-      });
+      updates.forEach((u, n) => tx.update(refs[n], { ...u, updatedAt: firebase.firestore.FieldValue.serverTimestamp() }));
     });
   },
 
-  // deliveryId: shared across every order contributing to the same real email send, so
-  // the Deliveries/Sent pages can group them as one delivery instead of one per order.
-  // Only items newly transitioning to emailed get stamped — an already-emailed sibling
-  // (from an earlier, separate send) must keep its own deliveryId untouched, or a later
-  // partial send of the same category would silently merge two unrelated deliveries.
-  // Runs in a transaction so a concurrent items-array write from another device (reject,
-  // qty edit, intake) can't be silently clobbered.
-  async markCategoryEmailed(orderId, category, excludePartCodes = [], deliveryId = null) {
+  // An email sent straight from one of the manager's carts (New Order, Consumables
+  // Order): the order and its "emailed" marks in one write, under an id made when the
+  // email was opened, so trying again never makes a second order. deliveryIds maps
+  // each category in the email to its delivery.
+  newOrderId() { return _db.collection('orders').doc().id; },
+  async saveEmailedOrder(id, order, deliveryIds) {
     if (!this.isReady()) throw new Error('Firebase not initialised');
-    const ref = _db.collection('orders').doc(orderId);
-    await _db.runTransaction(async tx => {
-      const doc = await tx.get(ref);
-      if (!doc.exists) return;
-      const excludeSet = new Set(excludePartCodes);
-      // !item.rejected: rejected lines are skipped when the email body is built, so
-      // stamping them emailed here would record a send that never happened — and a
-      // later per-line unreject would surface the item as "Emailed" in a delivery
-      // it was never part of.
-      const items = (doc.data().items||[]).map(item =>
-        item.category === category && !excludeSet.has(item.partCode) && !item.emailed && !item.rejected
-          ? { ...item, emailed: true, deliveryId }
-          : item
-      );
-      const nonRejected = items.filter(i => !i.rejected);
-      const allEmailed  = nonRejected.length > 0 && nonRejected.every(i => i.emailed);
-      tx.update(ref, {
-        items,
-        status:    allEmailed ? 'sent' : 'pending',
-        updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+    const ref = _db.collection('orders').doc(id);
+    await _tx(async tx => {
+      if ((await tx.get(ref)).exists) return;   // an earlier try got through
+      tx.set(ref, {
+        ...order,
+        items: order.items.map(i => ({ ...i, emailed: true, deliveryId: deliveryIds[i.category] })),
+        status: 'sent', authEmail: _who(),
+        submittedAt: firebase.firestore.FieldValue.serverTimestamp(),
       });
     });
   },
@@ -379,47 +393,6 @@ const DB = {
     });
   },
 
-  // Saves a consumables order to Firestore (mirroring materials orders so intake can track it).
-  // Called when the first category email is sent from the CO cart.
-  async submitConsumablesOrder(order) {
-    if (!this.isReady()) throw new Error('Firebase not initialised');
-    const ref = await _db.collection('orders').add({
-      ...order,
-      type: 'consumables',
-      status: 'pending',
-      authEmail: _who(),
-      submittedAt: firebase.firestore.FieldValue.serverTimestamp(),
-    });
-    return ref.id;
-  },
-
-  // Marks all items in an order as emailed and sets status to 'sent'.
-  // Used for consumables bulk-email ("Email all consumables at once"). Generates a
-  // separate deliveryId per category present (not one shared across categories) so
-  // every delivery card stays single-category — and, like markCategoryEmailed, only
-  // stamps items that are newly transitioning to emailed in this call.
-  async markAllEmailed(orderId) {
-    if (!this.isReady()) throw new Error('Firebase not initialised');
-    const ref = _db.collection('orders').doc(orderId);
-    await _db.runTransaction(async tx => {
-      const doc = await tx.get(ref);
-      if (!doc.exists) return;
-      const catIdMap = {};
-      const items = (doc.data().items || []).map(item => {
-        if (item.rejected || item.emailed) return item;
-        if (!catIdMap[item.category]) catIdMap[item.category] = genDeliveryId();
-        return { ...item, emailed: true, deliveryId: catIdMap[item.category] };
-      });
-      const nonRejected = items.filter(i => !i.rejected);
-      const allEmailed  = nonRejected.length > 0 && nonRejected.every(i => i.emailed);
-      tx.update(ref, {
-        items,
-        status: allEmailed ? 'sent' : 'pending',
-        updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
-      });
-    });
-  },
-
   // Merges an intake patch into an order inside a transaction. patch is a map of
   // bare item ids -> { status, qtyReceived, notes }. Merging (rather than overwriting
   // the whole intake.items map from the client's cached copy) means two devices
@@ -429,12 +402,17 @@ const DB = {
     if (!this.isReady()) throw new Error('Firebase not initialised');
     const RESOLVED = new Set(['ok', 'partial', 'missing', 'backorder']);
     const ref = _db.collection('orders').doc(orderId);
-    await _db.runTransaction(async tx => {
+    await _tx(async tx => {
       const doc = await tx.get(ref);
       if (!doc.exists) return;
       const data   = doc.data();
       const merged = { ...((data.intake && data.intake.items) || {}) };
-      for (const [id, entry] of Object.entries(patch || {})) merged[id] = entry;
+      // What a line has put into stock is written only by applyDeliveryStock. The copy in
+      // the patch may be older, from before another device added it.
+      for (const [id, entry] of Object.entries(patch || {})) {
+        const { stockAppliedUnits: _old, ...rest } = entry, had = merged[id] || {};
+        merged[id] = had.stockAppliedUnits === undefined ? rest : { ...rest, stockAppliedUnits: had.stockAppliedUnits };
+      }
       const isMat = !data.type || data.type === 'materials';
       const totalItems = (data.items || []).filter(i => (isMat ? !!i.emailed : true) && !i.rejected).length;
       const statuses = Object.values(merged).map(i => i.status).filter(s => !!s && s !== 'pending');
@@ -560,8 +538,10 @@ const DB = {
     });
   },
 
+  // A testing tool. Refuses anything but the test database, whatever asked for it.
   async deleteAllOrders() {
     if (!this.isReady()) throw new Error('Firebase not initialised');
+    if (!_config || _config.projectId !== FIREBASE_PROJECTS.test.projectId) throw new Error('Test database only');
     const snap = await _db.collection('orders').get();
     // Firestore batches cap at 500 operations — chunk so large collections don't fail.
     const docs = snap.docs;
@@ -626,55 +606,65 @@ const DB = {
 
   // Records a stocktake — one item (progressive tick) or many (Review & submit).
   // Each item carries its OWN mode: 'set' replaces the recorded qty, 'add'/'subtract'
-  // move it relative to what's there. Adjustments read current qty in a transaction.
+  // move it relative to what's there.
+  // All the counts are saved together or none is, so a failed submit can be tried
+  // again without adding anything twice. opId (OpId in shared.js) is written with
+  // them: if the first try did go through and only its reply was lost, the second
+  // finds the id and stops. Very long lists go in parts, each with its own id.
   // The submission is merged into ONE session doc per device per day (id
   // "<deviceSlug>-<YYYY-MM-DD>", items keyed by sid, latest count wins) so a day of
   // ticks + submits reads as a single history row rather than flooding it.
   // items: [{ sid, partCode, description, category, subcategory, unit, qty, mode }]
-  async recordStocktake(items, deviceName) {
+  async recordStocktake(items, deviceName, opId) {
     if (!this.isReady()) throw new Error('Firebase not initialised');
-    for (const item of items) {
-      const ref = _db.collection('material_stock').doc(item.sid);
-      await _db.runTransaction(async tx => {
-        const doc = await tx.get(ref);
-        const current = doc.exists ? (doc.data().qty || 0) : 0;
-        let qty;
-        if (item.mode === 'add')           qty = Math.round((current + item.qty) * 100) / 100;
-        else if (item.mode === 'subtract') qty = Math.max(0, Math.round((current - item.qty) * 100) / 100);
-        else                               qty = item.qty;
-        tx.set(ref, {
-          qty,
-          unit:        item.unit || '',
-          partCode:    item.partCode || '',
-          description: item.description || '',
-          category:    item.category || '',
-          subcategory: item.subcategory || '',
-          updatedBy:   deviceName || '',
-          updatedAt:   firebase.firestore.FieldValue.serverTimestamp(),
-        }, { merge: true });
-      });
-    }
     const d = new Date();
     const dateStr = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
     const slug = String(deviceName || 'device').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '').slice(0, 30) || 'device';
     const sessRef = _db.collection('material_stocktakes').doc(`${slug}-${dateStr}`);
-    await _db.runTransaction(async tx => {
-      const doc = await tx.get(sessRef);
-      const bySid = new Map((doc.exists ? (doc.data().items || []) : []).map(i => [i.sid, i]));
-      for (const item of items) {
-        bySid.set(item.sid, {
-          sid: item.sid, partCode: item.partCode || '', description: item.description || '',
-          category: item.category || '', subcategory: item.subcategory || '',
-          unit: item.unit || '', qty: item.qty, mode: item.mode || 'set',
-        });
-      }
-      // submittedAt tracks last activity so history sorts newest-first without an index.
-      tx.set(sessRef, {
-        deviceName: deviceName || '', date: dateStr, authEmail: _who(),
-        items: [...bySid.values()],
-        submittedAt: firebase.firestore.FieldValue.serverTimestamp(),
-      }, { merge: true });
-    });
+    const PART = 300;   // well inside what one transaction may write
+    for (let at = 0; at < items.length; at += PART) {
+      const part = items.slice(at, at + PART), partId = opId ? `${opId}:${at}` : null;
+      await _tx(async tx => {
+        const sess = await tx.get(sessRef);
+        const prev = sess.exists ? sess.data() : {};
+        const ops  = prev.ops || [];
+        if (partId && ops.includes(partId)) return;   // already recorded
+        const sids = [...new Set(part.map(i => i.sid))];
+        const refs = sids.map(sid => _db.collection('material_stock').doc(sid));
+        const docs = await Promise.all(refs.map(r => tx.get(r)));
+        const rec  = new Map(sids.map((sid, n) => [sid, { ref: refs[n], qty: docs[n].exists ? (docs[n].data().qty || 0) : 0 }]));
+        const bySid = new Map((prev.items || []).map(i => [i.sid, i]));
+        for (const item of part) {
+          const r = rec.get(item.sid);
+          if (item.mode === 'add')           r.qty = Math.round((r.qty + item.qty) * 100) / 100;
+          else if (item.mode === 'subtract') r.qty = Math.max(0, Math.round((r.qty - item.qty) * 100) / 100);
+          else                               r.qty = item.qty;
+          r.item = item;
+          bySid.set(item.sid, {
+            sid: item.sid, partCode: item.partCode || '', description: item.description || '',
+            category: item.category || '', subcategory: item.subcategory || '',
+            unit: item.unit || '', qty: item.qty, mode: item.mode || 'set',
+          });
+        }
+        for (const r of rec.values()) tx.set(r.ref, {
+          qty:         r.qty,
+          unit:        r.item.unit || '',
+          partCode:    r.item.partCode || '',
+          description: r.item.description || '',
+          category:    r.item.category || '',
+          subcategory: r.item.subcategory || '',
+          updatedBy:   deviceName || '',
+          updatedAt:   firebase.firestore.FieldValue.serverTimestamp(),
+        }, { merge: true });
+        // submittedAt tracks last activity so history sorts newest-first without an index.
+        tx.set(sessRef, {
+          deviceName: deviceName || '', date: dateStr, authEmail: _who(),
+          items: [...bySid.values()],
+          ...(partId ? { ops: [...ops, partId].slice(-40) } : {}),
+          submittedAt: firebase.firestore.FieldValue.serverTimestamp(),
+        }, { merge: true });
+      });
+    }
   },
 
   // ── MATERIALS CATALOGUE ───────────────────────────────────────────
@@ -971,84 +961,109 @@ const DB = {
   // by: display string e.g. "John Smith" or "Workshop iPad — Tom"
   // sessionId: optional — groups multiple line items from one checkout/intake batch
   // Returns new qty, throws if checkout would go negative.
-  async adjustStock(stockId, itemName, delta, action, by, sessionId, subtype) {
+  // The stock and its history row are one write, and the row's id is made before the
+  // first try: if a try went through and only its reply was lost, the next finds the row
+  // and stops. opId (OpId in shared.js) carries that across a second press of the button.
+  async adjustStock(stockId, itemName, delta, action, by, sessionId, subtype, opId) {
     if (!this.isReady()) throw new Error('Firebase not initialised');
-    const ref = _db.collection('stock').doc(stockId);
-    let newQty;
-    await _db.runTransaction(async tx => {
+    const ref  = _db.collection('stock').doc(stockId);
+    const mark = opId ? _db.collection('stock_history').doc(`${opId}-${stockId}`) : _db.collection('stock_history').doc();
+    return _tx(async tx => {
+      const done = await tx.get(mark);
+      if (done.exists) return done.data().newQty;   // an earlier try got through
       const doc = await tx.get(ref);
       if (!doc.exists) throw new Error('Stock record not found');
-      const current = doc.data().qty || 0;
-      newQty = current + delta;
+      const newQty = round2((doc.data().qty || 0) + delta);
       if (newQty < 0) throw new Error('INSUFFICIENT_STOCK');
       tx.update(ref, { qty: newQty });
-    });
-    // Write history record outside the transaction (best-effort, non-blocking)
-    const histRef = _db.collection('stock_history').doc();
-    histRef.set({
-      stockId,
-      itemName:  itemName || '',
-      delta,
-      newQty,
-      action,
-      subtype:    subtype || null,
-      by:         by || '',
-      authEmail:  _who(),
-      sessionId:  sessionId || null,
-      reverted:   false,
-      timestamp:  firebase.firestore.FieldValue.serverTimestamp(),
-    }).catch(e => console.warn('History write failed:', e));
-    return newQty;
-  },
-
-  // Applies delivery stock CHANGES (deltas) to consumables stock. Positive deltas add
-  // received stock; negative deltas correct an earlier over-count (floored at zero).
-  // Creates the stock doc and turns tracking on if needed (receiving an untracked item
-  // starts tracking it). Safe to call from the warehouse page, which holds no local
-  // stock state. items: [{ sid, description, units }] where units is the delta to apply.
-  async receiveDeliveryStock(items, by, sessionId) {
-    if (!this.isReady()) throw new Error('Firebase not initialised');
-    for (const it of items) {
-      if (!it.units) continue; // zero delta — nothing to change
-      const ref = _db.collection('stock').doc(it.sid);
-      let newQty, delta;
-      await _db.runTransaction(async tx => {
-        const doc = await tx.get(ref);
-        const current = doc.exists ? (doc.data().qty || 0) : 0;
-        newQty = Math.max(0, current + it.units);
-        delta  = newQty - current; // actual change after flooring at zero
-        tx.set(ref, { qty: newQty, tracked: true }, { merge: true });
-      });
-      if (delta === 0) continue;
-      _db.collection('stock_history').add({
-        stockId:   it.sid,
-        itemName:  it.description || '',
+      tx.set(mark, {
+        stockId,
+        itemName:  itemName || '',
         delta,
         newQty,
-        action:    'intake',
-        subtype:   'delivery_intake',
-        by:        by || '',
-      authEmail: _who(),
-        sessionId: sessionId || null,
-        reverted:  false,
-        timestamp: firebase.firestore.FieldValue.serverTimestamp(),
-      }).catch(e => console.warn('History write failed:', e));
-    }
+        action,
+        subtype:    subtype || null,
+        by:         by || '',
+        authEmail:  _who(),
+        sessionId:  sessionId || null,
+        reverted:   false,
+        timestamp:  firebase.firestore.FieldValue.serverTimestamp(),
+      });
+      return newQty;
+    });
   },
 
-  // Records how many individual units of each item have been pushed to stock, stored on
-  // the item's own intake record (intake.items.<id>.stockAppliedUnits). A later edit to
-  // the delivery compares current-received against this to post only the difference.
-  // stamp: [{ orderId, itemId, units }].
-  async stampDeliveryStockApplied(stamp) {
+  // Brings consumables stock into line with what a delivery says was received.
+  // lines: [{ orderId, itemId, sid, description, units }] — units is the TOTAL this line
+  // should have put into stock. Each order's own record of what it has already put in
+  // (intake.items.<id>.stockAppliedUnits) is read, the difference moved, and the record
+  // updated in the same write. So it happens whole or not at all, and pressing it twice,
+  // or on two devices at once, adds nothing the second time. A correction downwards is
+  // floored at zero. Receiving an untracked item starts tracking it.
+  async applyDeliveryStock(lines, by, sessionId) {
     if (!this.isReady()) throw new Error('Firebase not initialised');
-    const byOrder = new Map();
-    for (const s of stamp) {
-      if (!byOrder.has(s.orderId)) byOrder.set(s.orderId, {});
-      byOrder.get(s.orderId)[`intake.items.${s.itemId}.stockAppliedUnits`] = s.units;
+    const orderIds = [...new Set(lines.map(l => l.orderId))];
+    await _tx(async tx => {
+      const orderRefs = orderIds.map(id => _db.collection('orders').doc(id));
+      const orderDocs = await Promise.all(orderRefs.map(r => tx.get(r)));
+      const intake = new Map(orderIds.map((id, n) => [id, (orderDocs[n].exists && orderDocs[n].data().intake && orderDocs[n].data().intake.items) || {}]));
+      const bySid = new Map();
+      for (const l of lines) {
+        const was = (intake.get(l.orderId)[l.itemId] || {}).stockAppliedUnits || 0;
+        if (!bySid.has(l.sid)) bySid.set(l.sid, { description: l.description, delta: 0 });
+        bySid.get(l.sid).delta += l.units - was;
+      }
+      const moves = [...bySid.entries()].filter(([, m]) => m.delta !== 0);
+      const refs  = moves.map(([sid]) => _db.collection('stock').doc(sid));
+      const docs  = await Promise.all(refs.map(r => tx.get(r)));
+      moves.forEach(([sid, m], n) => {
+        const current = docs[n].exists ? (docs[n].data().qty || 0) : 0;
+        const newQty  = Math.max(0, round2(current + m.delta));
+        tx.set(refs[n], { qty: newQty, tracked: true }, { merge: true });
+        if (newQty === current) return;
+        tx.set(_db.collection('stock_history').doc(), {
+          stockId: sid, itemName: m.description || '', delta: round2(newQty - current), newQty,
+          action: 'intake', subtype: 'delivery_intake',
+          by: by || '', authEmail: _who(), sessionId: sessionId || null, reverted: false,
+          timestamp: firebase.firestore.FieldValue.serverTimestamp(),
+        });
+      });
+      orderIds.forEach((id, n) => {
+        const update = { updatedAt: firebase.firestore.FieldValue.serverTimestamp() };
+        for (const l of lines) if (l.orderId === id) update[`intake.items.${l.itemId}.stockAppliedUnits`] = l.units;
+        tx.update(orderRefs[n], update);
+      });
+    });
+  },
+
+  // Receive Stock (a delivery that isn't on an order): every line in one write, so
+  // either the whole list is in stock or none of it is. The history rows are filed
+  // under opId, so a try whose reply was lost is recognised and not added again.
+  // items: [{ sid, description, units }]
+  async receiveStock(items, by, sessionId, opId) {
+    if (!this.isReady()) throw new Error('Firebase not initialised');
+    const bySid = new Map();
+    for (const i of items) {
+      if (!bySid.has(i.sid)) bySid.set(i.sid, { description: i.description, units: 0 });
+      bySid.get(i.sid).units += i.units;
     }
-    await Promise.all([...byOrder.entries()].map(([orderId, update]) =>
-      _db.collection('orders').doc(orderId).update({ ...update, updatedAt: firebase.firestore.FieldValue.serverTimestamp() })));
+    const all = [...bySid.entries()];
+    await _tx(async tx => {
+      const marks = all.map(([sid]) => _db.collection('stock_history').doc(`${opId}-${sid}`));
+      if ((await tx.get(marks[0])).exists) return;   // already received
+      const refs = all.map(([sid]) => _db.collection('stock').doc(sid));
+      const docs = await Promise.all(refs.map(r => tx.get(r)));
+      all.forEach(([sid, i], n) => {
+        const newQty = round2((docs[n].exists ? (docs[n].data().qty || 0) : 0) + i.units);
+        tx.set(refs[n], { ...(docs[n].exists ? {} : { reorderQty: 0, warningQty: 0 }), qty: newQty, tracked: true }, { merge: true });
+        tx.set(marks[n], {
+          stockId: sid, itemName: i.description || '', delta: i.units, newQty,
+          action: 'intake', subtype: 'receive_stock',
+          by: by || '', authEmail: _who(), sessionId: sessionId || null, reverted: false,
+          timestamp: firebase.firestore.FieldValue.serverTimestamp(),
+        });
+      });
+    });
   },
 
   // Absolute set (for physical stocktake override).
