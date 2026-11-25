@@ -13,8 +13,8 @@
   <link rel="icon" type="image/png" href="favicon.png">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
   <link rel="stylesheet" href="fonts/tabler-icons.min.css">
-  <link rel="stylesheet" href="css/style.css?v=2026-11-26.1">
-  <link rel="stylesheet" href="css/themes.css?v=2026-11-26.1">
+  <link rel="stylesheet" href="css/style.css?v=2026-11-26.2">
+  <link rel="stylesheet" href="css/themes.css?v=2026-11-26.2">
   <style>
     .cons-stock-badge {
       font-size: 11px; font-family: var(--mono); padding: 2px 8px;
@@ -53,13 +53,16 @@
       box-shadow: 0 1px 4px rgba(0,0,0,0.25);
     }
     .cons-tile-body { padding: 8px 9px 9px; display: flex; flex-direction: column; gap: 7px; flex: 1; }
-    .cons-tile-name { font-size: 12.5px; font-weight: 500; line-height: 1.3; color: var(--text); }
-    .cons-tile-controls { display: flex; align-items: center; gap: 4px; margin-top: auto; }
-    .cons-tile-controls .qty-input { flex: 1; min-width: 0; height: 32px; text-align: center; }
+    .cons-tile-name { font-size: 14px; font-weight: 500; line-height: 1.3; color: var(--text); }
+    .cons-tile-unit { font-size: 12px; color: var(--text3); margin-top: 2px; }
+    /* Everything below the name is controls: a near miss there does nothing */
+    .cons-tile-foot { margin: auto -9px -9px; padding: 0 9px 9px; display: flex; flex-direction: column; gap: 8px; cursor: default; }
+    .cons-tile-controls { display: flex; align-items: center; }
+    .cons-tile-controls .qty-input { flex: 1; min-width: 0; width: auto; text-align: center; }
     .cons-box-btn {
-      display: flex; align-items: center; justify-content: center; gap: 5px; width: 100%; height: 30px;
+      display: flex; align-items: center; justify-content: center; gap: 5px; width: 100%; min-height: 48px;
       border: 1px solid var(--border2); border-radius: var(--radius); background: var(--bg2); color: var(--text2);
-      font-size: 11px; font-weight: 600; cursor: pointer;
+      font-size: 13px; font-weight: 600; cursor: pointer;
     }
     .cons-box-btn:active { background: var(--border); }
     /* ── Barcode scanning (toast + link picker styles are shared, in style.css) ── */
@@ -79,49 +82,53 @@
     /* Recent sign-out names — tap instead of retyping */
     .recent-names { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; justify-content: center; }
     .recent-name-chip {
-      padding: 6px 12px; border-radius: 20px; cursor: pointer; font-size: 13px;
+      min-height: 48px; padding: 0 18px; border-radius: 24px; cursor: pointer; font-size: 15px;
       border: 1px solid var(--border2); background: var(--bg); color: var(--text);
     }
     .recent-name-chip:active { background: var(--bg2); }
-    .checkout-name-bar {
-      background: var(--surface); border-top: 1px solid var(--border);
-      padding: 10px 16px; flex-shrink: 0;
-    }
-    .checkout-name-input {
-      width: 100%; border: 1px solid var(--border); background: var(--bg);
-      border-radius: var(--radius); padding: 8px 12px; font-size: 14px; color: var(--text); outline: none;
-    }
-    .checkout-name-input:focus { border-color: var(--focus); }
-    .checkout-name-label {
-      font-size: 11px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.06em;
-      color: var(--text3); font-family: var(--mono); margin-bottom: 5px;
-    }
-    .signout-card { max-width: 380px; }
-    .signout-item-list { display: flex; flex-direction: column; gap: 6px; max-height: 240px; overflow-y: auto; text-align: left; }
+    .signout-card { max-width: 560px; }
+    .signout-item-list { display: flex; flex-direction: column; gap: 6px; max-height: 42vh; overflow-y: auto; text-align: left; }
+    /* Name, then the stepper, then Remove well apart from "+" */
     .signout-item-row {
-      display: flex; align-items: center; justify-content: space-between; gap: 8px;
+      display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 8px 20px;
       background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); padding: 8px 10px;
+    }
+    @media (max-width: 600px) {
+      .signout-item-row { grid-template-columns: 1fr auto; }
+      .signout-item-controls { grid-row: 2; grid-column: 1 / -1; }
+      .signout-item-row .remove-btn { grid-row: 1; grid-column: 2; }
     }
     .signout-item-row.over-limit { border-color: var(--amber-text); }
     .signout-item-info { flex: 1; min-width: 0; text-align: left; }
-    .signout-item-name { font-size: 13px; font-weight: 500; color: var(--text); line-height: 1.3; }
-    .signout-item-unit { font-size: 11px; color: var(--text3); margin-top: 1px; }
-    .signout-item-controls { display: flex; align-items: center; gap: 0; flex-shrink: 0; }
-    .signout-item-controls .qty-input { width: 36px; height: 28px; font-size: 12px; }
-    .signout-item-controls .qty-btn { width: 28px; height: 28px; font-size: 14px; }
-    .signout-item-controls .remove-btn { margin-left: 6px; width: 28px; height: 28px; padding: 0; display: flex; align-items: center; justify-content: center; }
+    .signout-item-name { font-size: 15px; font-weight: 500; color: var(--text); line-height: 1.3; }
+    .signout-item-unit { font-size: 13px; color: var(--text3); margin-top: 1px; }
+    .signout-item-controls { display: flex; align-items: center; flex-shrink: 0; }
+    /* A scan that didn't work: stays until it is closed */
+    #scan-problem {
+      position: fixed; left: 50%; bottom: 92px; transform: translateX(-50%); z-index: 210;
+      width: min(560px, calc(100vw - 32px)); display: flex; align-items: center; gap: 14px;
+      background: var(--toast-warn-bg); color: #fff; padding: 12px 12px 12px 18px;
+      border-radius: var(--radius-lg); box-shadow: 0 2px 6px rgba(0,0,0,0.25), 0 10px 28px rgba(0,0,0,0.35);
+    }
+    #scan-problem .ti { font-size: 24px; flex-shrink: 0; }
+    .scan-problem-lines { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; font-size: 15px; font-weight: 600; line-height: 1.35; text-wrap: pretty; }
+    .scan-problem-lines small { display: block; font-size: 12px; font-weight: 400; font-family: var(--mono); opacity: 0.85; }
+    #scan-problem button {
+      min-height: 48px; padding: 0 18px; border-radius: var(--radius); border: 1px solid rgba(255,255,255,0.5);
+      background: none; color: #fff; font-size: 15px; font-weight: 600;
+    }
   </style>
 </head>
-<body>
+<body class="floor">
 <div id="root"></div>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
 <!-- APP CHECK: remove this line to disable App Check (also remove init block in firebase-sync.js) -->
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-check-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
-<script src="js/shared.js?v=2026-11-26.1"></script>
-<script src="js/firebase-sync.js?v=2026-11-26.1"></script>
-<script src="js/auth.js?v=2026-11-26.1"></script>
+<script src="js/shared.js?v=2026-11-26.2"></script>
+<script src="js/firebase-sync.js?v=2026-11-26.2"></script>
+<script src="js/auth.js?v=2026-11-26.2"></script>
 <script>
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.getRegistrations().then(rs => rs.forEach(r => r.unregister()));
@@ -179,12 +186,12 @@ const ConsApp = {
             <span class="header-logo"></span>
             <div class="header-left">
               <div class="header-title">Consumables Checkout</div>
-              <div class="header-ref"><span class="live-dot" id="live-dot"></span><span id="live-label">Live</span> &nbsp;·&nbsp; <span id="app-version" style="opacity:0.6;font-family:var(--mono)"></span></div>
+              <div class="header-ref"><span class="live-dot connecting" id="live-dot"></span><span id="live-label">Connecting…</span><span class="hdr-extra"> &nbsp;·&nbsp; <span id="app-version" style="opacity:0.6;font-family:var(--mono)"></span></span></div>
             </div>
             <div class="header-actions">
               ${deviceName ? `<span class="device-chip"><i class="ti ti-device-ipad" style="font-size:12px"></i> ${esc(deviceName)}</span>` : ''}
               <span id="auth-pill"></span>
-              <button class="icon-btn" id="btn-settings" title="Settings"><i class="ti ti-settings"></i></button>
+              <button class="icon-btn" id="btn-settings" aria-label="Settings"><i class="ti ti-settings"></i></button>
             </div>
           </div></div>
         </div>
@@ -210,11 +217,9 @@ const ConsApp = {
         </div>
 
         <!-- ACTION BAR -->
-        <div class="action-bar"><div class="action-bar-inner">
-          <button class="btn btn-danger" id="btn-cons-clear-main">
-            <i class="ti ti-x"></i> Clear selection
-          </button>
-          <button class="btn btn-primary" id="btn-cons-review" style="margin-top:2px">
+        <div class="action-bar"><div class="action-bar-inner split">
+          <button class="btn-text" id="btn-cons-clear-main" hidden>Clear selection</button>
+          <button class="btn btn-primary" id="btn-cons-review">
             <i class="ti ti-clipboard-check"></i>Review &amp; Sign Out Items
             <span class="sidebar-count zero" id="cons-badge" style="margin-left:4px">0</span>
           </button>
@@ -245,8 +250,8 @@ const ConsApp = {
       if (dec) { this.adj(+dec.dataset.dec, -1); return; }
       if (inc) { this.adj(+inc.dataset.inc,  1); return; }
       if (box) { this.addBox(+box.dataset.box); return; }
-      if (e.target.closest('.qty-input')) return; // typing an exact qty — don't also add one
-      // Tap anywhere else on a tile adds one: the fast path for walking the shelf.
+      if (e.target.closest('.cons-tile-foot')) return; // the controls' own area: a near miss does nothing
+      // Tap the photo or the name to add one: the fast path for walking the shelf.
       const tile = e.target.closest('[data-tile]');
       if (tile) this.adj(+tile.dataset.tile, 1);
     });
@@ -272,10 +277,13 @@ const ConsApp = {
       const img = e.target;
       if (img.tagName === 'IMG' && img.dataset.sid) { this._noImage.add(img.dataset.sid); img.remove(); }
     }, true);
-    document.getElementById('cons-search').addEventListener('input', () => this.renderList());
+    document.getElementById('cons-search').addEventListener('input', e => {
+      if (searchScope(this, e.target.value.trim(), '_activeCat', '_activeSub')) this.renderTabs();
+      this.renderList();
+    });
     document.getElementById('btn-cons-review').addEventListener('click', () => this.openSignOutOverlay());
-    document.getElementById('btn-cons-clear-main').addEventListener('click', () => {
-      if (!confirm('Clear selected items?')) return;
+    document.getElementById('btn-cons-clear-main').addEventListener('click', async () => {
+      if (!await Ask.confirm({ title: 'Clear the selected items?', yes: 'Clear selection', no: 'Keep selection', danger: true })) return;
       this._items = {};
       this._changed();
     });
@@ -308,30 +316,7 @@ const ConsApp = {
   // an explicit false, or signing out right after page load gets wrongly refused.
   _connState: { connected: null, latestVersion: null },
 
-  _renderLiveStatus() {
-    const dot = document.getElementById('live-dot');
-    const lbl = document.getElementById('live-label');
-    const wrap = document.getElementById('update-banner-wrap');
-    const { connected, latestVersion } = this._connState;
-    // hostReachable(): keep the update pill visible when Firestore's channel is
-    // wedged (dot says Offline) but the site itself answers — refresh is the cure.
-    const outdated = (connected || AutoUpdate.hostReachable()) && latestVersion && isVersionNewer(latestVersion, APP_VERSION);
-
-    if (dot && lbl) {
-      dot.classList.remove('disconnected', 'update-available');
-      if (!connected)      { dot.classList.add('disconnected'); lbl.textContent = 'Offline'; }
-      else if (outdated)   { dot.classList.add('update-available'); lbl.textContent = 'Update Available'; }
-      else                 { lbl.textContent = 'Live'; }
-    }
-    if (wrap) {
-      wrap.innerHTML = outdated ? `<div class="update-banner">
-          <i class="ti ti-refresh"></i>
-          <span>A newer version (${esc(verLabel(latestVersion))}) is available — you're on ${esc(verLabel(APP_VERSION))}.</span>
-          <button id="btn-refresh-update">Refresh</button>
-        </div>` : '';
-      document.getElementById('btn-refresh-update')?.addEventListener('click', () => AutoUpdate.reloadFresh(latestVersion));
-    }
-  },
+  _renderLiveStatus() { Live.render(this._connState); },
 
   // Live connection indicator — reflects actual Firestore connection state.
   startConnectionStatus() {
@@ -367,6 +352,7 @@ const ConsApp = {
       // Fold in ghosts (items created during setup, CSV row pending) so tradesmen
       // can sign them out the same day they're shelved.
       this.consumables = GhostItems.merge(this._baseConsumables, records);
+      this._loadKept();
       // Tabs are computed from TRACKED items, which need stock data — the initial
       // renderShell ran before any stock arrived, so they must be re-rendered here
       // too or the category bar stays stuck on just "All".
@@ -375,6 +361,18 @@ const ConsApp = {
       // Re-render the sign-out overlay if it's currently open, so live stock changes reflect there too
       if (document.getElementById('signout-item-list')) this._refreshSignOutItemsOnly();
     });
+  },
+
+  // A selection survives a reload for half an hour.
+  _keep() {
+    if (!this._keptLoaded) return;
+    if (this.count()) Kept.save('signout', { lines: Kept.lines(this.items()) }); else Kept.drop('signout');
+  },
+  _loadKept() {
+    if (this._keptLoaded) return;
+    this._keptLoaded = true;
+    const v = Kept.load('signout', 30 * 60000);
+    if (v) { Kept.fill(v.lines, this.consumables, (m, l) => this.set(m.id, l.qty)); this._updateBadge(); }
   },
 
   _stockFor(sid)   { return this._stock.find(r => r._id === sid) || null; },
@@ -419,13 +417,17 @@ const ConsApp = {
       else this._promptLinkBarcode(code);
       return;
     }
-    if (this._checkoutBusy) { this._toast('Signing out. Scan again in a moment.', true); return; }
-    if (!m) { this._toast('Barcode not set up yet — see the manager to link it', true); return; }
+    if (this._checkoutBusy) { this._scanProblem('Signing out. Scan again in a moment.'); return; }
+    if (!m) { this._scanProblem('Barcode not set up. See the manager.', code); return; }
     const isBoxed = hasBoxTracking(m);
     const before  = this.get(m.id);
     if (isBoxed) this.addBox(m.id); else this.adj(m.id, 1);
     const added = this.get(m.id) - before;
-    if (added <= 0) { this._toast(`${m.description} — not enough stock`, true); return; }
+    if (added <= 0) {
+      const avail = this._availableQty(m);
+      this._scanProblem(avail === null ? `${m.description}: not set up for sign out. See the manager.` : `${m.description}: no more in stock.`);
+      return;
+    }
     this._toast(isBoxed
       ? `Added 1 ${m.boxUnit || 'Box'} (${added}) · ${m.description}`
       : `Added 1 · ${m.description}`);
@@ -451,17 +453,22 @@ const ConsApp = {
 
   // Brief confirmation — the scanner gives no feedback of its own, so this is how you
   // know the scan landed (and on what) without looking away from what you're doing.
-  _toast(msg, isWarning) {
-    let el = document.getElementById('scan-toast');
+  _toast(msg, isWarning) { toast(msg, isWarning); },
+
+  // A scan that didn't work has to be seen: it stays until it is closed, with the ones
+  // before it, and a good scan doesn't hide it.
+  _scanProblems: [],
+  _scanProblem(msg, code) {
+    this._scanProblems = [{ msg, code }, ...this._scanProblems].slice(0, 3);
+    let el = document.getElementById('scan-problem');
     if (!el) {
-      el = document.createElement('div');
-      el.id = 'scan-toast';
+      el = document.createElement('div'); el.id = 'scan-problem'; el.setAttribute('role', 'alert');
+      el.addEventListener('click', () => { this._scanProblems = []; el.remove(); });
       document.body.appendChild(el);
     }
-    el.className = `scan-toast${isWarning ? ' warn' : ''} show`;
-    el.innerHTML = `<i class="ti ${isWarning ? 'ti-alert-triangle' : 'ti-circle-check'}"></i> ${esc(msg)}`;
-    clearTimeout(this._toastTimer);
-    this._toastTimer = setTimeout(() => el.classList.remove('show'), 2600);
+    el.innerHTML = `<i class="ti ti-alert-triangle"></i>
+      <div class="scan-problem-lines">${this._scanProblems.map(p => `<div>${esc(p.msg)}${p.code ? `<small>${esc(p.code)}</small>` : ''}</div>`).join('')}</div>
+      <button>Close</button>`;
   },
 
   // First time a barcode is seen: ask what it is, remember it, then add it. Builds the
@@ -505,7 +512,8 @@ const ConsApp = {
           const other = this.consumables.find(x => stockId(x) === err.existingId);
           this._toast(`Already linked to: ${other ? other.description : 'another item'}`, true);
         } else {
-          alert('Could not save that barcode — please try again.\n\n' + err.message);
+          const why = whyFailed(err);
+          Ask.tell('Barcode not linked', `${why[0].toUpperCase()}${why.slice(1)}. Scan it again.`);
         }
       }
     });
@@ -530,21 +538,17 @@ const ConsApp = {
   _updateBadge() {
     const b = document.getElementById('cons-badge'); if (!b) return;
     const n = this.count(); b.textContent = n; b.classList.toggle('zero', n===0);
+    const c = document.getElementById('btn-cons-clear-main'); if (c) c.hidden = n === 0;
+    this._keep();
   },
 
   renderTabs() {
     const wrap = document.getElementById('cons-tabs-wrap'); if (!wrap) return;
     // Only show tracked items in tabs
     const tracked = this.consumables.filter(m => this._stockFor(stockId(m))?.tracked);
-    this._cats = Data.categories(tracked);
+    this._cats = Data.categoriesBySize(tracked);
     this._subs = this._activeCat ? Data.subcategories(tracked, this._activeCat) : [];
-    const catBtns = this._cats.map((c,i)=>`<button class="tab ${this._activeCat===c?'active':''}" data-cat-idx="${i}">${esc(c)}</button>`).join('');
-    let subHtml = '';
-    if (this._activeCat && this._subs.length) {
-      const subBtns = this._subs.map((s,i)=>`<button class="tab ${this._activeSub===s?'active':''}" data-sub-idx="${i}">${esc(s)}</button>`).join('');
-      subHtml = `<div class="tabs-bar sub-bar"><div class="tabs-inner"><button class="tab ${!this._activeSub?'active':''}" data-sub-idx="-1">All</button>${subBtns}</div></div>`;
-    }
-    wrap.innerHTML = `<div class="tabs-bar"><div class="tabs-inner"><button class="tab ${!this._activeCat?'active':''}" data-cat-idx="-1">All</button>${catBtns}</div></div>${subHtml}`;
+    Strip.draw(wrap, { cats: this._cats, cat: this._activeCat, subs: this._subs, sub: this._activeSub });
   },
 
   setCat(cat) { this._activeCat=cat; this._activeSub=null; this.renderTabs(); this.renderList(); const s=document.getElementById('cons-scroll'); if(s)s.scrollTop=0; },
@@ -552,18 +556,20 @@ const ConsApp = {
 
   renderList() {
     const list = document.getElementById('cons-mat-list'); if (!list) return;
-    const q = (document.getElementById('cons-search')?.value||'').toLowerCase();
+    const q = document.getElementById('cons-search')?.value || '';
 
     // Only show tracked consumables on the worker page
     const tracked = this.consumables.filter(m => this._stockFor(stockId(m))?.tracked);
     let filtered = Data.filter(tracked, this._activeCat, this._activeSub, q);
+    const note = searchNote(filtered, q);
 
     // Sort: in-stock first (by status), then zero/out
     const order = {ok:0, low:1, zero:2};
+    if (!q.trim()) filtered = [...filtered]; // the list is shared; a search result is its own
     filtered.sort((a,b)=>(order[this._stockStatus(a)]??0)-(order[this._stockStatus(b)]??0)||descCompare(a.description,b.description));
 
     if (!filtered.length) {
-      list.innerHTML = `<div class="empty-state"><i class="ti ti-package-off"></i><p>${this._stockReady ? 'No consumables in stock.' : 'Loading stock levels…'}</p></div>`;
+      list.innerHTML = this._stockReady && note || `<div class="empty-state"><i class="ti ti-package-off"></i><p>${this._stockReady ? 'No consumables in stock.' : 'Loading stock levels…'}</p></div>`;
       return;
     }
 
@@ -605,17 +611,18 @@ const ConsApp = {
           ${bcBadge}
         </div>
         <div class="cons-tile-body">
-          <div class="cons-tile-name">${descHtml(m.description)}</div>
-          <div class="cons-tile-controls">
+          <div><div class="cons-tile-name">${descHtml(m.description)}</div><div class="cons-tile-unit">${isBoxed ? `Each · ${esc(m.boxUnit||'Box')} of ${m.boxSize}` : esc(m.qtyType||'')}</div></div>
+          <div class="cons-tile-foot"><div class="cons-tile-controls">
             <button class="qty-btn" data-dec="${m.id}">−</button>
             <input class="qty-input" ${QtyField.attrs(m)} ${avail!==null?`max="${avail}"`:''} value="${qty || ''}" data-qid="${m.id}">
             <button class="qty-btn" data-inc="${m.id}">+</button>
           </div>
           ${isBoxed ? `<button class="cons-box-btn" data-box="${m.id}"><i class="ti ti-box-seam"></i> Take a ${esc(m.boxUnit||'Box')} (${m.boxSize})</button>` : ''}
+          </div>
         </div>
       </div>`;
     }).join('');
-    list.innerHTML = `<div class="cons-grid">${tiles}</div>`;
+    list.innerHTML = `${note}<div class="cons-grid">${tiles}</div>`;
     restoreFocus();
   },
 
@@ -644,27 +651,27 @@ const ConsApp = {
             <div><div class="settings-row-label">Theme</div><div class="settings-row-sub">Colours and logo for this device — applies to every page opened on it</div></div>
             <select id="s-theme">${THEMES.map(t => `<option value="${t.id}"${Theme.get() === t.id ? ' selected' : ''}>${esc(t.name)}</option>`).join('')}</select>
           </div>
-          <div class="settings-row">
+          <label class="settings-row">
             <div><div class="settings-row-label">Fractions as symbols</div><div class="settings-row-sub">Show 1 1/2" as 1½" — off keeps sizes large and easy to read on the iPads</div></div>
             <input type="checkbox" id="s-fraction-glyphs" ${s.fractionGlyphs ? 'checked' : ''} style="width:20px;height:20px">
-          </div>
+          </label>
         </div>
       </div>
       <div class="settings-section">
         <div class="settings-label">Search &amp; Sort</div>
         <div class="settings-card">
-          <div class="settings-row">
+          <label class="settings-row">
             <div><div class="settings-row-label">Numeric-aware sorting</div><div class="settings-row-sub">e.g. 8mm lists before 10mm; inch sizes slot in by their mm value (32mm sits between 1&quot; and 1 1/2&quot;)</div></div>
             <input type="checkbox" id="s-natural-sort" ${s.naturalSort!==false?'checked':''} style="width:20px;height:20px">
-          </div>
-          <div class="settings-row">
+          </label>
+          <label class="settings-row">
             <div><div class="settings-row-label">Unit-aware search</div><div class="settings-row-sub">"1 inch", "25.4mm", "1\"" etc. all find the same item</div></div>
             <input type="checkbox" id="s-unit-search" ${s.unitAwareSearch!==false?'checked':''} style="width:20px;height:20px">
-          </div>
-          <div class="settings-row">
+          </label>
+          <label class="settings-row">
             <div><div class="settings-row-label">Typo-tolerant search</div><div class="settings-row-sub">Finds close matches even with spelling mistakes</div></div>
             <input type="checkbox" id="s-fuzzy-search" ${s.fuzzySearch!==false?'checked':''} style="width:20px;height:20px">
-          </div>
+          </label>
         </div>
       </div>
       <div class="settings-section">
@@ -721,7 +728,7 @@ const ConsApp = {
   // Replaces the old separate review panel — most sign-outs are a single line,
   // so this keeps it to one screen rather than review-panel → name-popup.
   openSignOutOverlay() {
-    if (this.count() === 0) { alert('No items selected.'); return; }
+    if (this.count() === 0) { toast('No items selected yet', true); return; }
     this._renderSignOutOverlay();
   },
 
@@ -742,8 +749,8 @@ const ConsApp = {
           <button class="qty-btn" data-so-dec="${i.id}">−</button>
           <input class="qty-input" ${QtyField.attrs(i)} ${avail!==null?`max="${avail}"`:''} value="${i.qty}" data-so-qid="${i.id}">
           <button class="qty-btn" data-so-inc="${i.id}">+</button>
-          <button class="remove-btn" data-so-rem="${i.id}"><i class="ti ti-x"></i></button>
         </div>
+        <button class="remove-btn" data-so-rem="${i.id}" aria-label="Take off"><i class="ti ti-x"></i></button>
       </div>`;
     }).join('');
     const warning = over ? `
@@ -794,7 +801,7 @@ const ConsApp = {
       const inc = e.target.closest('[data-so-inc]');
       const rem = e.target.closest('[data-so-rem]');
       if (this._checkoutBusy) return;
-      if (dec) this.adj(+dec.dataset.soDec, -1);
+      if (dec && this.get(+dec.dataset.soDec) > 1) this.adj(+dec.dataset.soDec, -1);   // at 1 it stops: ✕ takes a line off
       if (inc) this.adj(+inc.dataset.soInc,  1);
       if (rem) this.zero(+rem.dataset.soRem);
     });
@@ -838,13 +845,13 @@ const ConsApp = {
     const items = this.items();
     if (!items.length) { document.getElementById('overlay-wrap').innerHTML=''; return; }
     if (this._connState.connected === false || navigator.onLine === false) {
-      alert("You're currently offline — sign outs can't be recorded without a connection. Please reconnect and try again.");
+      inlineError('signout-error', 'Offline. Connect, then tap Confirm Item Sign Out.');
       return;
     }
     for (const item of items) {
       const avail = this._availableQty(item);
       if (avail !== null && item.qty > avail) {
-        alert(`Not enough stock for "${item.description}". Only ${avail} available.`);
+        inlineError('signout-error', `${item.description}: only ${avail} in stock.`);
         return;
       }
     }
@@ -871,8 +878,7 @@ const ConsApp = {
           OpId.done(op);
         } catch(e) {
           failedIds.add(item.id);
-          if (e.message === 'INSUFFICIENT_STOCK') errors.push(`${item.description}: insufficient stock`);
-          else errors.push(`${item.description}: ${e.message}`);
+          errors.push(`${item.description}: ${e.message === 'INSUFFICIENT_STOCK' ? 'not enough in stock' : whyFailed(e)}`);
         }
       }
 
@@ -883,8 +889,10 @@ const ConsApp = {
 
       const ow = document.getElementById('overlay-wrap');
       if (errors.length) {
-        ow.innerHTML = '';
-        alert(`Some items could not be signed out:\n\n${errors.join('\n')}\n\nThose items are still selected — adjust the quantities and try again.`);
+        this._checkoutBusy = false;
+        this._renderSignOutOverlay();      // what is left, with the name still in it
+        document.getElementById('overlay-tradesman-name').value = tradesmanName;
+        inlineError('signout-error', `Not signed out. ${errors.join('. ')}. Tap Confirm Item Sign Out to try again.`);
         return;
       }
 

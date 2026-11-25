@@ -10,8 +10,8 @@
   <link rel="icon" type="image/png" href="favicon.png">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
   <link rel="stylesheet" href="fonts/tabler-icons.min.css">
-  <link rel="stylesheet" href="css/style.css?v=2026-11-26.1">
-  <link rel="stylesheet" href="css/themes.css?v=2026-11-26.1">
+  <link rel="stylesheet" href="css/style.css?v=2026-11-26.2">
+  <link rel="stylesheet" href="css/themes.css?v=2026-11-26.2">
 </head>
 <body>
 <div id="root"></div>
@@ -20,12 +20,12 @@
 <!-- APP CHECK: remove this line to disable App Check (also remove init block in firebase-sync.js) -->
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-check-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
-<script src="js/shared.js?v=2026-11-26.1"></script>
-<script src="js/firebase-sync.js?v=2026-11-26.1"></script>
-<script src="js/auth.js?v=2026-11-26.1"></script>
-<script src="js/intake.js?v=2026-11-26.1"></script>
-<script src="js/catalogue.js?v=2026-11-26.1"></script>
-<script src="js/accounts.js?v=2026-11-26.1"></script>
+<script src="js/shared.js?v=2026-11-26.2"></script>
+<script src="js/firebase-sync.js?v=2026-11-26.2"></script>
+<script src="js/auth.js?v=2026-11-26.2"></script>
+<script src="js/intake.js?v=2026-11-26.2"></script>
+<script src="js/catalogue.js?v=2026-11-26.2"></script>
+<script src="js/accounts.js?v=2026-11-26.2"></script>
 <!-- Vendored xlsx-js-style (SheetJS fork with cell styling) — stocktake Excel exports -->
 <script src="js/xlsx-style.min.js"></script>
 <!-- Vendored ExcelJS — used only for the consumables export, which embeds drawn
@@ -188,30 +188,7 @@ const Manager = {
   // explicit false, or submitting right after page load gets wrongly refused.
   _connState: { connected: null, latestVersion: null },
 
-  _renderLiveStatus() {
-    const dot = document.getElementById('live-dot');
-    const lbl = document.getElementById('live-label');
-    const wrap = document.getElementById('update-banner-wrap');
-    const { connected, latestVersion } = this._connState;
-    // hostReachable(): keep the update pill visible when Firestore's channel is
-    // wedged (dot says Offline) but the site itself answers — refresh is the cure.
-    const outdated = (connected || AutoUpdate.hostReachable()) && latestVersion && isVersionNewer(latestVersion, APP_VERSION);
-
-    if (dot && lbl) {
-      dot.classList.remove('disconnected', 'update-available');
-      if (!connected)      { dot.classList.add('disconnected'); lbl.textContent = 'Offline'; }
-      else if (outdated)   { dot.classList.add('update-available'); lbl.textContent = 'Update Available'; }
-      else                 { lbl.textContent = 'Live'; }
-    }
-    if (wrap) {
-      wrap.innerHTML = outdated ? `<div class="update-banner">
-          <i class="ti ti-refresh"></i>
-          <span>A newer version (${esc(verLabel(latestVersion))}) is available — you're on ${esc(verLabel(APP_VERSION))}.</span>
-          <button id="btn-refresh-update">Refresh</button>
-        </div>` : '';
-      document.getElementById('btn-refresh-update')?.addEventListener('click', () => AutoUpdate.reloadFresh(latestVersion));
-    }
-  },
+  _renderLiveStatus() { Live.render(this._connState); },
 
   // Live connection indicator — reflects actual Firestore connection state,
   // not just a decorative pulse. Backed by DB.listenConnectionStatus.
@@ -468,7 +445,7 @@ const Manager = {
                 <span class="sidebar-count zero" id="mst-badge" style="margin-left:4px">0</span>
               </button>
               <button class="btn-sm" id="btn-mst-clear"><i class="ti ti-x"></i> Clear counts</button>
-              <span style="font-size:12px;color:var(--text3)">Tick each item as you count · = set · + add · − subtract</span>
+              <span style="font-size:12px;color:var(--text3)">Tick each item as you count</span>
             </div>
           </div>
           <div id="stocktake-tabs-wrap"></div>
@@ -711,8 +688,8 @@ const Manager = {
       if (seg)  { e.stopPropagation(); this.mstSetMode(+seg.dataset.mstModeopt, seg.dataset.mode); }
       if (tick) { e.stopPropagation(); this.mstTickItem(+tick.dataset.mstTick); }
     });
-    document.getElementById('stocktake-count-list').addEventListener('change', e => {
-      const inp = e.target.closest('[data-mst-qid]'); if (inp) this.mstSetQty(+inp.dataset.mstQid, inp.value);
+    document.getElementById('stocktake-count-list').addEventListener('input', e => {
+      const inp = e.target.closest('[data-mst-qid]'); if (inp) this.mstType(inp);
     });
     document.getElementById('btn-mst-review').addEventListener('click', () => this.mstOpenReview());
     document.getElementById('btn-mst-clear').addEventListener('click', () => {
@@ -1623,16 +1600,21 @@ const Manager = {
   // Recorded against the manager name; per-item set/add/subtract; a green tick
   // records one item immediately, Review & submit posts several at once.
   _mstCountedBy() { const s = Settings.get(); return (s.managerName || 'Manager').trim() || 'Manager'; },
-  mstGet(id)    { return this._mstCart[id] || 0; },
+  mstGet(id)    { return this._mstCart[id]; },        // undefined: nothing entered. 0 is a count.
   mstModeOf(id) { return this._mstModes[id] || 'set'; },
   mstSet(id, qty) {
-    qty = Math.round((parseFloat(qty) || 0) * 100) / 100; // decimals allowed (metres)
-    if (qty <= 0) delete this._mstCart[id]; else this._mstCart[id] = qty;
+    if (qty === undefined) { delete this._mstCart[id]; return; }
+    this._mstCart[id] = Math.max(0, round2(qty)); // decimals allowed (metres)
   },
-  mstAdj(id, d)    { this.mstSet(id, this.mstGet(id) + d); this._mstChanged(); },
-  mstSetQty(id, v) { this.mstSet(id, v); this._mstChanged(); },
+  mstAdj(id, d)    { const q = this.mstGet(id); if (q === undefined && d < 0) return; this.mstSet(id, (q || 0) + d); this._mstChanged(); },
+  mstType(el) {
+    const id = +el.dataset.mstQid, m = this.materials.find(x => x.id == id); if (!m) return;
+    this.mstSet(id, Count.read(el));
+    Count.typed(el, this._stStockMap().get(stockId(m)), stocktakeUnit(m), this.mstGet(id), this.mstModeOf(id));
+    this._updateMstBadge();
+  },
   mstSetMode(id, mode) { if (mode === 'set') delete this._mstModes[id]; else this._mstModes[id] = mode; this.renderStocktakeCount(); },
-  mstCount()    { return Object.keys(this._mstCart).length; },
+  mstCount()    { return this.mstItems().length; },
   _mstPayload(m) {
     return {
       sid: stockId(m), partCode: m.partCode || '', description: m.description,
@@ -1643,7 +1625,7 @@ const Manager = {
   mstItems() {
     return Object.keys(this._mstCart).map(id => {
       const m = this.materials.find(x => x.id == id);
-      return m ? { ...m, qty: this._mstCart[id], stMode: this.mstModeOf(id) } : null;
+      return m && Count.ready(this.mstGet(id), this.mstModeOf(id)) ? { ...m, qty: this._mstCart[id], stMode: this.mstModeOf(id) } : null;
     }).filter(Boolean);
   },
   _mstChanged() { this._updateMstBadge(); this.renderStocktakeCount(); },
@@ -1660,31 +1642,18 @@ const Manager = {
     if (!filtered.length) { el.innerHTML = `<div class="empty-state"><i class="ti ti-package-off"></i><p>No materials found.</p></div>`; return; }
     const restoreFocus = captureInputFocus(); // live stock updates re-render mid-typing
     el.innerHTML = filtered.map(m => {
-      const qty = this.mstGet(m.id), hasQty = qty > 0;
-      const mode = this.mstModeOf(m.id);
+      const qty = this.mstGet(m.id), mode = this.mstModeOf(m.id);
       const unit = stocktakeUnit(m);
       const rec = stockMap.get(stockId(m));
       const showCode = m.partCode && !Data.isDummyCode(m.partCode);
-      const recorded = rec && rec.qty != null ? `${rec.qty} ${esc(unit)} recorded` : 'not counted yet';
-      const seg = [['set','='],['add','+'],['subtract','−']].map(([mv,sym]) =>
-        `<button class="st-mode-opt ${mv}${mode===mv?' active':''}" data-mst-modeopt="${m.id}" data-mode="${mv}" title="${mv==='set'?'Set counted total':mv==='add'?'Add to recorded':'Subtract from recorded'}">${sym}</button>`
-      ).join('');
-      return `<div class="mat-card ${hasQty?'in-order':''}">
+      return `<div class="mat-card st-card ${Count.ready(qty, mode)?'in-order':''}">
         <div class="mat-icon" style="background:${(CAT_ICONS[m.category]||CAT_ICONS.default).bg}"><i class="ti ${(CAT_ICONS[m.category]||CAT_ICONS.default).icon}" style="color:${(CAT_ICONS[m.category]||CAT_ICONS.default).color}"></i></div>
         <div class="mat-info">
           <div class="mat-name">${descHtml(m.description)}</div>
           ${showCode ? `<div class="mat-partcode">${esc(m.partCode)}</div>` : '<div class="mat-partcode"></div>'}
-          <div class="mat-unit">${esc(unit)} · <span class="st-recorded">${recorded}</span></div>
+          <div class="mat-unit">${esc(unit)} · <span class="st-recorded">${Count.line(rec, unit, qty, mode)}</span></div>
         </div>
-        <div class="st-controls">
-          <div class="st-ctrl-row">
-            <button class="qty-btn" data-mst-dec="${m.id}">−</button>
-            <input class="qty-input" type="number" min="0" step="0.1" value="${hasQty?qty:''}" placeholder="0" data-mst-qid="${m.id}">
-            <button class="qty-btn" data-mst-inc="${m.id}">+</button>
-            <button class="st-tick ${hasQty?'ready':''}" data-mst-tick="${m.id}" ${hasQty?'':'disabled'} title="${hasQty?'Record this count now':'Enter a quantity first'}"><i class="ti ti-check"></i></button>
-          </div>
-          <div class="st-mode-seg">${seg}</div>
-        </div>
+        ${Count.controls('mst', m.id, qty, mode)}
       </div>`;
     }).join('');
     restoreFocus();
@@ -1692,8 +1661,8 @@ const Manager = {
 
   async mstTickItem(id) {
     if (this._mstTickBusy.has(id)) return;
-    if (this.mstGet(id) <= 0) return;
-    if (this._connState.connected === false || navigator.onLine === false) { alert("You're currently offline — counts can't be recorded without a connection."); return; }
+    if (!Count.ready(this.mstGet(id), this.mstModeOf(id))) return;
+    if (this._connState.connected === false || navigator.onLine === false) { Ask.tell('Count not recorded', 'Offline. Connect, then tap the tick again.'); return; }
     const m = this.materials.find(x => x.id == id); if (!m) return;
     this._mstTickBusy.add(id);
     try {
@@ -1704,18 +1673,17 @@ const Manager = {
       this._updateMstBadge(); this.renderStocktakeCount();
     } catch(e) {
       console.error('Count not recorded:', e);
-      alert(`Count not recorded: ${whyFailed(e)}. Tap the tick to try again.`);
+      const why = whyFailed(e);
+      Ask.tell('Count not recorded', `${why[0].toUpperCase()}${why.slice(1)}. Tap the tick to try again.`);
     } finally { this._mstTickBusy.delete(id); }
   },
 
   mstOpenReview() {
-    if (this.mstCount() === 0) { alert('No counts entered yet.'); return; }
+    if (this.mstCount() === 0) { toast('No counts entered yet', true); return; }
     const items = this.mstItems();
-    const modeChip = { set: ['=', 'var(--blue-text)'], add: ['+', 'var(--green-text)'], subtract: ['−', 'var(--red-text)'] };
     const lines = items.map(i => {
-      const [sym, col] = modeChip[i.stMode] || modeChip.set;
       return `<div class="stocktake-row"><div class="stocktake-row-info"><div class="stocktake-row-name">${descHtml(i.description)}</div></div>
-        <div class="stocktake-qty" style="color:${col}">${sym} ${i.qty} ${esc(stocktakeUnit(i))}</div></div>`;
+        <div class="stocktake-qty" style="color:${Count.colour(i.stMode)}">${esc(Count.words(i.stMode, i.qty, stocktakeUnit(i)))}</div></div>`;
     }).join('');
     const ow = document.getElementById('overlay-wrap');
     ow.innerHTML = `
@@ -1738,7 +1706,7 @@ const Manager = {
     if (this._mstBusy) return;
     const items = this.mstItems();
     if (!items.length) { document.getElementById('overlay-wrap').innerHTML=''; return; }
-    if (this._connState.connected === false || navigator.onLine === false) { alert("You're currently offline — stocktakes can't be submitted without a connection."); return; }
+    if (this._connState.connected === false || navigator.onLine === false) { inlineError('mst-error', 'Offline. Connect, then tap Confirm stocktake.'); return; }
     this._mstBusy = true;
     inlineError('mst-error', '');
     const btn = document.getElementById('btn-mst-confirm'), cancel = document.getElementById('btn-mst-cancel');
@@ -1787,7 +1755,6 @@ const Manager = {
     if (!this._stSessions.length) { el.innerHTML = `<div class="empty-state"><i class="ti ti-clipboard-off"></i><p>No stocktakes submitted yet.</p></div>`; return; }
     // Sessions are one-per-device-per-day and can mix modes (a day of ticks +
     // submits), so the mode indicator lives on each line, not the session header.
-    const modeSym = { set: ['=', 'var(--blue-text)'], add: ['+', 'var(--green-text)'], subtract: ['−', 'var(--red-text)'] };
     el.innerHTML = this._stSessions.map(s => {
       const ts = s.submittedAt?.toDate ? fmtTime(s.submittedAt.toDate()) : '';
       const isOpen = this._openStSessions.has(s._id);
@@ -1800,9 +1767,7 @@ const Manager = {
         </div>
         <i class="ti ${isOpen ? 'ti-chevron-up' : 'ti-chevron-down'}" style="color:var(--text3)"></i>
         ${isOpen ? `<div style="flex-basis:100%;padding-top:8px;border-top:1px solid var(--border);margin-top:6px">
-          ${(s.items || []).map(i => { const [sym,col] = modeSym[i.mode] || modeSym.set;
-            return `<div class="stocktake-row-meta" style="padding:2px 0">${descHtml(i.description)} — <strong style="color:${col}">${sym} ${i.qty} ${esc(i.unit || '')}</strong></div>`;
-          }).join('')}
+          ${(s.items || []).map(i => `<div class="stocktake-row-meta" style="padding:2px 0">${descHtml(i.description)} — <strong style="color:${Count.colour(i.mode)}">${esc(Count.words(i.mode, i.qty, i.unit || ''))}</strong></div>`).join('')}
         </div>` : ''}
       </div>`;
     }).join('');
@@ -4290,17 +4255,7 @@ const Manager = {
     this._bcPromptLink(code);
   },
 
-  // action: { label, run } — one thing that can still be done about it, offered for longer.
-  _toast(msg, isWarning, action) {
-    let el = document.getElementById('scan-toast');
-    if (!el) { el = document.createElement('div'); el.id = 'scan-toast'; el.setAttribute('role', 'status'); document.body.appendChild(el); }
-    el.className = `scan-toast${isWarning ? ' warn' : ''}${action ? ' has-action' : ''} show`;
-    el.innerHTML = `<i class="ti ${isWarning ? 'ti-alert-triangle' : 'ti-circle-check'}"></i> ${esc(msg)}${action ? `<button class="toast-action">${esc(action.label)}</button>` : ''}`;
-    const hide = () => el.classList.remove('show', 'has-action');
-    if (action) el.querySelector('.toast-action').addEventListener('click', () => { hide(); action.run(); });
-    clearTimeout(this._toastTimer);
-    this._toastTimer = setTimeout(hide, action ? 10000 : 2600);
-  },
+  _toast(msg, isWarning, action) { toast(msg, isWarning, action); },
 
   // Unknown barcode scanned with the panel open: choose which item it belongs to —
   // or create the item on the spot if it doesn't have a CSV row yet (ghost).

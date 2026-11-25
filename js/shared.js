@@ -1,9 +1,9 @@
-// shared.js — v2026-11-26.1
+// shared.js — v2026-11-26.2
 
 // The build date plus that day's counter — "2026-10-06.2" is the second build
 // on 6 Oct 2026 (the production board's scheme). Set by tools/bump-version.py;
 // shown to people with a leading "v" (see verLabel).
-const APP_VERSION = '2026-11-26.1';
+const APP_VERSION = '2026-11-26.2';
 
 // Numeric version comparison, part by part. Returns true if `a` is strictly
 // newer than `b`. Reads both the dated form and the "v0.56"-style numbers used
@@ -315,23 +315,17 @@ function levenshtein(a, b) {
   }
   return prev[bl];
 }
-// Word-level fuzzy score: best (lowest-distance) match between the query
-// word and any word in the target text, normalised by word length so
-// short/long words are judged fairly. Returns 0 (best) to 1 (no relation).
-function fuzzyWordScore(queryWord, text) {
-  const words = String(text||'').toLowerCase().match(/[a-z]+/g) || [];
-  if (!queryWord || !words.length) return 1;
+// The fewest typos between a typed word and any word in the text. Only words: one digit
+// out is another size, not a typo ("8" and "3" are one edit apart).
+function typosTo(word, text) {
   let best = Infinity;
-  for (const w of words) {
-    const d = levenshtein(queryWord, w);
-    best = Math.min(best, d / Math.max(queryWord.length, w.length));
+  for (const w of String(text || '').toLowerCase().match(/[a-z]+/g) || []) {
+    if (Math.abs(w.length - word.length) < best) best = Math.min(best, levenshtein(word, w));
   }
-  return best === Infinity ? 1 : best;
+  return best;
 }
-// Only fuzzy-match on alphabetic tokens — numbers are excluded since edit
-// distance between digits doesn't mean "similar value" (e.g. "8" and "3"
-// are one edit apart but not remotely the same thing).
-const FUZZY_MAX_DISTANCE_RATIO = 0.34; // tolerates ~1-2 typos in a typical word
+// How many to forgive: none in a short word ("nut" is not "cut"), two in a long one.
+function maxTypos(word) { return word.length <= 3 ? 0 : word.length <= 5 ? 1 : 2; }
 
 const Data = {
   _list: null,
@@ -497,6 +491,14 @@ const Data = {
     const cats = (list||this.get()).map(m=>m.category).filter(c=>{ if(seen.has(c)) return false; seen.add(c); return true; });
     return Settings.get().naturalSort ? [...cats].sort(naturalCompare) : cats;
   },
+  // For tab strips: the biggest categories first, so the ones used most are on screen
+  // without scrolling. Goes by how many items each has, which changes rarely, so a tab
+  // stays where people are used to finding it.
+  categoriesBySize(list) {
+    const n = new Map();
+    for (const m of (list || this.get())) n.set(m.category, (n.get(m.category) || 0) + 1);
+    return [...n.keys()].sort((a, b) => n.get(b) - n.get(a) || naturalCompare(a, b));
+  },
   subcategories(list, category) {
     const seen = new Set();
     const subs = (list||this.get()).filter(m=>m.category===category).map(m=>m.subcategory)
@@ -504,6 +506,11 @@ const Data = {
     return Settings.get().naturalSort ? [...subs].sort(naturalCompare) : subs;
   },
 
+  // The list to show for a category, a type and what is in the search box. An item has to
+  // match all of it: every size, every code and every word. Words forgive a typo; sizes and
+  // anything else with a digit in it match exactly, so one part never turns up as another.
+  // If nothing matches it all, the nearest thing is shown instead and `.note` on the result
+  // says what was left out.
   // opts can override Settings per-call, e.g. Data.filter(list, cat, sub, q, {fuzzySearch:false})
   filter(list, category, subcategory, query, opts) {
     const cfg = { ...Settings.get(), ...(opts||{}) };
@@ -511,63 +518,132 @@ const Data = {
     if (category)    out = out.filter(m=>m.category===category);
     if (subcategory) out = out.filter(m=>m.subcategory===subcategory);
 
-    if (!query) {
+    const q = normaliseGlyphs(query).toLowerCase().trim();
+    if (!q) {
       return cfg.naturalSort
         ? [...out].sort((a,b)=>naturalCompare(a.description, b.description))
         : out;
     }
 
-    const q = normaliseGlyphs(query).toLowerCase().trim();
-    const qMeasurements = cfg.unitAwareSearch ? extractMeasurements(q) : [];
-    // Strip out the raw text that was successfully parsed as a measurement
-    // (e.g. "1in", "25.4mm") before pulling out words for fuzzy matching —
-    // otherwise a bare unit token like "in" or "mm" can fuzzy-match as a
-    // normal English word and produce false positives (e.g. "in" matching
-    // any description containing the word "in"). Also drop standalone unit
-    // words and anything under 3 letters, since short fragments are too
-    // unreliable to fuzzy-match meaningfully.
-    let qForWords = q;
-    for (const meas of qMeasurements) qForWords = qForWords.replace(meas.raw, ' ');
-    const UNIT_WORDS = new Set(['mm','in','inch','inches']);
-    const qWords = (qForWords.match(/[a-z]+/g) || [])
-      .filter(w => w.length >= 3 && !UNIT_WORDS.has(w));
+    const sizes = cfg.unitAwareSearch ? extractMeasurements(q) : [];
+    let rest = q;
+    for (const s of sizes) rest = rest.replace(s.raw, ' ');
+    const UNIT_WORDS = new Set(['mm', 'in', 'inch', 'inches', 'x', 'by']);
+    const tokens = rest.split(/[^a-z0-9./]+/).map(t => t.replace(/^[./]+|[./]+$/g, '')).filter(t => t && !UNIT_WORDS.has(t));
+    const exact  = tokens.filter(t => /\d/.test(t));
+    const words  = tokens.filter(t => !/\d/.test(t) && t.length > 1);
+    const qCode  = codeKey(q);
+    const phrase = phraseRe(q);
 
-    const scored = out.map(m => {
+    const full = [], close = [], noSize = [], noWord = [];
+    for (const m of out) {
       const desc = normaliseGlyphs(m.description).toLowerCase();
-      const code = m.partCode.toLowerCase();
-      let score = null; // null = no match, lower number = better match
-
-      // Tier 0: exact substring match on description or part code — always wins
-      if (desc.includes(q) || code.includes(q)) {
-        score = 0;
+      const code = codeKey(m.partCode);
+      // What was typed, as it stands: in the description, or in the part code however it
+      // is spaced ("SL 0301", "sl-0301"). Digits alone need three to count as a code.
+      if (phrase.test(desc) || (qCode && code.includes(qCode) && (/[a-z]/.test(qCode) || qCode.length >= 3))) {
+        full.push({ m, score: phrase.test(desc) ? 0 : 0.5 });
+        continue;
       }
-
-      // Tier 1: unit-aware exact value match — the query's sizes appear (in any
-      // written form: 25.4mm, 1", or a bare 25.4) in this item. Exact canonical-mm
-      // equality only, no rounding tolerance. An item carrying EVERY size in the
-      // query ("50 x 25" → "50mm x 25mm x 3mm") ranks above one that shares only
-      // some of them ("100 x 25mm Flat Bar").
-      if (score === null && qMeasurements.length) {
-        const itemMm = new Set(extractMeasurements(desc).map(im => im.mm));
-        const hits = qMeasurements.filter(qm => itemMm.has(qm.mm)).length;
-        if (hits === qMeasurements.length) score = 1;
-        else if (hits > 0)                 score = 1.5;
+      const hay = `${desc} ${String(m.category || '').toLowerCase()} ${String(m.subcategory || '').toLowerCase()}`;
+      let typo = 0, wordsOk = true;
+      for (const w of words) {
+        if (hay.includes(w)) continue;
+        const d = cfg.fuzzySearch ? typosTo(w, hay) : Infinity;
+        if (d > maxTypos(w)) { wordsOk = false; break; }
+        typo += d;
       }
+      const exactOk = exact.every(t => phraseRe(t).test(hay) || code.includes(t));
+      // Each size typed needs its own: "50 x 50 x 3" is not a 50 x 25 x 3.
+      const mm   = sizes.length ? extractMeasurements(desc).map(i => i.mm) : [];
+      const hits = sizes.filter(s => { const i = mm.indexOf(s.mm); if (i >= 0) mm.splice(i, 1); return i >= 0; }).length;
+      const allSizes = hits === sizes.length;
+      const score = 1 + typo;
+      if (!exactOk) continue;
+      if (allSizes && wordsOk && (sizes.length || words.length || exact.length)) full.push({ m, score });
+      else if (wordsOk && hits > 0)                      close.push({ m, score, hits });
+      else if (wordsOk && words.length && sizes.length)  noSize.push({ m, score });
+      else if (allSizes && sizes.length)                 noWord.push({ m, score: 1 });
+    }
 
-      // Tier 2: fuzzy word match on remaining alphabetic query words —
-      // catches typos in either the catalogue or what was typed. Numbers
-      // and unit tokens are excluded (see above) since edit-distance on
-      // digits or short unit abbreviations doesn't mean "similar item".
-      if (score === null && cfg.fuzzySearch && qWords.length) {
-        const avgDist = qWords.reduce((s,w) => s + fuzzyWordScore(w, desc), 0) / qWords.length;
-        if (avgDist <= FUZZY_MAX_DISTANCE_RATIO) score = 2 + avgDist;
-      }
+    const most = Math.max(...close.map(x => x.hits));
+    const near = close.filter(x => x.hits === most);   // only the nearest of the near misses
+    const list_ = full.length ? full : near.length ? near : noSize.length ? noSize : noWord;
+    list_.sort((a,b) => a.score - b.score || naturalCompare(a.m.description, b.m.description));
+    const found = list_.map(x => x.m);
+    const typed = sizes.map(x => x.raw.trim() + (x.bare ? 'mm' : '')).join(' x ');
+    if (!full.length && found.length) {
+      found.note = list_ === near   ? `No exact match for ${typed}. Showing the closest.`
+                 : list_ === noSize ? `Nothing in ${typed}. Showing all ${words.join(' ')}.`
+                 :                    `Nothing called ${words.join(' ')}. Showing all ${typed}.`;
+    }
+    return found;
+  },
+};
+// A part code with its spaces and dashes taken out.
+function codeKey(s) { return String(s || '').toLowerCase().replace(/[\s\-_./]+/g, ''); }
+// What was typed as one run of text. A number in it is a whole number: "50" is not in "150".
+function phraseRe(t) {
+  const src = t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp((/^\d/.test(t) ? '(?:^|[^\\d.])' : '') + src + (/\d$/.test(t) ? '(?![\\d])(?!\\.\\d)' : ''));
+}
+// Typing searches every category; clearing the box goes back to the one that was open, or
+// to one tapped meanwhile. cat/sub: the names of the page's own fields. True if they changed.
+function searchScope(app, q, cat, sub) {
+  if (q && !app._scopeWas) {
+    app._scopeWas = [app[cat], app[sub]];
+    app[cat] = app[sub] = null;
+    return true;
+  }
+  if (!q && app._scopeWas) {
+    if (!app[cat]) [app[cat], app[sub]] = app._scopeWas;
+    app._scopeWas = null;
+    return true;
+  }
+  return false;
+}
+function searchNote(found, q) {
+  if (found.note) return `<div class="search-note">${esc(found.note)}</div>`;
+  if (!found.length && String(q || '').trim()) return `<div class="empty-state"><i class="ti ti-search-off"></i><p>Nothing found for “${esc(q.trim())}”.</p></div>`;
+  return '';
+}
 
-      return score === null ? null : { m, score };
-    }).filter(Boolean);
-
-    scored.sort((a,b) => a.score - b.score || naturalCompare(a.m.description, b.m.description));
-    return scored.map(s => s.m);
+// ── TAB STRIPS ───────────────────────────────────────────────────────────
+// Rows that scroll sideways: they keep their place through a redraw, bring the chosen tab
+// into view, and fade at an edge that has more behind it.
+const Strip = {
+  _pos: {},
+  watch(el, key) {
+    if (!el) return;
+    const fade = () => {
+      const max = el.scrollWidth - el.clientWidth;
+      el.classList.toggle('more-left',  max > 1 && el.scrollLeft > 1);
+      el.classList.toggle('more-right', max > 1 && el.scrollLeft < max - 1);
+    };
+    if (this._pos[key] !== undefined) el.scrollLeft = this._pos[key];
+    el.addEventListener('scroll', () => { this._pos[key] = el.scrollLeft; fade(); }, { passive: true });
+    const on = el.querySelector('.active');
+    if (on && el.clientWidth) {
+      const l = on.offsetLeft - el.offsetLeft, r = l + on.offsetWidth, pad = 44;
+      if (l - pad < el.scrollLeft)                       el.scrollLeft = l - pad;
+      else if (r + pad > el.scrollLeft + el.clientWidth) el.scrollLeft = r + pad - el.clientWidth;
+    }
+    fade();
+    if (typeof ResizeObserver === 'function') new ResizeObserver(fade).observe(el);
+  },
+  // A category row and, under a category, its types. A lone type is only a label.
+  draw(wrap, { cats, cat, subs, sub, catAttr = 'cat-idx', subAttr = 'sub-idx' }) {
+    if (!wrap) return;
+    const tab = (attr, i, label, on) => `<button class="tab ${on ? 'active' : ''}" data-${attr}="${i}">${esc(label)}</button>`;
+    const row = cats.map((c, i) => tab(catAttr, i, c, cat === c)).join('');
+    let subRow = '';
+    if (cat && subs.length === 1) subRow = `<span class="tab active tab-label">${esc(subs[0])}</span>`;
+    else if (cat && subs.length)  subRow = tab(subAttr, -1, 'All', !sub) + subs.map((s, i) => tab(subAttr, i, s, sub === s)).join('');
+    wrap.innerHTML = `<div class="tabs-bar"><div class="tabs-inner">${tab(catAttr, -1, 'All', !cat)}${row}</div></div>`
+      + (subRow ? `<div class="tabs-bar sub-bar"><div class="tabs-inner">${subRow}</div></div>` : '');
+    const [a, b] = wrap.querySelectorAll('.tabs-inner');
+    this.watch(a, wrap.id);
+    this.watch(b, `${wrap.id}:${cat}`);
   },
 };
 
@@ -584,6 +660,22 @@ const Order = {
     return Object.keys(this._items).map(id=>{
       const m=mats.find(x=>x.id==id); return m?{...m,qty:this._items[id]}:null;
     }).filter(Boolean);
+  },
+};
+
+// ── KEPT WORK ────────────────────────────────────────────────────────────
+// A half-built list, kept on this device through a reload by what each line is (stockId),
+// since ids can change with the catalogue. Test mode keeps its own.
+const Kept = {
+  _key(name) { return `mo_kept_${name}${FirebaseConfig.isTestMode() ? '_test' : ''}`; },
+  save(name, data) { try { localStorage.setItem(this._key(name), JSON.stringify({ at: Date.now(), ...data })); } catch {} },
+  drop(name)       { try { localStorage.removeItem(this._key(name)); } catch {} },
+  load(name, maxAge) {
+    try { const v = JSON.parse(localStorage.getItem(this._key(name)) || 'null'); return v && v.at > Date.now() - maxAge ? v : null; } catch { return null; }
+  },
+  lines(items) { return items.map(i => ({ sid: stockId(i), qty: i.qty, ...(i.mode ? { mode: i.mode } : {}) })); },
+  fill(lines, catalog, put) {
+    for (const l of lines || []) { const m = catalog.find(x => stockId(x) === l.sid); if (m && l.qty >= 0) put(m, l); }
   },
 };
 
@@ -1001,7 +1093,7 @@ const AutoUpdate = {
   },
 
   _busy() {
-    if (document.querySelector('.panel.open')) return true;        // any slide-in panel
+    if (document.querySelector('.panel.open:not(#success-panel)')) return true;   // any slide-in panel (an order already sent is done with)
     const ow = document.getElementById('overlay-wrap');
     if (ow && ow.innerHTML.trim()) return true;                    // any dialog/overlay
     if (document.getElementById('ask-wrap')) return true;          // a question waiting for its answer
@@ -1219,11 +1311,123 @@ const QtyField = {
   },
 };
 
+// ── COUNTING (stocktake, worker and manager pages) ───────────────────────
+// Set replaces what is recorded, Add and Take off move it. A count of zero is a count.
+// attr: 'st' or 'mst' — each page's own data- attributes.
+const Count = {
+  MODES: [['set', 'Set'], ['add', 'Add'], ['subtract', 'Take off']],
+  words(mode, qty, unit) { return `${mode === 'add' ? 'Add' : mode === 'subtract' ? 'Take off' : 'Set to'} ${qty} ${unit}`; },
+  colour(mode) { return mode === 'add' ? 'var(--green-text)' : mode === 'subtract' ? 'var(--red-text)' : 'var(--blue-text)'; },
+  // Taking nothing off, or adding nothing, is not a count.
+  ready(qty, mode) { return qty !== undefined && (qty > 0 || mode === 'set'); },
+  after(recorded, qty, mode) {
+    const was = recorded || 0;
+    return round2(mode === 'add' ? was + qty : mode === 'subtract' ? Math.max(0, was - qty) : qty);
+  },
+  // "3 Metre recorded → 8": what is recorded now and, once a count is entered, after it.
+  line(rec, unit, qty, mode) {
+    const has = rec && rec.qty != null;
+    const now = has ? `${rec.qty} ${esc(unit)} recorded` : 'not counted yet';
+    return this.ready(qty, mode) ? `${now} → <strong>${this.after(has ? rec.qty : 0, qty, mode)}</strong>` : now;
+  },
+  controls(attr, id, qty, mode) {
+    const on = this.ready(qty, mode);
+    return `<div class="st-controls">
+        <div class="st-mode-seg">${this.MODES.map(([v, label]) =>
+          `<button class="st-mode-opt ${v}${mode === v ? ' active' : ''}" data-${attr}-modeopt="${id}" data-mode="${v}" aria-pressed="${mode === v}">${label}</button>`).join('')}</div>
+        <div class="st-ctrl-row">
+          <button class="qty-btn" data-${attr}-dec="${id}">−</button>
+          <input class="qty-input" type="number" min="0" step="any" inputmode="decimal" autocomplete="off" value="${qty === undefined ? '' : qty}" placeholder="–" data-${attr}-qid="${id}">
+          <button class="qty-btn" data-${attr}-inc="${id}">+</button>
+          <button class="st-tick ${on ? 'ready' : ''}" data-${attr}-tick="${id}" ${on ? '' : 'disabled'} aria-label="Record this count"><i class="ti ti-check"></i></button>
+        </div>
+      </div>`;
+  },
+  // What is in the field: a number of 0 or more, or undefined (nothing entered yet).
+  read(el) {
+    const raw = String(el.value).trim().replace(',', '.'), n = Number(raw);
+    return raw === '' || !isFinite(n) || n < 0 ? undefined : round2(n);
+  },
+  // Typing updates the card where it is: no redraw, so the caret and the next tap stay put.
+  typed(el, rec, unit, qty, mode) {
+    const card = el.closest('.mat-card'); if (!card) return;
+    const on = this.ready(qty, mode), tick = card.querySelector('.st-tick'), line = card.querySelector('.st-recorded');
+    card.classList.toggle('in-order', on);
+    if (tick) { tick.classList.toggle('ready', on); tick.disabled = !on; }
+    if (line) line.innerHTML = this.line(rec, unit, qty, mode);
+  },
+};
+
+// ── LIVE / OFFLINE ───────────────────────────────────────────────────────
+// The header's dot and label, the update strip, and Reload beside "Offline". One place, so
+// the four pages never disagree. connected: null until it is known.
+const Live = {
+  render({ connected, latestVersion }) {
+    const dot = document.getElementById('live-dot'), lbl = document.getElementById('live-label');
+    const wrap = document.getElementById('update-banner-wrap');
+    // hostReachable(): keep the update strip when Firestore's channel is wedged (the dot
+    // says Offline) but the site itself answers — refresh is the cure.
+    const outdated = (connected || AutoUpdate.hostReachable()) && latestVersion && isVersionNewer(latestVersion, APP_VERSION);
+    if (dot && lbl) {
+      dot.classList.remove('disconnected', 'update-available', 'connecting');
+      if (connected === null)  { dot.classList.add('connecting');       lbl.textContent = 'Connecting…'; }
+      else if (!connected)     { dot.classList.add('disconnected');     lbl.textContent = 'Offline'; }
+      else if (outdated)       { dot.classList.add('update-available'); lbl.textContent = 'Update Available'; }
+      else                     { lbl.textContent = 'Live'; }
+      let re = document.getElementById('live-reload');
+      if (connected === false && !re) {
+        re = document.createElement('button');
+        re.id = 'live-reload'; re.className = 'live-reload'; re.textContent = 'Reload';
+        re.addEventListener('click', () => this.reload(re));
+        lbl.after(re);
+      } else if (connected !== false && re) re.remove();
+    }
+    if (wrap) {
+      wrap.innerHTML = outdated ? `<div class="update-banner">
+          <i class="ti ti-refresh"></i>
+          <span>A newer version (${esc(verLabel(latestVersion))}) is available — you're on ${esc(verLabel(APP_VERSION))}.</span>
+          <button id="btn-refresh-update">Refresh</button>
+        </div>` : '';
+      document.getElementById('btn-refresh-update')?.addEventListener('click', () => AutoUpdate.reloadFresh(latestVersion));
+    }
+  },
+  // Only if the site answers: reloading without a network would leave a kiosk with nothing.
+  async reload(btn) {
+    if (btn.disabled) return;
+    btn.disabled = true; btn.textContent = 'Checking…';
+    let ok = false;
+    try {
+      const stop = new AbortController(), t = setTimeout(() => stop.abort(), 8000);
+      ok = (await fetch('js/shared.js?nocache=' + Date.now(), { cache: 'no-store', signal: stop.signal })).ok;
+      clearTimeout(t);
+    } catch { /* no answer */ }
+    if (ok) { AutoUpdate.reloadFresh(Date.now()); return; }
+    btn.disabled = false; btn.textContent = 'Reload';
+    Ask.tell('No connection', 'Check the Wi-Fi, then tap Reload.');
+  },
+};
+
+// A brief message at the foot of the screen, for things that are fine to miss.
+// action: { label, run } — one thing that can still be done about it, offered for longer.
+let _toastTimer = null;
+function toast(msg, isWarning, action) {
+  let el = document.getElementById('scan-toast');
+  if (!el) { el = document.createElement('div'); el.id = 'scan-toast'; el.setAttribute('role', 'status'); document.body.appendChild(el); }
+  el.className = `scan-toast${isWarning ? ' warn' : ''}${action ? ' has-action' : ''} show`;
+  el.innerHTML = `<i class="ti ${isWarning ? 'ti-alert-triangle' : 'ti-circle-check'}"></i> ${esc(msg)}${action ? `<button class="toast-action">${esc(action.label)}</button>` : ''}`;
+  const hide = () => el.classList.remove('show', 'has-action');
+  if (action) el.querySelector('.toast-action').addEventListener('click', () => { hide(); action.run(); });
+  clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(hide, action ? 10000 : 2600);
+}
+
 // ── QUESTIONS AND FAILURES ───────────────────────────────────────────────
 // A question with two answers that each say what they do. Resolves true or false;
 // Esc and the backdrop are the safe answer.
 const Ask = {
   _open: null,
+  // Something that has to be read before carrying on.
+  tell(title, body) { return this.confirm({ title, body, yes: 'Close' }); },
   confirm({ title, body, rows, yes, no, danger }) {
     return new Promise(resolve => {
       if (this._open) this._open(false);   // one at a time: an earlier one gets the safe answer

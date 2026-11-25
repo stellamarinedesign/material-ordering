@@ -186,6 +186,13 @@ button { cursor: pointer; }
   max-width: 900px; margin: 0 auto; padding: 0 4px;
 }
 .tabs-inner::-webkit-scrollbar { display: none; }
+.more-right { -webkit-mask-image: linear-gradient(to left, transparent, #000 44px); mask-image: linear-gradient(to left, transparent, #000 44px); }
+.more-left  { -webkit-mask-image: linear-gradient(to right, transparent, #000 44px); mask-image: linear-gradient(to right, transparent, #000 44px); }
+.more-left.more-right {
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 44px, #000 calc(100% - 44px), transparent);
+  mask-image: linear-gradient(to right, transparent, #000 44px, #000 calc(100% - 44px), transparent);
+}
+.tab-label { display: inline-flex; align-items: center; cursor: default; }
 .manager-root .tabs-inner { max-width: 1200px; }
 .tab {
   padding: 10px 14px; font-size: 13px; font-weight: 500; color: var(--text3);
@@ -303,7 +310,7 @@ button { cursor: pointer; }
 .order-item-code { font-size: 11px; color: var(--text3); margin-top: 2px; font-family: var(--mono); }
 .order-item-unit { font-size: 11px; color: var(--text3); margin-top: 1px; }
 .order-item-qty  { font-size: 14px; font-weight: 600; color: var(--text); font-family: var(--mono); white-space: nowrap; }
-.order-item-foot { display: flex; align-items: center; margin-top: 10px; gap: 8px; }
+.order-item-foot { display: flex; align-items: center; margin-top: 10px; }
 .remove-btn { margin-left: auto; background: none; border: none; font-size: 12px; color: var(--red-text); display: flex; align-items: center; gap: 3px; }
 .order-summary-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 12px; }
 .order-summary-row { display: flex; justify-content: space-between; font-size: 13px; color: var(--text2); padding: 2px 0; }
@@ -323,7 +330,15 @@ button { cursor: pointer; }
   display: flex; align-items: center; justify-content: center; gap: 8px;
   border: 1px solid transparent;
 }
-.btn[hidden], .btn-sm[hidden] { display: none; }
+.btn[hidden], .btn-sm[hidden], .btn-text[hidden] { display: none; }
+/* Text only: what is seldom wanted, kept apart from what is */
+.btn-text {
+  flex: 0 0 auto; min-height: 36px; padding: 0 14px; border: none; border-radius: var(--radius-lg);
+  background: none; color: var(--text2); font-size: 14px; font-weight: 500; white-space: nowrap;
+}
+.btn-text:active { background: var(--bg2); }
+.action-bar-inner.split { flex-direction: row; align-items: center; gap: 20px; }
+.action-bar-inner.split .btn { flex: 1; width: auto; min-width: 0; }
 .btn-primary { background: var(--accent); color: var(--accent-text); }
 .btn-primary:active { opacity: 0.85; }
 .btn-outline { background: var(--surface); border-color: var(--border); color: var(--text); }
@@ -505,6 +520,14 @@ button { cursor: pointer; }
 .chevron.open { transform: rotate(90deg); }
 .live-dot { width: 7px; height: 7px; background: var(--green); border-radius: 50%; display: inline-block; margin-right: 5px; animation: pulse 2s infinite; }
 .live-dot.disconnected { background: var(--red); animation: none; }
+.live-dot.connecting { background: var(--text3); animation: none; }
+.live-reload {
+  position: relative; display: inline-flex; align-items: center; height: 22px; margin-left: 8px; padding: 0 10px;
+  border: 1px solid var(--header-muted); border-radius: 11px; background: none; color: var(--header-text);
+  font-family: var(--font); font-size: 12px; font-weight: 600; letter-spacing: 0; white-space: nowrap;
+}
+.live-reload::after { content: ''; position: absolute; inset: -14px -8px; }
+.search-note { font-size: 13px; color: var(--text2); padding: 4px 2px 6px; text-wrap: pretty; }
 .live-dot.update-available { background: var(--amber-text); animation: pulse 2s infinite; }
 .update-banner {
   background: var(--amber-bg); border-bottom: 1px solid var(--amber-text);
@@ -692,7 +715,7 @@ button { cursor: pointer; }
 /* Order card */
 .intake-card {
   background: var(--surface); border: 1px solid var(--border);
-  border-radius: var(--radius-lg); margin-bottom: 10px; overflow: hidden;
+  border-radius: var(--radius-lg); margin-bottom: 10px; overflow: hidden; overflow: clip;   /* clip: the foot can stick */
 }
 .intake-card.open { border-color: var(--border2); }
 
@@ -715,14 +738,20 @@ button { cursor: pointer; }
 }
 .intake-status-badge .ti { font-size: 12px; }
 
-/* Confirm button (shown on an open card once it has staged-but-unconfirmed edits) */
+/* The foot of an open card: progress, and Confirm or Save */
+.intake-foot {
+  position: sticky; bottom: 0; z-index: 1; border-top: 1px solid var(--border2); background: var(--surface);
+  padding: 10px 14px; display: flex; flex-direction: column; gap: 10px;
+}
+.intake-foot-row { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px 14px; }
+.intake-foot-text { flex: 1 1 120px; font-size: 13px; color: var(--text2); font-variant-numeric: tabular-nums; }
 .intake-confirm-btn {
-  display: inline-flex; align-items: center; gap: 4px;
-  font-size: 11px; font-weight: 600; padding: 5px 10px;
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px; white-space: nowrap;
+  min-height: 40px; font-size: 14px; font-weight: 600; padding: 0 18px;
   border-radius: var(--radius); border: 1px solid var(--green);
   background: var(--green-bg); color: var(--green-text); cursor: pointer;
 }
-.intake-confirm-btn:disabled { opacity: .4; cursor: not-allowed; border-color: var(--border); background: var(--bg2); color: var(--text3); }
+.intake-confirm-btn:disabled { opacity: .7; cursor: default; border-color: var(--border); background: var(--bg2); color: var(--text2); }
 
 /* Consumables delivery stock tag / "Add to stock" button (in the card header) */
 .intake-stock-tag {
@@ -739,29 +768,29 @@ button { cursor: pointer; }
 
 /* Save button (open card with partial progress, before all items are actioned) */
 .intake-save-btn {
-  display: inline-flex; align-items: center; gap: 4px;
-  font-size: 11px; font-weight: 600; padding: 5px 10px;
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px; white-space: nowrap;
+  min-height: 40px; font-size: 14px; font-weight: 600; padding: 0 18px;
   border-radius: var(--radius); border: 1px solid var(--border2);
   background: var(--bg2); color: var(--text2); cursor: pointer;
 }
 
-/* ═══ STOCKTAKE COUNTING CONTROLS (manager Count sub-tab; worker page has its
-   own inline copy) — stepper + green progressive tick, and =/+/− mode segment ═══ */
+/* ═══ STOCKTAKE COUNTING CONTROLS (Count in js/shared.js: worker page and manager
+   Count sub-tab) — Set / Add / Take off, the stepper, and the green progressive tick ═══ */
 .st-recorded { font-family: var(--mono); }
-.st-controls { display: flex; flex-direction: column; align-items: flex-end; gap: 5px; }
-.st-ctrl-row { display: flex; align-items: center; gap: 4px; }
+.st-controls { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px 12px; flex-shrink: 0; }
+.st-ctrl-row { display: flex; align-items: center; }
 .st-tick {
-  width: 36px; height: 32px; margin-left: 4px; border-radius: var(--radius);
+  width: 44px; height: 36px; margin-left: 10px; border-radius: var(--radius);
   border: 1px solid var(--border); background: var(--bg2); color: var(--text3);
-  display: flex; align-items: center; justify-content: center; font-size: 16px;
+  display: flex; align-items: center; justify-content: center; font-size: 18px;
 }
 .st-tick.ready { background: var(--green); border-color: var(--green); color: #fff; }
 .st-tick:disabled { opacity: 0.45; }
-.st-mode-seg { display: flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.st-mode-seg { display: flex; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
 .st-mode-opt {
-  width: 36px; height: 24px; background: var(--surface); border: none;
-  border-right: 1px solid var(--border); font-size: 13px; color: var(--text3);
-  font-family: var(--mono); display: flex; align-items: center; justify-content: center; cursor: pointer;
+  min-width: 48px; height: 36px; padding: 0 10px; background: var(--surface); border: none;
+  border-right: 1px solid var(--border); font-size: 13px; color: var(--text2); white-space: nowrap;
+  display: flex; align-items: center; justify-content: center; cursor: pointer;
 }
 .st-mode-opt:last-child { border-right: none; }
 .st-mode-opt.active.set      { background: var(--blue-bg);  color: var(--blue-text);  font-weight: 700; }
@@ -1183,8 +1212,110 @@ button.bc-chip { font-family: var(--mono); line-height: inherit; }
 .intake-saving { background: var(--bg2); color: var(--text2); }
 .intake-saving .ti { animation: spin 1s linear infinite; }
 .intake-discard-btn {
-  font-size: 11px; font-weight: 600; padding: 5px 10px; border-radius: var(--radius);
+  min-height: 40px; font-size: 14px; font-weight: 500; padding: 0 12px; border-radius: var(--radius);
   border: 1px solid transparent; background: none; color: var(--text2); cursor: pointer;
+}
+
+/* ═══ FLOOR PAGES (worker, consumables, warehouse: <body class="floor">) ═══
+   Tapped standing up, on a kiosk iPad: 48px targets, and fields at 16px or more so
+   iOS never zooms. The look may stay smaller; the target doesn't. */
+.floor .btn { min-height: 48px; font-size: 15px; }
+.floor .btn-text { min-height: 48px; font-size: 15px; }
+.floor .btn-sm { min-height: 48px; padding: 0 18px; font-size: 14px; }
+.floor .icon-btn { width: 48px; height: 48px; font-size: 22px; }
+.floor .back-btn { min-height: 48px; padding: 0 16px 0 0; font-size: 16px; }
+.floor .panel-header { padding: 4px 16px; min-height: 56px; }
+.floor .panel-title { font-size: 16px; }
+.floor .header-inner { padding: 8px 0; gap: 8px; }
+.floor .header-left { flex: 1; min-width: 0; }
+.floor .device-chip:empty, .floor .role-pill:empty, .floor .header-actions > span:empty { display: none; }
+.floor .tab { min-height: 48px; padding: 0 18px; font-size: 14px; }
+.floor .main-tab { min-height: 48px; padding: 0 20px; font-size: 14px; }
+.floor .search-wrap input { height: 48px; font-size: 16px; padding-left: 40px; }
+.floor .search-wrap i { left: 13px; font-size: 18px; }
+.floor .mat-name { font-size: 14px; }
+.floor .mat-partcode, .floor .mat-unit { font-size: 12px; }
+.floor .qty-btn { width: 48px; height: 48px; font-size: 20px; flex-shrink: 0; }
+.floor .qty-input { width: 60px; height: 48px; font-size: 17px; border-radius: 0; }
+.floor .add-btn { width: 48px; height: 48px; margin-left: 10px; font-size: 20px; }
+/* The bin takes the icon's place on a line that is in the order: no gap kept for it,
+   nothing moves, and it is at the other end of the row from "+" */
+.floor .mat-card { padding: 9px 12px; position: relative; }
+.floor .mat-bin { position: absolute; left: 7px; top: 50%; width: 48px; height: 48px; margin-top: -24px; font-size: 20px; }
+.floor .mat-icon { transition: opacity 0.12s; }
+.floor .mat-card.in-order .mat-bin + .mat-icon { opacity: 0; }
+.floor .remove-btn { min-width: 48px; min-height: 48px; justify-content: center; padding: 0 8px; font-size: 14px; }
+.floor .order-item-name { font-size: 15px; }
+.floor .order-item-code, .floor .order-item-unit { font-size: 12px; }
+.floor .order-note-input { font-size: 16px; }
+.floor .st-tick { width: 52px; height: 48px; font-size: 22px; }
+.floor .st-mode-opt { min-width: 58px; height: 48px; padding: 0 14px; font-size: 14px; }
+.floor .update-banner { font-size: 14px; }
+.floor .update-banner button { min-height: 48px; padding: 0 18px; font-size: 14px; margin-left: auto; }
+.floor .outbox-pill, .floor .auth-pill { position: relative; height: 36px; }
+.floor .outbox-pill::after, .floor .auth-pill::after { content: ''; position: absolute; inset: -6px 0; }
+.floor .outbox-retry { min-height: 48px; }
+.floor .checkout-name-input {
+  width: 100%; min-height: 48px; border: 1px solid var(--border); background: var(--bg);
+  border-radius: var(--radius); padding: 8px 14px; font-size: 16px; color: var(--text); outline: none;
+}
+.floor .checkout-name-input:focus { border-color: var(--focus); }
+.floor .scan-link-row { min-height: 48px; font-size: 15px; }
+.floor .settings-row { min-height: 60px; }
+label.settings-row { cursor: pointer; }
+.floor .settings-row input[type=text], .floor .settings-row input[type=email], .floor .settings-row select { min-height: 48px; font-size: 16px; }
+.floor .settings-row input[type=checkbox] { width: 26px !important; height: 26px !important; flex-shrink: 0; }
+.floor .setup-field input { min-height: 48px; font-size: 16px !important; }
+.floor .ask-row { font-size: 15px; padding: 10px 12px; }
+.floor .success-card h3 { font-size: 19px; }
+.floor .success-card p { font-size: 15px; }
+.floor .inline-error { font-size: 15px; }
+/* deliveries */
+.floor .intake-filter-chip { min-height: 48px; padding: 0 18px; font-size: 14px; border-radius: 24px; }
+.floor .intake-card-hdr { min-height: 60px; }
+.floor .intake-item-name { font-size: 14px; }
+.floor .intake-item-code, .floor .intake-item-ordered, .floor .intake-item-order-label { font-size: 12px; }
+.floor .intake-btn { min-width: 60px; min-height: 48px; padding: 5px 8px; gap: 3px; }
+.floor .intake-btn .ti { font-size: 18px; }
+.floor .intake-btn span { font-size: 12px; }
+.floor .intake-btn.intake-notes-btn { min-width: 48px; }
+.floor .intake-partial-row, .floor .intake-followup-row { padding: 8px 14px; font-size: 14px; }
+.floor .intake-partial-row label, .floor .intake-of-label { font-size: 14px; }
+.floor .intake-partial-input { width: 92px; height: 48px; font-size: 17px; }
+.floor .intake-notes-input { font-size: 16px; }
+.floor .intake-confirm-btn, .floor .intake-save-btn { min-height: 48px; min-width: 190px; font-size: 15px; }
+.floor .intake-discard-btn { min-height: 48px; font-size: 15px; }
+.floor .intake-foot-text { font-size: 15px; }
+.floor .intake-arrived-btn, .floor .intake-fu-btn { min-height: 48px; padding: 0 16px; font-size: 14px; }
+.floor .intake-stock-btn { min-height: 48px; padding: 0 16px; font-size: 14px; border-radius: var(--radius); }
+
+/* Phones: the text gets the full width, the controls their own row below it */
+@media (max-width: 600px) {
+  .floor .header-inner { flex-wrap: wrap; }
+  .floor .header-logo { width: min(var(--logo-w), 36px); margin-right: 0; }
+  .floor .header-title { font-size: 14px; letter-spacing: 0.04em; }
+  .floor .hdr-extra, .floor .header .device-chip, .floor .header .role-pill { display: none !important; }
+  .floor .header-actions { display: contents; }
+  .floor .stocktake-btn { width: 48px; padding: 0; }
+  .floor .stocktake-btn #stocktake-btn-label { display: none; }
+  .floor #outbox-slot:not(:empty) { order: 9; flex: 1 0 100%; }
+  .floor .mat-card { flex-wrap: wrap; }
+  .floor .mat-info { flex: 1 1 calc(100% - 60px); order: 1; }
+  .floor .mat-bin { top: 4px; margin-top: 0; }
+  .floor .mat-controls { order: 3; margin-left: auto; }
+  .floor .st-controls { order: 3; width: 100%; justify-content: space-between; }
+  .floor .st-mode-seg { flex: 1 1 100%; }
+  .floor .st-mode-opt { flex: 1; }
+  .floor .intake-item-main { flex-wrap: wrap; }
+  .floor .intake-item-info { flex: 1 1 100%; }
+  .floor .intake-item-btns { flex: 1 1 100%; }
+  .floor .intake-item-btns .intake-btn { flex: 1 1 0; min-width: 48px; padding: 5px 2px; }
+  .floor .intake-confirm-btn, .floor .intake-save-btn { flex: 1 1 auto; min-width: 0; }
+  .floor .action-bar-inner.split { gap: 8px; }
+}
+/* Between a phone and a landscape iPad: counting controls sit under each other */
+@media (min-width: 601px) and (max-width: 1000px) {
+  .floor .st-controls { flex-direction: column; align-items: flex-end; }
 }
 
 /* ═══ OUTBOX — orders waiting to send (Outbox in js/shared.js) ═══ */

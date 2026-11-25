@@ -14,28 +14,17 @@
   <link rel="icon" type="image/png" href="favicon.png">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
   <link rel="stylesheet" href="fonts/tabler-icons.min.css">
-  <link rel="stylesheet" href="css/style.css?v=2026-11-26.1">
-  <link rel="stylesheet" href="css/themes.css?v=2026-11-26.1">
+  <link rel="stylesheet" href="css/style.css?v=2026-11-26.2">
+  <link rel="stylesheet" href="css/themes.css?v=2026-11-26.2">
   <style>
-    .mat-bin {
-      width:30px; height:32px; display:flex; align-items:center; justify-content:center;
-      background:none; border:none; color:var(--red-text); font-size:15px;
-      opacity:0; pointer-events:none; transition:opacity 0.15s; flex-shrink:0;
-    }
-    .mat-card.in-order .mat-bin { opacity:1; pointer-events:auto; }
-    .device-chip {
-      font-size:11px; font-family:var(--mono); color:rgba(255,255,255,0.7);
-      background:rgba(255,255,255,0.1); border-radius:20px;
-      padding:2px 10px; letter-spacing:0.04em;
-    }
     /* Prominent header button — stocktakes are worker-run, no manager needed */
     .stocktake-btn {
-      display:flex; align-items:center; gap:7px; height:38px; padding:0 16px;
+      display:flex; align-items:center; justify-content:center; gap:7px; height:48px; padding:0 16px;
       border-radius:var(--radius); border:1px solid rgba(255,255,255,0.3);
-      background:rgba(255,255,255,0.12); color:#fff; font-size:13px; font-weight:600;
-      cursor:pointer;
+      background:rgba(255,255,255,0.12); color:#fff; font-size:14px; font-weight:600;
+      cursor:pointer; white-space:nowrap;
     }
-    .stocktake-btn .ti { font-size:16px; }
+    .stocktake-btn .ti { font-size:18px; }
     .st-recorded { font-family:var(--mono); }
     /* Stocktake MODE — the whole page switches (persisted until exited), so the
        environment carries the signal: amber header, banner, tinted background,
@@ -50,32 +39,7 @@
       background:var(--stocktake-banner-bg); color:var(--stocktake-banner-text); border-bottom:1px solid var(--stocktake-banner-line);
     }
     .st-mode-banner .ti { font-size:15px; }
-    /* Per-row controls: stepper+tick on top, =/+/− mode segment underneath */
-    .st-controls { display:flex; flex-direction:column; align-items:flex-end; gap:5px; }
-    .st-ctrl-row { display:flex; align-items:center; gap:4px; }
-    .st-tick {
-      width:36px; height:32px; margin-left:4px; border-radius:var(--radius);
-      border:1px solid var(--border); background:var(--bg2); color:var(--text3);
-      display:flex; align-items:center; justify-content:center; font-size:16px;
-    }
-    .st-tick.ready { background:var(--green); border-color:var(--green); color:#fff; }
-    .st-tick:disabled { opacity:0.45; }
-    .st-mode-seg { display:flex; border:1px solid var(--border); border-radius:6px; overflow:hidden; }
-    .st-mode-opt {
-      width:36px; height:24px; background:var(--surface); border:none;
-      border-right:1px solid var(--border); font-size:13px; color:var(--text3);
-      font-family:var(--mono); display:flex; align-items:center; justify-content:center;
-    }
-    .st-mode-opt:last-child { border-right:none; }
-    .st-mode-opt.active.set      { background:var(--blue-bg);  color:var(--blue-text);  font-weight:700; }
-    .st-mode-opt.active.add      { background:var(--green-bg); color:var(--green-text); font-weight:700; }
-    .st-mode-opt.active.subtract { background:var(--red-bg);   color:var(--red-text);   font-weight:700; }
     /* Review overlay bits (same look as the consumables sign-out overlay) */
-    .checkout-name-input {
-      width:100%; border:1px solid var(--border); background:var(--bg);
-      border-radius:var(--radius); padding:8px 12px; font-size:14px; color:var(--text); outline:none;
-    }
-    .checkout-name-input:focus { border-color:var(--focus); }
     .signout-card { max-width:380px; }
     .signout-item-list { display:flex; flex-direction:column; gap:6px; max-height:240px; overflow-y:auto; text-align:left; }
     .signout-item-row {
@@ -87,16 +51,16 @@
     .signout-item-unit { font-size:11px; color:var(--text3); margin-top:1px; }
   </style>
 </head>
-<body>
+<body class="floor">
 <div id="root"></div>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
 <!-- APP CHECK: remove this line to disable App Check (also remove init block in firebase-sync.js) -->
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-check-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
-<script src="js/shared.js?v=2026-11-26.1"></script>
-<script src="js/firebase-sync.js?v=2026-11-26.1"></script>
-<script src="js/auth.js?v=2026-11-26.1"></script>
+<script src="js/shared.js?v=2026-11-26.2"></script>
+<script src="js/firebase-sync.js?v=2026-11-26.2"></script>
+<script src="js/auth.js?v=2026-11-26.2"></script>
 <script>
 const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker global
   activeCat:  null,
@@ -128,6 +92,7 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
     const ok = await DB.init(FirebaseConfig.get());
     if (!ok) { this.showSetup('Could not connect to the database.'); return; }
     this.materials = await Data.load('./materials.csv');
+    this._loadKept();
     // Test mode has its own list, so a waiting order only ever goes to the database it was made for.
     Outbox.start(`mo_outbox${FirebaseConfig.isTestMode() ? '_test' : ''}`, () => this._renderOutbox());
     Auth.deviceName = DeviceName;
@@ -139,6 +104,25 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
     this.startVersionCheck();
     this.startMatStockListening();
     this.startCatalogueWatch();
+  },
+
+  // ── KEPT WORK: the order being built, its note, and counts not yet recorded ──
+  _keep() {
+    if (!this._keptLoaded) return;
+    const lines = Kept.lines(Order.items(this.materials));
+    const counts = Kept.lines(this.stItems().map(i => ({ ...i, mode: i.stMode })));
+    if (!lines.length && !counts.length && !this._orderNote) { Kept.drop('worker'); return; }
+    Kept.save('worker', { lines, counts, note: this._orderNote, ref: this.orderRef });
+  },
+  _loadKept() {
+    const v = Kept.load('worker', 12 * 3600000);
+    if (v) {
+      Kept.fill(v.lines, this.materials, (m, l) => Order.set(m.id, l.qty));
+      Kept.fill(v.counts, this.materials, (m, l) => { this._st._items[m.id] = l.qty; if (l.mode && l.mode !== 'set') this._stModes[m.id] = l.mode; });
+      this._orderNote = v.note || '';
+      if (v.lines && v.lines.length && v.ref) this.orderRef = v.ref;
+    }
+    this._keptLoaded = true;
   },
 
   // Firebase itself could not be reached (no network at first load, the SDK
@@ -162,13 +146,13 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
             <span class="header-logo"></span>
             <div class="header-left">
               <div class="header-title">Material Orders</div>
-              <div class="header-ref" style="display:flex;gap:6px;align-items:center"><span class="live-dot" id="live-dot"></span><span id="live-label">Live</span><span style="opacity:0.45">·</span><span id="order-ref"></span><span style="opacity:0.45">·</span><span id="app-version" style="opacity:0.6;font-family:var(--mono)"></span></div>
+              <div class="header-ref" style="display:flex;gap:6px;align-items:center"><span class="live-dot connecting" id="live-dot"></span><span id="live-label">Connecting…</span><span class="hdr-extra" style="opacity:0.45">·</span><span class="hdr-extra" id="order-ref"></span><span class="hdr-extra" style="opacity:0.45">·</span><span class="hdr-extra" id="app-version" style="opacity:0.6;font-family:var(--mono)"></span></div>
             </div>
             <div class="header-actions">
               <span class="device-chip">${esc(device)}</span>
-              <button class="stocktake-btn" id="btn-stocktake" title="Materials stocktake"><i class="ti ti-clipboard-list"></i> <span id="stocktake-btn-label">Stocktake</span></button>
+              <button class="stocktake-btn" id="btn-stocktake" aria-label="Stocktake"><i class="ti ti-clipboard-list"></i> <span id="stocktake-btn-label">Stocktake</span></button>
               <span id="outbox-slot"></span><span id="auth-pill"></span>
-              <button class="icon-btn" id="btn-settings" title="Settings"><i class="ti ti-settings"></i></button>
+              <button class="icon-btn" id="btn-settings" aria-label="Settings"><i class="ti ti-settings"></i></button>
             </div>
           </div></div>
         </div>
@@ -193,22 +177,18 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
           </div>
         </div>
 
-        <div class="action-bar" id="order-actionbar"><div class="action-bar-inner">
-          <button class="btn btn-danger" id="btn-clear-main">
-            <i class="ti ti-x"></i> Clear order
-          </button>
-          <button class="btn btn-primary" id="btn-review" style="margin-top:2px">
+        <div class="action-bar" id="order-actionbar"><div class="action-bar-inner split">
+          <button class="btn-text" id="btn-clear-main" hidden>Clear order</button>
+          <button class="btn btn-primary" id="btn-review">
             <i class="ti ti-clipboard-list"></i>Review order
             <span class="sidebar-count zero" id="order-badge" style="margin-left:4px">0</span>
           </button>
         </div></div>
 
-        <div class="action-bar" id="st-actionbar" style="display:none"><div class="action-bar-inner">
-          <button class="btn btn-danger" id="btn-st-clear">
-            <i class="ti ti-x"></i> Clear entered counts
-          </button>
-          <button class="btn btn-primary" id="btn-st-review" style="margin-top:2px">
-            <i class="ti ti-clipboard-check"></i>Review &amp; submit
+        <div class="action-bar" id="st-actionbar" style="display:none"><div class="action-bar-inner split">
+          <button class="btn-text" id="btn-st-clear" hidden>Clear counts</button>
+          <button class="btn btn-primary" id="btn-st-review">
+            <i class="ti ti-clipboard-check"></i>Review counts
             <span class="sidebar-count zero" id="st-badge" style="margin-left:4px">0</span>
           </button>
         </div></div>
@@ -225,10 +205,7 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
             <div class="panel-col" id="review-contents"></div>
           </div>
           <div class="action-bar"><div class="action-bar-inner">
-            <button class="btn btn-danger" id="btn-clear">
-              <i class="ti ti-x"></i> Clear order
-            </button>
-            <button class="btn btn-orange" id="btn-submit" style="margin-top:2px">
+            <button class="btn btn-orange" id="btn-submit">
               <i class="ti ti-send"></i> Submit
             </button>
           </div></div>
@@ -269,12 +246,14 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
     document.getElementById('btn-clear-main')  .addEventListener('click', () => this.clearOrder());
     document.getElementById('btn-close-review').addEventListener('click', () => this.closePanel('review-panel'));
     document.getElementById('btn-submit')      .addEventListener('click', () => this.confirmSubmit());
-    document.getElementById('btn-clear')       .addEventListener('click', () => this.clearOrder());
     document.getElementById('btn-settings')      .addEventListener('click', () => { this._populateSettings(); this.openPanel('settings-panel'); });
     document.getElementById('btn-close-settings').addEventListener('click', () => this.closePanel('settings-panel'));
     document.getElementById('btn-save-settings') .addEventListener('click', () => this.saveSettings());
     document.getElementById('btn-new-order')   .addEventListener('click', () => this.newOrder());
-    document.getElementById('search')          .addEventListener('input', () => this.renderList());
+    document.getElementById('search')          .addEventListener('input', e => {
+      if (searchScope(this, e.target.value.trim(), 'activeCat', 'activeSub')) this.renderTabs();
+      this.renderList();
+    });
 
     document.getElementById('mat-list').addEventListener('click', e => {
       // Order-mode controls
@@ -296,9 +275,9 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
       if (seg)  { e.stopPropagation(); this.stSetMode(+seg.dataset.stModeopt, seg.dataset.mode); }
       if (tick) { e.stopPropagation(); this.stTickItem(+tick.dataset.stTick); }
     });
-    document.getElementById('mat-list').addEventListener('change', e => {
+    document.getElementById('mat-list').addEventListener('input', e => {
       const sinp = e.target.closest('[data-st-qid]');
-      if (sinp) this.stSetQty(+sinp.dataset.stQid, sinp.value);
+      if (sinp) this.stType(sinp);
     });
     // Typed order quantities (QtyField): the list takes 0 as "not on the order"; the
     // review has its own Remove.
@@ -327,7 +306,7 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
     });
     // The review re-renders on every qty change, so the note is kept in state.
     document.getElementById('review-contents').addEventListener('input', e => {
-      if (e.target.id === 'order-note') this._orderNote = e.target.value;
+      if (e.target.id === 'order-note') { this._orderNote = e.target.value; this._keep(); }
     });
 
     document.getElementById('tabs-wrap').addEventListener('click', e => {
@@ -340,8 +319,8 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
     // ── Stocktake mode (per-row controls handled in the mat-list listener above) ──
     document.getElementById('btn-stocktake').addEventListener('click', () => this.toggleStocktakeMode());
     document.getElementById('btn-st-review').addEventListener('click', () => this.stOpenReview());
-    document.getElementById('btn-st-clear').addEventListener('click', () => {
-      if (!confirm('Clear all entered counts?')) return;
+    document.getElementById('btn-st-clear').addEventListener('click', async () => {
+      if (!await Ask.confirm({ title: 'Clear every count entered here?', body: 'Counts already recorded stay recorded.', yes: 'Clear counts', no: 'Keep counts', danger: true })) return;
       this._st._items = {}; this._stModes = {};
       this._updateStBadge(); this.renderList();
     });
@@ -361,30 +340,7 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
   // explicit false, or submitting right after page load gets wrongly refused.
   _connState: { connected: null, latestVersion: null },
 
-  _renderLiveStatus() {
-    const dot = document.getElementById('live-dot');
-    const lbl = document.getElementById('live-label');
-    const wrap = document.getElementById('update-banner-wrap');
-    const { connected, latestVersion } = this._connState;
-    // hostReachable(): keep the update pill visible when Firestore's channel is
-    // wedged (dot says Offline) but the site itself answers — refresh is the cure.
-    const outdated = (connected || AutoUpdate.hostReachable()) && latestVersion && isVersionNewer(latestVersion, APP_VERSION);
-
-    if (dot && lbl) {
-      dot.classList.remove('disconnected', 'update-available');
-      if (!connected)      { dot.classList.add('disconnected'); lbl.textContent = 'Offline'; }
-      else if (outdated)   { dot.classList.add('update-available'); lbl.textContent = 'Update Available'; }
-      else                 { lbl.textContent = 'Live'; }
-    }
-    if (wrap) {
-      wrap.innerHTML = outdated ? `<div class="update-banner">
-          <i class="ti ti-refresh"></i>
-          <span>A newer version (${esc(verLabel(latestVersion))}) is available — you're on ${esc(verLabel(APP_VERSION))}.</span>
-          <button id="btn-refresh-update">Refresh</button>
-        </div>` : '';
-      document.getElementById('btn-refresh-update')?.addEventListener('click', () => AutoUpdate.reloadFresh(latestVersion));
-    }
-  },
+  _renderLiveStatus() { Live.render(this._connState); },
 
   _renderOutbox() {
     const el = document.getElementById('outbox-slot');
@@ -410,32 +366,20 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
       this._renderLiveStatus();
       AutoUpdate.notifyVersion(latest);
     });
-    // Idle auto-reload for the home-screen iPads — never while an order or
-    // stocktake count is in progress.
+    // Idle auto-reload for the home-screen iPads — never while an order or a stocktake
+    // count is in progress. Orders waiting to send are kept on the device and don't hold it up.
     AutoUpdate.start({
       onDiscover: v => { this._connState.latestVersion = v; this._renderLiveStatus(); },
-      isBusy:     () => !Order.isEmpty() || this.stCount() > 0 || Outbox.count() > 0,
+      isBusy:     () => !Order.isEmpty() || this.stCount() > 0,
     });
   },
 
   renderTabs() {
     const wrap = document.getElementById('tabs-wrap');
     if (!wrap) return;
-    this._cats = Data.categories(this.materials);
+    this._cats = Data.categoriesBySize(this.materials);
     this._subs = this.activeCat ? Data.subcategories(this.materials, this.activeCat) : [];
-    const catBtns = this._cats.map((c,i) =>
-      `<button class="tab ${this.activeCat===c?'active':''}" data-cat-idx="${i}">${esc(c)}</button>`).join('');
-    let subHtml = '';
-    if (this.activeCat && this._subs.length) {
-      const subBtns = this._subs.map((s,i) =>
-        `<button class="tab ${this.activeSub===s?'active':''}" data-sub-idx="${i}">${esc(s)}</button>`).join('');
-      subHtml = `<div class="tabs-bar sub-bar"><div class="tabs-inner">
-        <button class="tab ${!this.activeSub?'active':''}" data-sub-idx="-1">All</button>${subBtns}
-      </div></div>`;
-    }
-    wrap.innerHTML = `<div class="tabs-bar"><div class="tabs-inner">
-      <button class="tab ${!this.activeCat?'active':''}" data-cat-idx="-1">All</button>${catBtns}
-    </div></div>${subHtml}`;
+    Strip.draw(wrap, { cats: this._cats, cat: this.activeCat, subs: this._subs, sub: this.activeSub });
   },
 
   setCat(cat) { this.activeCat=cat; this.activeSub=null; this.renderTabs(); this.renderList(); const s=document.getElementById('app-scroll'); if(s)s.scrollTop=0; },
@@ -445,13 +389,14 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
     const q=document.getElementById('search')?.value||'';
     const filtered=Data.filter(this.materials,this.activeCat,this.activeSub,q);
     const list=document.getElementById('mat-list'); if(!list) return;
-    if(!filtered.length){list.innerHTML=`<div class="empty-state"><i class="ti ti-package-off"></i><p>No materials found.</p></div>`;return;}
+    const note=searchNote(filtered,q);
+    if(!filtered.length){list.innerHTML=note||`<div class="empty-state"><i class="ti ti-package-off"></i><p>No materials found.</p></div>`;return;}
     const restoreFocus = captureInputFocus(); // live data re-renders mid-typing
     if (this._stocktakeMode) {
       const stockMap = new Map(this._matStock.map(r => [r._id, r]));
-      list.innerHTML = filtered.map(m => this._stCard(m, stockMap)).join('');
+      list.innerHTML = note + filtered.map(m => this._stCard(m, stockMap)).join('');
     } else {
-      list.innerHTML=filtered.map(m=>this._matCard(m)).join('');
+      list.innerHTML=note+filtered.map(m=>this._matCard(m)).join('');
     }
     restoreFocus();
   },
@@ -498,46 +443,36 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
     </div>`;
   },
 
-  // Stocktake card — same frame as an order card, but the controls submit counts.
-  // The tick (right of the stepper) is greyed until a qty is entered, then turns
-  // green; tapping it records that one item immediately (progressive counting).
-  // The =/+/− segment underneath sets this item's mode: = replace, + add, − subtract.
+  // Stocktake card — same frame as an order card, but the controls submit counts (Count in
+  // shared.js). The tick records that one item immediately (progressive counting).
   _stCard(m, stockMap) {
-    const qty  = this.stGet(m.id), hasQty = qty > 0;
-    const mode = this._stModes[m.id] || 'set';
+    const qty  = this.stGet(m.id), mode = this.stModeOf(m.id);
     const unit = stocktakeUnit(m);
     const rec  = stockMap.get(stockId(m));
     const ci   = CAT_ICONS[m.category] || CAT_ICONS.default;
     const showCode = m.partCode && !Data.isDummyCode(m.partCode);
-    const recorded = rec && rec.qty != null ? `${rec.qty} ${esc(unit)} recorded` : 'not counted yet';
-    const seg = [['set','='],['add','+'],['subtract','−']].map(([mv,sym]) =>
-      `<button class="st-mode-opt ${mv}${mode===mv?' active':''}" data-st-modeopt="${m.id}" data-mode="${mv}" title="${mv==='set'?'Set counted total':mv==='add'?'Add to recorded':'Subtract from recorded'}">${sym}</button>`
-    ).join('');
-    return `<div class="mat-card ${hasQty?'in-order':''}">
+    return `<div class="mat-card st-card ${Count.ready(qty, mode)?'in-order':''}">
       <div class="mat-icon" style="background:${ci.bg}"><i class="ti ${ci.icon}" style="color:${ci.color}"></i></div>
       <div class="mat-info">
         <div class="mat-name">${descHtml(m.description)}</div>
         ${showCode ? `<div class="mat-partcode">${esc(m.partCode)}</div>` : '<div class="mat-partcode"></div>'}
-        <div class="mat-unit">${esc(unit)} · <span class="st-recorded">${recorded}</span></div>
+        <div class="mat-unit">${esc(unit)} · <span class="st-recorded">${Count.line(rec, unit, qty, mode)}</span></div>
       </div>
-      <div class="st-controls">
-        <div class="st-ctrl-row">
-          <button class="qty-btn" data-st-dec="${m.id}">−</button>
-          <input class="qty-input" type="number" min="0" step="0.1" value="${hasQty?qty:''}" placeholder="0" data-st-qid="${m.id}">
-          <button class="qty-btn" data-st-inc="${m.id}">+</button>
-          <button class="st-tick ${hasQty?'ready':''}" data-st-tick="${m.id}" ${hasQty?'':'disabled'} title="${hasQty?'Record this count now':'Enter a quantity first'}"><i class="ti ti-check"></i></button>
-        </div>
-        <div class="st-mode-seg">${seg}</div>
-      </div>
+      ${Count.controls('st', m.id, qty, mode)}
     </div>`;
   },
 
   adj(id,d)     { Order.adjust(id,d);           this._changed(); },
   quickAdd(id)  { if(!Order.get(id)) Order.set(id,1); this._changed(); },
   zeroItem(id)  { Order.remove(id); this._changed(); },
-  revAdj(id,d)  { Order.adjust(id,d);           this.updateBadge(); this._syncReview(); },
+  // In the review "−" stops at 1: taking a line off is what Remove is for.
+  revAdj(id,d)  { if (d < 0 && Order.get(id) <= 1) return; Order.adjust(id,d); this.updateBadge(); this._syncReview(); },
   removeItem(id){ Order.remove(id);              this.updateBadge(); this._syncReview(); },
-  clearOrder()  { if(!confirm('Clear all items?')) return; Order.clear(); this._orderNote=''; this.updateBadge(); this._syncReview(); this.closePanel('review-panel'); },
+  async clearOrder() {
+    const n = Order.count();
+    if (!await Ask.confirm({ title: 'Clear this order?', body: `${n} line${n !== 1 ? 's' : ''} will be taken off.`, yes: 'Clear order', no: 'Keep order', danger: true })) return;
+    Order.clear(); this._orderNote=''; this.updateBadge(); this._syncReview(); this.closePanel('review-panel');
+  },
 
   _changed()    { this.updateBadge(); this.renderList(); if(document.getElementById('review-panel')?.classList.contains('open')) this._renderReviewContents(); },
   _syncReview() { this._renderReviewContents(); this.renderList(); },
@@ -545,6 +480,8 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
   updateBadge() {
     const b=document.getElementById('order-badge'); if(!b) return;
     const n=Order.count(); b.textContent=n; b.classList.toggle('zero', n===0);
+    const c=document.getElementById('btn-clear-main'); if(c) c.hidden = n===0;
+    this._keep();
   },
   openPanel(id)  { document.getElementById(id)?.classList.add('open'); },
   closePanel(id) { document.getElementById(id)?.classList.remove('open'); },
@@ -558,7 +495,7 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
         <div class="settings-label">Device</div>
         <div class="settings-card">
           <div class="settings-row">
-            <div><div class="settings-row-label">Device name</div></div>
+            <div><div class="settings-row-label">Device name</div><div class="settings-row-sub">${esc(verLabel(APP_VERSION))}</div></div>
             <input type="text" id="s-device-name" autocomplete="off" value="${esc(DeviceName.get())}" style="max-width:220px">
           </div>
         </div>
@@ -571,27 +508,27 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
             <div><div class="settings-row-label">Theme</div><div class="settings-row-sub">Colours and logo for this device — applies to every page opened on it</div></div>
             <select id="s-theme">${THEMES.map(t => `<option value="${t.id}"${Theme.get() === t.id ? ' selected' : ''}>${esc(t.name)}</option>`).join('')}</select>
           </div>
-          <div class="settings-row">
+          <label class="settings-row">
             <div><div class="settings-row-label">Fractions as symbols</div><div class="settings-row-sub">Show 1 1/2" as 1½" — off keeps sizes large and easy to read on the iPads</div></div>
             <input type="checkbox" id="s-fraction-glyphs" ${s.fractionGlyphs ? 'checked' : ''} style="width:20px;height:20px">
-          </div>
+          </label>
         </div>
       </div>
       <div class="settings-section">
         <div class="settings-label">Search &amp; Sort</div>
         <div class="settings-card">
-          <div class="settings-row">
+          <label class="settings-row">
             <div><div class="settings-row-label">Numeric-aware sorting</div><div class="settings-row-sub">e.g. 8mm lists before 10mm; inch sizes slot in by their mm value (32mm sits between 1&quot; and 1 1/2&quot;)</div></div>
             <input type="checkbox" id="s-natural-sort" ${s.naturalSort!==false?'checked':''} style="width:20px;height:20px">
-          </div>
-          <div class="settings-row">
+          </label>
+          <label class="settings-row">
             <div><div class="settings-row-label">Unit-aware search</div><div class="settings-row-sub">"1 inch", "25.4mm", "1\"" etc. all find the same item</div></div>
             <input type="checkbox" id="s-unit-search" ${s.unitAwareSearch!==false?'checked':''} style="width:20px;height:20px">
-          </div>
-          <div class="settings-row">
+          </label>
+          <label class="settings-row">
             <div><div class="settings-row-label">Typo-tolerant search</div><div class="settings-row-sub">Finds close matches even with spelling mistakes</div></div>
             <input type="checkbox" id="s-fuzzy-search" ${s.fuzzySearch!==false?'checked':''} style="width:20px;height:20px">
-          </div>
+          </label>
         </div>
       </div>
       <div class="settings-section" data-master-only ${Auth.isMaster() ? "" : "hidden"}>
@@ -623,7 +560,7 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
     const btn = document.getElementById('btn-save-settings');
     if (btn) { btn.textContent = '✓ Saved'; setTimeout(() => btn.textContent = 'Save', 1500); }
   },
-  openReview()   { this._renderReviewContents(); this.openPanel('review-panel'); },
+  openReview()   { if (Order.isEmpty()) { toast('No items on this order yet', true); return; } this._renderReviewContents(); this.openPanel('review-panel'); },
 
   _renderReviewContents() {
     const wrap=document.getElementById('review-contents'); if(!wrap) return;
@@ -659,7 +596,7 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
   },
 
   confirmSubmit() {
-    if(Order.isEmpty()){ alert('No items on this order.'); return; }
+    if(Order.isEmpty()){ toast('No items on this order yet', true); return; }
     const items=Order.items(this.materials);
     const lines=items.map(i=>`${i.partCode}  ×${i.qty}  ${i.description}`).join('\n');
     const ow=document.getElementById('overlay-wrap');
@@ -717,7 +654,8 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
     }
     Outbox.add({ id: queued.id, ref: this.orderRef, payload: order, done: queued.done });
     await Promise.race([queued.done.catch(() => {}), new Promise(r => setTimeout(r, 3000))]);
-    this._orderNote = '';
+    Order.clear(); this._orderNote = '';
+    this.updateBadge(); this.renderList();
     this.closeOverlay();
     this.closePanel('review-panel');
     this._lastOrderId = queued.id;
@@ -772,11 +710,7 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
   },
 
   toggleStocktakeMode() {
-    // Leaving with un-submitted counts would lose them (they're local only).
-    if (this._stocktakeMode && this.stCount() > 0) {
-      if (!confirm('You have counts that haven\'t been submitted yet. Leave stocktake mode and discard them?')) return;
-      this._st._items = {}; this._stModes = {};
-    }
+    // Counts not recorded yet are kept, and are there again next time.
     this._stocktakeMode = !this._stocktakeMode;
     localStorage.setItem('mo_stocktake_mode', this._stocktakeMode ? '1' : '0');
     this.applyStocktakeModeUI();
@@ -792,25 +726,28 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
     const banner = document.getElementById('st-mode-banner'); if (banner) banner.style.display = on ? 'flex' : 'none';
     const oab = document.getElementById('order-actionbar'); if (oab) oab.style.display = on ? 'none' : '';
     const sab = document.getElementById('st-actionbar');    if (sab) sab.style.display = on ? '' : 'none';
-    const lbl = document.getElementById('stocktake-btn-label'); if (lbl) lbl.textContent = on ? 'Exit stocktake' : 'Stocktake';
-    const btn = document.getElementById('btn-stocktake'); if (btn) btn.title = on ? 'Exit stocktake mode' : 'Materials stocktake';
+    const btn = document.getElementById('btn-stocktake'); if (btn) btn.setAttribute('aria-label', on ? 'Exit stocktake' : 'Stocktake');
     const search = document.getElementById('search'); if (search) search.placeholder = on ? 'Search materials to count…' : 'Search part code or description…';
   },
 
-  stGet(id)      { return this._st._items[id] || 0; },
+  stGet(id)      { return this._st._items[id]; },        // undefined: nothing entered. 0 is a count.
   stModeOf(id)   { return this._stModes[id] || 'set'; },
   stSet(id, qty) {
-    // Decimals allowed (metre counts like 2.4) — round to 2dp to absorb float noise.
-    qty = Math.round((parseFloat(qty) || 0) * 100) / 100;
-    if (qty <= 0) delete this._st._items[id]; else this._st._items[id] = qty;
+    if (qty === undefined) { delete this._st._items[id]; return; }
+    this._st._items[id] = Math.max(0, round2(qty));   // decimals allowed (metre counts like 2.4)
   },
-  stAdj(id, d)    { this.stSet(id, this.stGet(id) + d); this._stChanged(); },
-  stSetQty(id, v) { this.stSet(id, v); this._stChanged(); },
+  stAdj(id, d)   { const q = this.stGet(id); if (q === undefined && d < 0) return; this.stSet(id, (q || 0) + d); this._stChanged(); },
+  stType(el) {
+    const id = +el.dataset.stQid, m = this.materials.find(x => x.id == id); if (!m) return;
+    this.stSet(id, Count.read(el));
+    Count.typed(el, this._matStock.find(r => r._id === stockId(m)), stocktakeUnit(m), this.stGet(id), this.stModeOf(id));
+    this._updateStBadge();
+  },
   stSetMode(id, mode) {
     if (mode === 'set') delete this._stModes[id]; else this._stModes[id] = mode;
     this.renderList();
   },
-  stCount()       { return Object.keys(this._st._items).length; },
+  stCount()       { return this.stItems().length; },
   _stPayload(m) {
     return {
       sid: stockId(m), partCode: m.partCode || '', description: m.description,
@@ -821,22 +758,25 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
   stItems() {
     return Object.keys(this._st._items).map(id => {
       const m = this.materials.find(x => x.id == id);
-      return m ? { ...m, qty: this._st._items[id], stMode: this.stModeOf(id) } : null;
+      return m && Count.ready(this.stGet(id), this.stModeOf(id)) ? { ...m, qty: this._st._items[id], stMode: this.stModeOf(id) } : null;
     }).filter(Boolean);
   },
   _stChanged() { this._updateStBadge(); this.renderList(); },
   _updateStBadge() {
     const b = document.getElementById('st-badge'); if (!b) return;
     const n = this.stCount(); b.textContent = n; b.classList.toggle('zero', n === 0);
+    const c = document.getElementById('btn-st-clear'); if (c) c.hidden = n === 0;
+    const l = document.getElementById('stocktake-btn-label'); if (l) l.textContent = this._stocktakeMode ? 'Exit stocktake' : n ? `Stocktake (${n})` : 'Stocktake';
+    this._keep();
   },
 
   // Progressive tick — records ONE item immediately, then clears it from the cart.
   // The material_stock listener refreshes its "recorded" figure a moment later.
   async stTickItem(id) {
     if (this._stTickBusy.has(id)) return;
-    if (this.stGet(id) <= 0) return;
+    if (!Count.ready(this.stGet(id), this.stModeOf(id))) return;
     if (this._connState.connected === false || navigator.onLine === false) {
-      alert("You're currently offline — counts can't be recorded without a connection."); return;
+      Ask.tell('Count not recorded', 'Offline. Connect, then tap the tick again.'); return;
     }
     const m = this.materials.find(x => x.id == id); if (!m) return;
     this._stTickBusy.add(id);
@@ -848,20 +788,19 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
       this._updateStBadge(); this.renderList();
     } catch(e) {
       console.error('Count not recorded:', e);
-      alert(`Count not recorded: ${whyFailed(e)}. Tap the tick to try again.`);
+      const why = whyFailed(e);
+      Ask.tell('Count not recorded', `${why[0].toUpperCase()}${why.slice(1)}. Tap the tick to try again.`);
     } finally { this._stTickBusy.delete(id); }
   },
 
   stOpenReview() {
-    if (this.stCount() === 0) { alert('No counts entered yet.'); return; }
+    if (this.stCount() === 0) { toast('No counts entered yet', true); return; }
     const items = this.stItems();
-    const modeChip = { set: ['=', 'var(--blue-text)'], add: ['+', 'var(--green-text)'], subtract: ['−', 'var(--red-text)'] };
     const lines = items.map(i => {
-      const [sym, col] = modeChip[i.stMode] || modeChip.set;
       return `<div class="signout-item-row">
         <div class="signout-item-info">
           <div class="signout-item-name">${descHtml(i.description)}</div>
-          <div class="signout-item-unit"><span style="color:${col};font-weight:600">${sym} ${i.qty} ${esc(stocktakeUnit(i))}</span></div>
+          <div class="signout-item-unit"><span style="color:${Count.colour(i.stMode)};font-weight:600">${esc(Count.words(i.stMode, i.qty, stocktakeUnit(i)))}</span></div>
         </div>
       </div>`;
     }).join('');
@@ -887,7 +826,7 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
     const items = this.stItems();
     if (!items.length) { document.getElementById('overlay-wrap').innerHTML=''; return; }
     if (this._connState.connected === false || navigator.onLine === false) {
-      alert("You're currently offline — stocktakes can't be submitted without a connection."); return;
+      inlineError('st-error', 'Offline. Connect, then tap Confirm stocktake.'); return;
     }
     this._stBusy = true;
     inlineError('st-error', '');
@@ -920,7 +859,7 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
   },
 
   newOrder() {
-    Order.clear(); this._orderNote=''; this._lastOrderId=null; this.orderRef=genRef(); this.activeCat=null; this.activeSub=null;
+    Order.clear(); this._orderNote=''; this._lastOrderId=null; this.orderRef=genRef(); this.activeCat=null; this.activeSub=null; this._scopeWas=null;
     this.closePanel('success-panel'); this.updateBadge();
     const ref=document.getElementById('order-ref'); if(ref) ref.textContent=this.orderRef;
     const srch=document.getElementById('search');   if(srch) srch.value='';

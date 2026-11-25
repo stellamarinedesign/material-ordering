@@ -1,4 +1,4 @@
-// intake.js — v2026-11-26.1
+// intake.js — v2026-11-26.2
 // Shared intake rendering module used by warehouse.html and manager.html.
 
 const Intake = {
@@ -230,7 +230,7 @@ const Intake = {
       this.keepDrafts(host.page, host.drafts);
     } catch (e) {
       console.error('Delivery save failed:', e);
-      this._failed.set(groupKey, `Not saved: ${whyFailed(e)}. Tap ${confirm ? 'Confirm' : 'Save'} to try again.`);
+      this._failed.set(groupKey, `Not saved: ${whyFailed(e)}. Tap ${confirm ? 'Confirm delivery' : 'Save progress'} to try again.`);
     } finally {
       this._saving.delete(groupKey);
       host.redraw(host.find(groupKey) || group);
@@ -626,21 +626,51 @@ const Intake = {
           </div>
           <div class="intake-card-right">
             ${readOnly && showRestore ? `<button class="intake-restore-btn" data-restore="${esc(groupKey)}" title="Restore to active tracking"><i class="ti ti-arrow-back-up"></i> Restore</button>` : ''}
-            ${saving ? `<span class="intake-saving"><i class="ti ti-loader-2"></i> ${esc(saving)}</span>` : ''}
+            ${saving && !isOpen ? `<span class="intake-saving"><i class="ti ti-loader-2"></i> ${esc(saving)}</span>` : ''}
             ${hasDraft && !saving ? `<span class="intake-unsaved-tag"><i class="ti ti-pencil"></i> Unsaved</span>` : ''}
-            ${isOpen && hasDraft && !saving ? `<button class="intake-discard-btn" data-discard="${esc(cardKey)}">Discard</button>` : ''}
-            ${isOpen && hasDraft && !canConfirm && !saving ? `<button class="intake-save-btn" data-save="${esc(cardKey)}" title="Save progress — some items still need a status"><i class="ti ti-device-floppy"></i> Save</button>` : ''}
-            ${isOpen && hasDraft && canConfirm && !saving ? `<button class="intake-confirm-btn" data-confirm="${esc(cardKey)}" title="Confirm and save changes"><i class="ti ti-check"></i> Confirm</button>` : ''}
             ${followUpTag}
             ${saving || hasDraft ? '' : stockTag}
             ${this.statusBadge(badgeStatus)}
             <i class="ti ${isOpen ? 'ti-chevron-up' : 'ti-chevron-down'} intake-chevron"></i>
           </div>
         </div>
-        ${failed ? `<div class="inline-error intake-failed" role="alert">${esc(failed)}</div>` : ''}
+        ${failed && !isOpen ? `<div class="inline-error intake-failed" role="alert">${esc(failed)}</div>` : ''}
         ${isOpen ? `<div class="intake-card-body">
           ${this._renderMergedEntries(entries, { draftForCard, readOnly })}
-        </div>` : ''}
+        </div>
+        ${this._cardFoot(cardKey, entries, draftForCard, { readOnly, hasDraft, canConfirm, saving, failed, resolved: this.TAB_RESOLVED.has(status) })}` : ''}
+      </div>`;
+  },
+
+  // The foot of an open card: how far along it is, and the one thing to press, where the
+  // last line ends. It stays in view while the lines scroll.
+  _cardFoot(cardKey, entries, draftForCard, { readOnly, hasDraft, canConfirm, saving, failed, resolved }) {
+    if (readOnly || (resolved && !hasDraft && !saving && !failed)) return '';
+    const merged = this.mergeDraftEntries(entries, draftForCard), rows = new Map();
+    for (const e of entries) { const k = this.mergeKey(e.item); if (!rows.has(k)) rows.set(k, e); }
+    let ticked = 0, noQty = 0;
+    for (const { order, item } of rows.values()) {
+      const it = merged[`${order._id}::${item.id}`] || {};
+      if (!it.status || it.status === 'pending') continue;
+      if (it.status === 'partial' && !it.qtyReceived) { noQty++; continue; }
+      ticked++;
+    }
+    const n = rows.size, left = n - ticked - noQty;
+    const why = canConfirm || !hasDraft ? `${ticked} of ${n} ticked`
+      : left ? `${left} line${left !== 1 ? 's' : ''} left to tick` : 'Enter how many arrived';
+    const main = saving
+      ? `<button class="intake-confirm-btn" disabled><i class="ti ti-loader-2" style="animation:spin 1s linear infinite"></i> ${esc(saving)}</button>`
+      : !hasDraft ? ''
+      : canConfirm
+        ? `<button class="intake-confirm-btn" data-confirm="${esc(cardKey)}"><i class="ti ti-check"></i> Confirm delivery</button>`
+        : `<button class="intake-save-btn" data-save="${esc(cardKey)}"><i class="ti ti-device-floppy"></i> Save progress</button>`;
+    return `<div class="intake-foot">
+        ${failed ? `<div class="inline-error" role="alert">${esc(failed)}</div>` : ''}
+        <div class="intake-foot-row">
+          <span class="intake-foot-text">${why}</span>
+          ${hasDraft && !saving ? `<button class="intake-discard-btn" data-discard="${esc(cardKey)}">Discard</button>` : ''}
+          ${main}
+        </div>
       </div>`;
   },
 
@@ -851,7 +881,7 @@ const Intake = {
   attachListeners(container, callbacks) {
     let _noteTimer = null;
     container.addEventListener('click', e => {
-      // Confirm button — sits inside the header, must be checked before the toggle handler.
+      // Confirm button.
       const confirmBtn = e.target.closest('[data-confirm]');
       if (confirmBtn) {
         if (confirmBtn.disabled) return;
@@ -859,7 +889,7 @@ const Intake = {
         return;
       }
 
-      // Save button — partial progress save, same position as confirm.
+      // Save button — partial progress save, in Confirm's place until every line is ticked.
       const saveBtn = e.target.closest('[data-save]');
       if (saveBtn) {
         if (callbacks.onSave) callbacks.onSave(saveBtn.dataset.save);

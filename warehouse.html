@@ -10,20 +10,20 @@
   <link rel="icon" type="image/png" href="favicon.png">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
   <link rel="stylesheet" href="fonts/tabler-icons.min.css">
-  <link rel="stylesheet" href="css/style.css?v=2026-11-26.1">
-  <link rel="stylesheet" href="css/themes.css?v=2026-11-26.1">
+  <link rel="stylesheet" href="css/style.css?v=2026-11-26.2">
+  <link rel="stylesheet" href="css/themes.css?v=2026-11-26.2">
 </head>
-<body>
+<body class="floor">
 <div id="root"></div>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
 <!-- APP CHECK: remove this line to disable App Check (also remove init block in firebase-sync.js) -->
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-check-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
-<script src="js/shared.js?v=2026-11-26.1"></script>
-<script src="js/firebase-sync.js?v=2026-11-26.1"></script>
-<script src="js/auth.js?v=2026-11-26.1"></script>
-<script src="js/intake.js?v=2026-11-26.1"></script>
+<script src="js/shared.js?v=2026-11-26.2"></script>
+<script src="js/firebase-sync.js?v=2026-11-26.2"></script>
+<script src="js/auth.js?v=2026-11-26.2"></script>
+<script src="js/intake.js?v=2026-11-26.2"></script>
 <script>
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.getRegistrations().then(rs => rs.forEach(r => r.unregister()));
@@ -80,14 +80,14 @@ const Warehouse = {
             <div class="header-left">
               <div class="header-title"><i class="ti ti-warehouse" style="opacity:.7;margin-right:6px"></i>Warehouse Intake</div>
               <div class="header-ref">
-                <span class="live-dot" id="live-dot"></span><span id="live-label">Live</span>
-                &nbsp;·&nbsp; <span id="app-version" style="opacity:.6;font-family:var(--mono)"></span>
+                <span class="live-dot connecting" id="live-dot"></span><span id="live-label">Connecting…</span><span class="hdr-extra">
+                &nbsp;·&nbsp; <span id="app-version" style="opacity:.6;font-family:var(--mono)"></span></span>
               </div>
             </div>
             <div class="header-actions">
               <span class="role-pill">${esc(name)}</span>
               <span id="auth-pill"></span>
-              <button class="icon-btn" id="btn-setup" title="Setup"><i class="ti ti-settings"></i></button>
+              <button class="icon-btn" id="btn-setup" aria-label="Settings"><i class="ti ti-settings"></i></button>
             </div>
           </div></div>
         </div>
@@ -156,10 +156,10 @@ const Warehouse = {
                   <div><div class="settings-row-label">Theme</div><div class="settings-row-sub">Colours and logo for this device — applies to every page opened on it</div></div>
                   <select id="s-theme">${THEMES.map(t => `<option value="${t.id}"${Theme.get() === t.id ? ' selected' : ''}>${esc(t.name)}</option>`).join('')}</select>
                 </div>
-                <div class="settings-row">
+                <label class="settings-row">
                   <div><div class="settings-row-label">Fractions as symbols</div><div class="settings-row-sub">Show 1 1/2" as 1½" — off keeps sizes large and easy to read on the iPads</div></div>
                   <input type="checkbox" id="s-fraction-glyphs" ${Settings.get().fractionGlyphs ? 'checked' : ''} style="width:20px;height:20px">
-                </div>
+                </label>
               </div>
             </div>
             <div class="settings-section" data-master-only ${Auth.isMaster() ? "" : "hidden"}>
@@ -218,6 +218,9 @@ const Warehouse = {
     });
     document.getElementById('s-device-name').addEventListener('change', e => { const v = e.target.value.trim(); if (v) WarehouseDeviceName.save(v); else e.target.value = WarehouseDeviceName.get(); });
 
+    Strip.watch(document.getElementById('filter-materials'), 'wh-mat');
+    Strip.watch(document.getElementById('filter-consumables'), 'wh-cons');
+
     // Wire intake events for both lists
     this._wireIntakeList('materials');
     this._wireIntakeList('consumables');
@@ -253,29 +256,7 @@ const Warehouse = {
   },
 
   // ── LIVE STATUS ────────────────────────────────────────────────────────
-  _renderLiveStatus() {
-    const dot  = document.getElementById('live-dot');
-    const lbl  = document.getElementById('live-label');
-    const wrap = document.getElementById('update-banner-wrap');
-    const { connected, latestVersion } = this._connState;
-    // hostReachable(): keep the update pill visible when Firestore's channel is
-    // wedged (dot says Offline) but the site itself answers — refresh is the cure.
-    const outdated = (connected || AutoUpdate.hostReachable()) && latestVersion && isVersionNewer(latestVersion, APP_VERSION);
-    if (dot && lbl) {
-      dot.classList.remove('disconnected', 'update-available');
-      if (!connected)    { dot.classList.add('disconnected');    lbl.textContent = 'Offline'; }
-      else if (outdated) { dot.classList.add('update-available'); lbl.textContent = 'Update Available'; }
-      else               { lbl.textContent = 'Live'; }
-    }
-    if (wrap) {
-      wrap.innerHTML = outdated ? `<div class="update-banner">
-        <i class="ti ti-refresh"></i>
-        <span>A newer version (${esc(verLabel(latestVersion))}) is available — you're on ${esc(verLabel(APP_VERSION))}.</span>
-        <button id="btn-refresh-update">Refresh</button>
-      </div>` : '';
-      document.getElementById('btn-refresh-update')?.addEventListener('click', () => AutoUpdate.reloadFresh(latestVersion));
-    }
-  },
+  _renderLiveStatus() { Live.render(this._connState); },
   startConnectionStatus() {
     DB.listenConnectionStatus(c => { this._connState.connected = c; this._renderLiveStatus(); });
   },
