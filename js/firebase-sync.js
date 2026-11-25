@@ -1,4 +1,4 @@
-// firebase-sync.js — v2026-11-25.1
+// firebase-sync.js — v2026-11-26.1
 let _db = null, _configured = false, _config = null, _second = null;
 
 // Signed-in email for stamping writes (null when the device isn't signed in —
@@ -265,10 +265,28 @@ const DB = {
   // What identifies one line of an order, for matching an email's lines to the order.
   lineKey(item) { return [item.id, item.partCode, item.category].map(v => String(v ?? '')).join('|'); },
 
-  // One email, one write. `lines` is exactly what the email said — [{ orderId, key
-  // (lineKey), qty }] — and all of them are marked emailed together or none is. If a
-  // line has been changed, removed or emailed from elsewhere since the email was
-  // written, nothing is marked and this throws code 'draft-changed', so an order is
+  // Which of an email's lines no longer match their order, and how: changed since the
+  // email was written, removed, rejected, or emailed from somewhere else. A line that
+  // already carries this deliveryId is this same email, so it still matches.
+  // lines: [{ orderId, key (lineKey), qty }], order: what they came from, or null if it is gone.
+  changedLines(lines, order, deliveryId) {
+    const all  = order && order.status === 'rejected';
+    const pool = ((order && order.items) || []).map(item => ({ item: all ? { ...item, rejected: true } : item, k: this.lineKey(item) })), out = [];
+    for (const l of lines) {
+      const open = p => !p.item.rejected && (!p.item.emailed || p.item.deliveryId === deliveryId);
+      let i = pool.findIndex(p => p.k === l.key && p.item.qty === l.qty && open(p));
+      if (i >= 0) { pool.splice(i, 1); continue; }
+      i = pool.findIndex(p => p.k === l.key && open(p));
+      if (i < 0) i = pool.findIndex(p => p.k === l.key);
+      const hit = i >= 0 ? pool.splice(i, 1)[0].item : null;
+      out.push({ ...l, now: !hit ? 'removed' : hit.rejected ? 'rejected' : open({ item: hit }) ? hit.qty : 'emailed' });
+    }
+    return out;
+  },
+
+  // One email, one write. `lines` is exactly what the email said — and all of them are
+  // marked emailed together or none is. If any no longer match (changedLines), nothing is
+  // marked and this throws code 'draft-changed' with them in .changed, so an order is
   // never recorded as sent with a quantity the supplier wasn't given.
   // deliveryId is shared across every order in the email, which is what groups them
   // into one delivery. A line that already carries it counts as done, so a try whose
@@ -282,21 +300,24 @@ const DB = {
     await _tx(async tx => {
       const refs = ids.map(id => _db.collection('orders').doc(id));
       const docs = await Promise.all(refs.map(r => tx.get(r)));
-      const changed = () => Object.assign(new Error('An order changed while its email was open'), { code: 'draft-changed' });
+      const changed = docs.flatMap((doc, n) =>
+        this.changedLines(lines.filter(l => l.orderId === ids[n]), doc.exists ? doc.data() : null, deliveryId));
+      if (changed.length) throw Object.assign(new Error('An order changed while its email was open'), { code: 'draft-changed', changed });
       const updates = docs.map((doc, n) => {
-        if (!doc.exists) throw changed();
         const want = lines.filter(l => l.orderId === ids[n]);
+        const ticks = { ...((doc.data().intake && doc.data().intake.items) || {}) };
+        let old = false;   // a line starts its new delivery with nothing ticked off
         const items = (doc.data().items || []).map(item => {
           const k = this.lineKey(item);
           const i = want.findIndex(l => l.key === k && l.qty === item.qty);
           if (i < 0 || item.rejected) return item;
           if (item.emailed && item.deliveryId !== deliveryId) return item;
           want.splice(i, 1);
+          if (!item.emailed && ticks[String(item.id)]) { delete ticks[String(item.id)]; old = true; }
           return { ...item, emailed: true, deliveryId };
         });
-        if (want.length) throw changed();
         const live = items.filter(i => !i.rejected);
-        return { items, status: live.length > 0 && live.every(i => i.emailed) ? 'sent' : 'pending' };
+        return { items, ...(old ? { 'intake.items': ticks } : {}), status: live.length > 0 && live.every(i => i.emailed) ? 'sent' : 'pending' };
       });
       updates.forEach((u, n) => tx.update(refs[n], { ...u, updatedAt: firebase.firestore.FieldValue.serverTimestamp() }));
     });
@@ -319,6 +340,46 @@ const DB = {
         submittedAt: firebase.firestore.FieldValue.serverTimestamp(),
       });
     });
+  },
+
+  // Takes an email back. Every line it marked goes back to pending, in every order, together
+  // or not at all, along with anything ticked off on its delivery. Lines that went in
+  // another email are left alone, even in the same order and category.
+  // keys: the deliveries (item.deliveryId, or legacy:<order>:<category> from before those).
+  // remove: the lines go back to one of the manager's carts, so they leave the order, and
+  // an order with nothing left goes with them. Safe to repeat.
+  async putBackEmail(orderIds, keys, remove) {
+    if (!this.isReady()) throw new Error('Firebase not initialised');
+    const ids = [...new Set(orderIds)];
+    await _tx(async tx => {
+      const refs = ids.map(id => _db.collection('orders').doc(id));
+      const docs = await Promise.all(refs.map(r => tx.get(r)));
+      docs.forEach((doc, n) => {
+        if (!doc.exists) return;
+        const data = doc.data(), was = data.items || [];
+        const mine = i => i.emailed && keys.includes(i.deliveryId || `legacy:${ids[n]}:${i.category}`);
+        if (!was.some(mine)) return;
+        const items = remove ? was.filter(i => !mine(i)) : was.map(i => mine(i) ? { ...i, emailed: false } : i);
+        if (!items.length) { tx.delete(refs[n]); return; }
+        // Without this, emailing them again makes a delivery that already shows the old ticks.
+        const ticks = { ...((data.intake && data.intake.items) || {}) };
+        was.filter(mine).forEach(i => delete ticks[String(i.id)]);
+        const live = items.filter(i => !i.rejected);
+        tx.update(refs[n], {
+          items, 'intake.items': ticks,
+          status: data.status === 'rejected' ? 'rejected' : live.length > 0 && live.every(i => i.emailed) ? 'sent' : 'pending',
+          updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+        });
+      });
+    });
+  },
+
+  // How many lines of these deliveries the server still has as emailed.
+  async emailedLines(orderIds, keys) {
+    if (!this.isReady()) throw new Error('Firebase not initialised');
+    const docs = await Promise.all([...new Set(orderIds)].map(id => _db.collection('orders').doc(id).get({ source: 'server' })));
+    return docs.reduce((n, d) => n + ((d.exists && d.data().items) || [])
+      .filter(i => i.emailed && keys.includes(i.deliveryId || `legacy:${d.id}:${i.category}`)).length, 0);
   },
 
   async deleteOrder(id) {
@@ -370,27 +431,16 @@ const DB = {
     });
   },
 
-  async resetCategoryEmailed(orderId, category) {
-    if (!this.isReady()) throw new Error('Firebase not initialised');
-    const ref = _db.collection('orders').doc(orderId);
-    await _db.runTransaction(async tx => {
-      const doc = await tx.get(ref);
-      if (!doc.exists) return;
-      const data  = doc.data();
-      const items = (data.items || []).map(item =>
-        item.category === category ? { ...item, emailed: false } : item
-      );
-      // Clear stale intake statuses for the reset items — without this, re-emailing
-      // them creates a delivery that instantly shows the OLD received/backorder state.
-      const intakeItems = { ...((data.intake && data.intake.items) || {}) };
-      for (const item of (data.items || [])) {
-        if (item.category === category) delete intakeItems[String(item.id)];
-      }
-      tx.update(ref, {
-        items, 'intake.items': intakeItems, status: 'pending',
-        updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
-      });
-    });
+  // Throws unless these lines of an order are still on a delivery — by the same rule the
+  // Deliveries lists use (Intake.buildCategoryGroups).
+  _stillOn(doc, groupKey, itemIds) {
+    const data  = doc.exists ? doc.data() : {}, items = data.items || [];
+    const flags = !data.type || data.type === 'materials' || items.some(i => i.emailed);
+    const on    = new Set(items
+      .filter(i => !i.rejected && (i.emailed || !flags) && (i.deliveryId || `legacy:${doc.id}:${i.category}`) === groupKey)
+      .map(i => String(i.id)));
+    if (!doc.exists || itemIds.some(id => !on.has(String(id))))
+      throw Object.assign(new Error('The delivery has changed'), { code: 'delivery-changed' });
   },
 
   // Merges an intake patch into an order inside a transaction. patch is a map of
@@ -398,13 +448,15 @@ const DB = {
   // the whole intake.items map from the client's cached copy) means two devices
   // confirming different items on the same order can no longer clobber each other.
   // The order-level intake.status is recomputed from the merged result in-tx.
-  async updateIntake(orderId, patch, updatedBy) {
+  // groupKey: the delivery the lines were ticked on. If one is no longer on it (the manager
+  // put it back, or the order is gone), nothing is saved: code 'delivery-changed'.
+  async updateIntake(orderId, patch, updatedBy, groupKey) {
     if (!this.isReady()) throw new Error('Firebase not initialised');
     const RESOLVED = new Set(['ok', 'partial', 'missing', 'backorder']);
     const ref = _db.collection('orders').doc(orderId);
     await _tx(async tx => {
       const doc = await tx.get(ref);
-      if (!doc.exists) return;
+      this._stillOn(doc, groupKey, Object.keys(patch || {}));
       const data   = doc.data();
       const merged = { ...((data.intake && data.intake.items) || {}) };
       // What a line has put into stock is written only by applyDeliveryStock. The copy in
@@ -561,7 +613,7 @@ const DB = {
       const data  = doc.data();
       const match = item => item.category === category && item.partCode === partCode;
       const items = (data.items || []).map(item => match(item) ? { ...item, emailed: false } : item);
-      // Clear stale intake status so re-sending starts fresh (see resetCategoryEmailed).
+      // Clear stale intake status so re-sending starts fresh (see putBackEmail).
       const intakeItems = { ...((data.intake && data.intake.items) || {}) };
       for (const item of (data.items || [])) if (match(item)) delete intakeItems[String(item.id)];
       const nonRejected = items.filter(i => !i.rejected);
@@ -1000,12 +1052,13 @@ const DB = {
   // updated in the same write. So it happens whole or not at all, and pressing it twice,
   // or on two devices at once, adds nothing the second time. A correction downwards is
   // floored at zero. Receiving an untracked item starts tracking it.
-  async applyDeliveryStock(lines, by, sessionId) {
+  async applyDeliveryStock(lines, by, sessionId, groupKey) {
     if (!this.isReady()) throw new Error('Firebase not initialised');
     const orderIds = [...new Set(lines.map(l => l.orderId))];
     await _tx(async tx => {
       const orderRefs = orderIds.map(id => _db.collection('orders').doc(id));
       const orderDocs = await Promise.all(orderRefs.map(r => tx.get(r)));
+      orderDocs.forEach((d, n) => this._stillOn(d, groupKey, lines.filter(l => l.orderId === orderIds[n]).map(l => l.itemId)));
       const intake = new Map(orderIds.map((id, n) => [id, (orderDocs[n].exists && orderDocs[n].data().intake && orderDocs[n].data().intake.items) || {}]));
       const bySid = new Map();
       for (const l of lines) {

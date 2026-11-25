@@ -1,9 +1,9 @@
-// shared.js — v2026-11-25.1
+// shared.js — v2026-11-26.1
 
 // The build date plus that day's counter — "2026-10-06.2" is the second build
 // on 6 Oct 2026 (the production board's scheme). Set by tools/bump-version.py;
 // shown to people with a leading "v" (see verLabel).
-const APP_VERSION = '2026-11-25.1';
+const APP_VERSION = '2026-11-26.1';
 
 // Numeric version comparison, part by part. Returns true if `a` is strictly
 // newer than `b`. Reads both the dated form and the "v0.56"-style numbers used
@@ -1234,7 +1234,7 @@ const Ask = {
           ${body ? `<p>${esc(body)}</p>` : ''}
           ${rows && rows.length ? `<div class="ask-rows">${rows.map(r => `<div class="ask-row"><span>${esc(r[0])}</span><span class="ask-val">${esc(r[1])}</span></div>`).join('')}</div>` : ''}
           <button class="btn btn-primary" data-ask="yes">${esc(yes)}</button>
-          <button class="btn btn-outline" data-ask="no">${esc(no)}</button>
+          ${no ? `<button class="btn btn-outline" data-ask="no">${esc(no)}</button>` : ''}
         </div></div>`;
       const done = v => {
         document.removeEventListener('keydown', key, true);
@@ -1260,6 +1260,7 @@ function whyFailed(e) {
   const code = (e && e.code) || '', msg = (e && e.message) || '';
   if (navigator.onLine === false || /unavailable|deadline-exceeded/.test(code) || /offline/i.test(msg)) return 'the connection dropped';
   if (/permission-denied/.test(code)) return 'this sign-in is not allowed to';
+  if (code === 'delivery-changed') return 'the manager changed this delivery';
   return 'the database refused it';
 }
 // "Nothing was saved" can only be promised when the server answered: a dropped connection

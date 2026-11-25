@@ -1,4 +1,4 @@
-// intake.js — v2026-11-25.1
+// intake.js — v2026-11-26.1
 // Shared intake rendering module used by warehouse.html and manager.html.
 
 const Intake = {
@@ -222,7 +222,7 @@ const Intake = {
     let saved = false;
     try {
       if (navigator.onLine === false) throw Object.assign(new Error('offline'), { code: 'unavailable' });
-      await Promise.all([...byOrder.entries()].map(([orderId, patch]) => DB.updateIntake(orderId, patch, host.by())));
+      await Promise.all([...byOrder.entries()].map(([orderId, patch]) => DB.updateIntake(orderId, patch, host.by(), groupKey)));
       saved = true;
       const now = host.drafts.get(groupKey) || {}, left = {};
       for (const k of Object.keys(now)) if (skipped.has(k) || now[k] !== sent[k]) left[k] = now[k];
@@ -234,6 +234,12 @@ const Intake = {
     } finally {
       this._saving.delete(groupKey);
       host.redraw(host.find(groupKey) || group);
+    }
+    // Put back while it was being ticked off: there is no card left to say so on.
+    if (!saved && !host.find(groupKey)) {
+      host.drafts.delete(groupKey); this._failed.delete(groupKey);
+      this.keepDrafts(host.page, host.drafts);
+      await Ask.confirm({ title: 'Not saved', body: `${group.category} is no longer on the list.`, yes: 'Close' });
     }
     // On a full Confirm of a consumables delivery, offer to add what was received to stock.
     if (saved && confirm) await this.offerStock(host, group, merged);
@@ -274,7 +280,7 @@ const Intake = {
         await DB.applyDeliveryStock(group.entries.map(({ order, item }) => ({
           orderId: order._id, itemId: String(item.id), sid: stockId(item), description: item.description,
           units: units.get(`${order._id}::${item.id}`) || 0,
-        })), `${host.by()} — Delivery: ${group.category}`, genRef());
+        })), `${host.by()} — Delivery: ${group.category}`, genRef(), group.groupKey);
         go = false;
       } catch (e) {
         console.error('Stock update failed:', e);

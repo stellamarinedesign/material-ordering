@@ -10,8 +10,8 @@
   <link rel="icon" type="image/png" href="favicon.png">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
   <link rel="stylesheet" href="fonts/tabler-icons.min.css">
-  <link rel="stylesheet" href="css/style.css?v=2026-11-25.1">
-  <link rel="stylesheet" href="css/themes.css?v=2026-11-25.1">
+  <link rel="stylesheet" href="css/style.css?v=2026-11-26.1">
+  <link rel="stylesheet" href="css/themes.css?v=2026-11-26.1">
 </head>
 <body>
 <div id="root"></div>
@@ -20,12 +20,12 @@
 <!-- APP CHECK: remove this line to disable App Check (also remove init block in firebase-sync.js) -->
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-check-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
-<script src="js/shared.js?v=2026-11-25.1"></script>
-<script src="js/firebase-sync.js?v=2026-11-25.1"></script>
-<script src="js/auth.js?v=2026-11-25.1"></script>
-<script src="js/intake.js?v=2026-11-25.1"></script>
-<script src="js/catalogue.js?v=2026-11-25.1"></script>
-<script src="js/accounts.js?v=2026-11-25.1"></script>
+<script src="js/shared.js?v=2026-11-26.1"></script>
+<script src="js/firebase-sync.js?v=2026-11-26.1"></script>
+<script src="js/auth.js?v=2026-11-26.1"></script>
+<script src="js/intake.js?v=2026-11-26.1"></script>
+<script src="js/catalogue.js?v=2026-11-26.1"></script>
+<script src="js/accounts.js?v=2026-11-26.1"></script>
 <!-- Vendored xlsx-js-style (SheetJS fork with cell styling) — stocktake Excel exports -->
 <script src="js/xlsx-style.min.js"></script>
 <!-- Vendored ExcelJS — used only for the consumables export, which embeds drawn
@@ -69,9 +69,13 @@ const Manager = {
   _cats:     [],
   _subs:     [],
   _no:       { _items: {} },  // materials cart (New Order tab)
-  // The email on screen: what it covers and what Send will record. There is only ever
-  // one, and closing the panel drops it — see _openEmail.
+  // The email on screen and what it covers. There is only ever one, and closing the panel
+  // drops it — see _openEmail. Once it is opened in Outlook it becomes _emailOpen, which
+  // waits (on this PC, through a reload) for "Email sent" or "Not sent": only the first
+  // marks anything.
   _emailDraft: null,
+  _emailOpen:  null,
+  _cartWaiting: { no: [], co: [] },   // kept cart lines whose item isn't in the list (yet)
   _noNote:    '',           // note to self/other managers, typed on the New Order confirmation
   _noteEditing: new Set(),  // queue cards with the note editor open
 
@@ -162,6 +166,9 @@ const Manager = {
     this._intakeDrafts = Intake.loadDrafts('manager');
     this._loadStaged();
     this.renderShell();
+    this._loadCarts();
+    this._loadOwed();
+    this._loadEmailOpen();
     const verEl = document.getElementById('app-version');
     if (verEl) verEl.textContent = verLabel(APP_VERSION);
     this.startListening();
@@ -511,13 +518,14 @@ const Manager = {
           <div class="panel-header">
             <button class="back-btn" id="btn-close-email"><i class="ti ti-chevron-left"></i>Back</button>
             <div class="panel-title" id="email-panel-title">Order Email</div>
-            <button class="btn-green btn" id="btn-send-email" style="width:auto;padding:7px 14px;font-size:13px"><i class="ti ti-send"></i>Send</button>
+            <button class="btn-green btn" id="btn-open-outlook" style="width:auto;padding:7px 14px;font-size:13px"><i class="ti ti-mail-forward"></i>Open in Outlook</button>
           </div>
           <div class="inline-error" id="email-error" role="alert" hidden></div>
           <div class="email-fields">
             <div class="email-field"><label>To</label><input type="email" id="email-to"></div>
             <div class="email-field"><label>CC</label><input type="email" id="email-cc"></div>
             <div class="email-field"><label>Subject</label><input type="text" id="email-subject"></div>
+            <div class="email-field"><label>Covers</label><span class="email-covers" id="email-covers"></span></div>
           </div>
           <div class="email-body-wrap"><textarea id="email-body"></textarea></div>
         </div>
@@ -657,9 +665,9 @@ const Manager = {
     document.getElementById('btn-close-catalogue').addEventListener('click', () => Catalogue.close());
     Catalogue.mount(this);
     Accounts.mount();
-    document.getElementById('btn-close-email')    .addEventListener('click', () => { if (!this._opBusy.has('email')) this.closePanel('email-panel'); });
+    document.getElementById('btn-close-email')    .addEventListener('click', () => this.closePanel('email-panel'));
     document.getElementById('email-to')           .addEventListener('input', () => inlineError('email-error', ''));
-    document.getElementById('btn-send-email')     .addEventListener('click', () => this.sendEmail());
+    document.getElementById('btn-open-outlook')   .addEventListener('click', () => this.openInOutlook());
     document.getElementById('main-tab-queue')     .addEventListener('click', () => this.setMainTab('queue'));
     document.getElementById('main-tab-new')       .addEventListener('click', () => this.setMainTab('new-order'));
     document.getElementById('main-tab-stock')     .addEventListener('click', () => this.setMainTab('stock'));
@@ -780,12 +788,12 @@ const Manager = {
     document.getElementById('btn-no-add-to-orders').addEventListener('click', () => this.noAddToOrders());
     document.getElementById('btn-no-clear-main').addEventListener('click', () => {
       if (!confirm('Clear all items?')) return;
-      this._no._items = {}; this._noNote = ''; this.orderRef = genRef();
+      this._no._items = {}; this._cartWaiting.no = []; this._noNote = ''; this.orderRef = genRef();
       this._updateNoBadge(); this.renderNoList(); this.closePanel('no-review-panel');
     });
     document.getElementById('btn-no-clear-inner').addEventListener('click', () => {
       if (!confirm('Clear all items?')) return;
-      this._no._items = {}; this._noNote = ''; this.orderRef = genRef();
+      this._no._items = {}; this._cartWaiting.no = []; this._noNote = ''; this.orderRef = genRef();
       this._updateNoBadge(); this.renderNoList(); this.closePanel('no-review-panel');
     });
 
@@ -810,7 +818,7 @@ const Manager = {
     document.getElementById('btn-co-review').addEventListener('click', () => this.coOpenReview());
     document.getElementById('btn-co-clear-main').addEventListener('click', () => {
       if (!confirm('Clear all items?')) return;
-      this._co._items = {}; this._coOrderRef = null;
+      this._co._items = {}; this._cartWaiting.co = []; this._coOrderRef = null;
       this._updateCoBadge(); this.renderCoList(); this.closePanel('co-review-panel');
     });
     document.getElementById('btn-close-co-review').addEventListener('click', () => this.closePanel('co-review-panel'));
@@ -829,7 +837,7 @@ const Manager = {
       else if (cat) this.coOpenCategoryEmail(cat.dataset.coCat);
       else if (clr) {
         if (!confirm('Clear all items?')) return;
-        this._co._items = {}; this._coOrderRef = null;
+        this._co._items = {}; this._cartWaiting.co = []; this._coOrderRef = null;
         this._updateCoBadge(); this.renderCoList(); this.closePanel('co-review-panel');
       }
     });
@@ -897,10 +905,10 @@ const Manager = {
       if (noteSave)    { e.stopPropagation(); this.noteSave(noteSave.dataset.noteSave); return; }
       const noteCancel = e.target.closest('[data-note-cancel]');
       if (noteCancel)  { e.stopPropagation(); this.noteCancel(noteCancel.dataset.noteCancel); return; }
-      const resetCat   = e.target.closest('[data-reset-cat]');
-      if (resetCat)    { e.stopPropagation(); this.resetCategoryEmailed(resetCat.dataset.resetCat, resetCat.dataset.category); return; }
-      const resetGroup = e.target.closest('[data-reset-group]');
-      if (resetGroup)  { e.stopPropagation(); this.resetDeliveryGroup(resetGroup.dataset.resetGroup, resetGroup.dataset.category); return; }
+      const putBack    = e.target.closest('[data-put-back]');
+      if (putBack)     { e.stopPropagation(); this.putBackDelivery(putBack.dataset.putBack); return; }
+      const putBackOrd = e.target.closest('[data-put-back-order]');
+      if (putBackOrd)  { e.stopPropagation(); this.putBackOrder(putBackOrd.dataset.putBackOrder); return; }
       if (combHdr)    { e.stopPropagation(); this.toggleCombinedCat(combHdr.dataset.combCat); return; }
       if (combDel)    { e.stopPropagation(); this.excludeCombinedLine(combDel.dataset.combDel, combDel.dataset.orderId, combDel.dataset.partcode); return; }
       if (combMrg)    { e.stopPropagation(); this.localMergeLines(combMrg.dataset.combMerge, combMrg.dataset.partcode); return; }
@@ -959,7 +967,7 @@ const Manager = {
     });
     this._cartFields('no-review-contents', 'rqid', () => this.materials, 'no');
     document.getElementById('no-review-contents').addEventListener('input', e => {
-      if (e.target.id === 'no-order-note') this._noNote = e.target.value;
+      if (e.target.id === 'no-order-note') { this._noNote = e.target.value; this._keepCarts(); }
     });
     document.getElementById('no-email-buttons').addEventListener('click', e => {
       const btn = e.target.closest('[data-no-cat]'); if (btn) this.noOpenCategoryEmail(btn.dataset.noCat);
@@ -1539,6 +1547,7 @@ const Manager = {
       if (this._stActiveCat && !cats.includes(this._stActiveCat)) { this._stActiveCat = null; this._stActiveSub = null; }
       else if (this._stActiveSub && !Data.subcategories(list, this._stActiveCat).includes(this._stActiveSub)) this._stActiveSub = null;
       const restoreFocus = captureInputFocus();
+      this._fillCarts();
       this.renderNoTabs(); this.renderNoList();
       this.renderStocktakeTabs(); this._renderStActiveList();
       restoreFocus();
@@ -1951,6 +1960,7 @@ const Manager = {
     this.unsubscribe = DB.listenOrders(orders => {
       this.orders = orders;
       this._tidyStaged();
+      this._settleOwed();
       const n = this._materialsOrders().filter(o => this._orderHasPendingItems(o)).length;
       ['pending-count','mob-pending-count','queue-pending-badge'].forEach(id => {
         const el = document.getElementById(id);
@@ -2322,8 +2332,8 @@ const Manager = {
           </div>`).join('');
         })()}
         <div class="order-card-actions">
-          <button class="btn btn-outline" data-reset-group="${esc(groupKey)}" data-category="${esc(category)}" style="margin-bottom:4px">
-            <i class="ti ti-refresh"></i> Reset entire delivery to pending
+          <button class="btn btn-outline" data-put-back="${esc(groupKey)}" style="margin-bottom:4px">
+            <i class="ti ti-arrow-back-up"></i> ${entries[0].order.type === 'consumables' ? 'Put back in the cart' : 'Put back to pending'}
           </button>
         </div>
       </div>
@@ -2463,27 +2473,102 @@ const Manager = {
     try { await DB.unrejectItem(orderId, partCode); } catch(e) { alert('Restore failed: ' + e.message); }
   },
 
-  async resetCategoryEmailed(orderId, category) {
-    try { await DB.resetCategoryEmailed(orderId, category); } catch(e) { alert('Reset failed: ' + e.message); }
+  // ── PUTTING AN EMAIL BACK ────────────────────────────────────────────
+  // For an email that was marked as sent and wasn't, or went out wrong. Material lines go
+  // back to the queue; consumables have no queue, so theirs go back to the cart.
+  async putBackDelivery(groupKey) {
+    const groups = [...Intake.buildCategoryGroups(this.orders, 'materials'), ...Intake.buildCategoryGroups(this.orders, 'consumables')];
+    const g = groups.find(x => x.groupKey === groupKey); if (!g) return;
+    const cons = g.entries[0].order.type === 'consumables';
+    const total = new Map();
+    for (const { item } of g.entries) {
+      const k = Intake.mergeKey(item);
+      if (!total.has(k)) total.set(k, { item, qty: 0 });
+      total.get(k).qty = round2(total.get(k).qty + (item.qty || 0));
+    }
+    // The warehouse ticking it off means the supplier did get it: say so before undoing that.
+    const ticked  = g.entries.filter(({ item, order }) => Intake._itemStatus(order, item) !== 'pending').length;
+    const inStock = Intake.appliedStockTotal(g.entries) > 0;
+    const body = [
+      ticked  ? `${ticked} of ${g.entries.length} line${g.entries.length !== 1 ? 's' : ''} already ticked off on the delivery. That will be cleared.` : '',
+      inStock ? 'What was added to stock stays in stock.' : '',
+    ].filter(Boolean).join(' ');
+    const go = await Ask.confirm({
+      title: cons ? `Put ${g.category} back in the cart?` : `Put ${g.category} back to pending?`, body,
+      rows: [...total.values()].map(({ item, qty }) => [item.description, orderQtyDisplay(item, qty)]),
+      yes: cons ? 'Put back in the cart' : 'Put back to pending', no: 'Keep as sent', danger: ticked > 0 || inStock,
+    });
+    if (go) await this._putBack({
+      what: g.category, keys: [groupKey], orderIds: g.entries.map(e => e.order._id),
+      toCart: cons ? g.entries.map(e => e.item) : null,
+    });
   },
 
-  // Resets an entire delivery (which may span multiple orders) back to pending in one
-  // action — resolves the groupKey back to its distinct contributing orders and resets
-  // each one's copy of the category.
-  async resetDeliveryGroup(groupKey, category) {
-    const matGroups  = Intake.buildCategoryGroups(this.orders, 'materials');
-    const consGroups = Intake.buildCategoryGroups(this.orders, 'consumables');
-    const group = [...matGroups, ...consGroups].find(g => g.groupKey === groupKey);
-    if (!group) return;
-    const orderIds = [...new Set(group.entries.map(e => e.order._id))];
-    // Resetting clears the intake — including the record of how much was pushed to stock —
-    // but does NOT pull that stock back out. Warn so it can be corrected manually.
-    const stockWarn = Intake.appliedStockTotal(group.entries) > 0
-      ? `\n\nWARNING: this delivery's received quantities have already been added to consumables stock. Resetting will NOT remove that stock — you'll need to adjust it manually in the Stock tab.` : '';
-    if (!confirm(`Reset this entire delivery (${orderIds.length} order${orderIds.length !== 1 ? 's' : ''}) back to pending?${stockWarn}`)) return;
+  // { what, keys, orderIds, toCart: the lines to return to the consumables cart, or null }
+  async _putBack(p) {
+    if (this._opBusy.has('putBack')) return;
+    this._opBusy.add('putBack');
+    if (p.toCart) this._owe(p);
     try {
-      await Promise.all(orderIds.map(id => DB.resetCategoryEmailed(id, category)));
-    } catch(e) { alert('Reset failed: ' + e.message); }
+      let go = true;
+      while (go) {
+        try {
+          if (navigator.onLine === false) throw Object.assign(new Error('offline'), { code: 'unavailable' });
+          await DB.putBackEmail(p.orderIds, p.keys, !!p.toCart);
+          if (p.toCart) this._payCart(p);
+          this._toast(p.toCart ? `${p.what} is back in the cart` : `${p.what} is back to pending`);
+          return true;
+        } catch (e) {
+          console.error('Put back failed:', e);
+          const why = whyFailed(e);
+          go = await Ask.confirm({ title: 'Not put back', body: `${why[0].toUpperCase()}${why.slice(1)}.${nothingDone(e, 'Nothing was changed.')}`, yes: 'Try again', no: 'Later' });
+        }
+      }
+      return false;
+    } finally { this._opBusy.delete('putBack'); this._settleOwed(); }
+  },
+
+  // Lines on their way from an order back to the cart. They are noted on this PC first: if
+  // the reply is lost (or the page closed) the order may be gone with its lines in neither
+  // place, so the note is kept until the server says which.
+  _owed: [],
+  _owedKey() { return `mo_put_back${FirebaseConfig.isTestMode() ? '_test' : ''}`; },
+  _keepOwed() { try { localStorage.setItem(this._owedKey(), JSON.stringify(this._owed)); } catch {} },
+  _loadOwed() { try { this._owed = JSON.parse(localStorage.getItem(this._owedKey()) || '[]') || []; } catch { this._owed = []; } },
+  _sameOwed(a, b) { return a.keys.join() === b.keys.join(); },
+  _owe(p) {
+    this._owed = [...this._owed.filter(o => !this._sameOwed(o, p)), { what: p.what, keys: p.keys, orderIds: p.orderIds, toCart: p.toCart }];
+    this._keepOwed();
+  },
+  _payCart(p) {
+    p.toCart.forEach(i => this._cartAdd('co', i));
+    this._updateCoBadge(); this.renderCoList();
+    this._owed = this._owed.filter(o => !this._sameOwed(o, p)); this._keepOwed();
+  },
+  async _settleOwed() {
+    if (!this._owed.length || this._opBusy.has('putBack')) return;
+    this._opBusy.add('putBack');
+    try {
+      for (const p of this._owed.slice()) {
+        if (await DB.emailedLines(p.orderIds, p.keys)) { this._owed = this._owed.filter(o => o !== p); this._keepOwed(); }   // it never happened
+        else { this._payCart(p); this._toast(`${p.what} is back in the cart`); }
+      }
+    } catch { /* not connected: the next change to the orders tries again */ }
+    finally { this._opBusy.delete('putBack'); }
+  },
+
+  async putBackOrder(id) {
+    const o = this.orders.find(x => x._id === id); if (!o) return;
+    const lines = (o.items || []).filter(i => i.emailed);
+    const ticked = lines.filter(i => Intake._itemStatus(o, i) !== 'pending').length;
+    if (!await Ask.confirm({
+      title: 'Put this order\u2019s emailed lines back to pending?',
+      body: ticked ? `${ticked} of ${lines.length} line${lines.length !== 1 ? 's' : ''} already ticked off on the delivery. That will be cleared.` : '',
+      rows: lines.map(i => [i.description, orderQtyDisplay(i, i.qty)]),
+      yes: 'Put back to pending', no: 'Keep as sent', danger: ticked > 0,
+    })) return;
+    await this._putBack({ what: o.ref || 'The order', orderIds: [id], toCart: null,
+      keys: [...new Set(lines.map(i => i.deliveryId || `legacy:${id}:${i.category}`))] });
   },
 
   async stepCombinedSubQty(cat, orderId, partCode, delta) {
@@ -2583,8 +2668,8 @@ const Manager = {
             : item.emailed
               ? `<span class="emailed-badge"><i class="ti ti-mail-check"></i> Emailed</span>
                  <button class="btn-sm" data-reset-item="${o._id}" data-category="${esc(item.category)}" data-partcode="${esc(item.partCode)}"
-                   style="font-size:10px;padding:2px 6px;color:var(--amber-text);border-color:var(--amber-text);background:var(--amber-bg)" title="Reset to pending so it can be re-emailed">
-                   <i class="ti ti-refresh"></i>
+                   style="font-size:10px;padding:2px 6px;color:var(--amber-text);border-color:var(--amber-text);background:var(--amber-bg)" title="Put this line back to pending">
+                   <i class="ti ti-arrow-back-up"></i>
                  </button>`
               : isPending
                 ? `<div class="qty-row">
@@ -2615,14 +2700,13 @@ const Manager = {
       <button class="btn btn-outline" data-delete="${o._id}" style="margin-top:4px">
         <i class="ti ti-trash"></i> Delete record
       </button>` : isPending && pendingCats.length ? `
-      <div style="margin-bottom:6px;font-size:12px;color:var(--text2)">Send email per category:</div>
-      ${pendingCats.map(cat => `
+      ${pendingCats.map(cat => { const n = this._categoryLines(cat).orders; return `
         <button class="btn btn-green" data-cat-email="${esc(cat)}" style="margin-bottom:6px">
-          <i class="ti ti-mail"></i> ${esc(cat)}
-        </button>`).join('')}
+          <i class="ti ti-mail"></i> Email all pending ${esc(cat)} (${n} order${n !== 1 ? 's' : ''})
+        </button>`; }).join('')}
       ${emailedItems.length > 0 ? `
-        <button class="btn btn-outline" data-reset-order="${o._id}" style="margin-bottom:4px">
-          <i class="ti ti-refresh"></i> Reset emailed items to pending
+        <button class="btn btn-outline" data-put-back-order="${o._id}" style="margin-bottom:4px">
+          <i class="ti ti-arrow-back-up"></i> Put emailed lines back to pending
         </button>` : ''}
       <button class="btn btn-danger" data-reject-order="${o._id}" style="margin-top:2px">
         <i class="ti ti-ban"></i> Reject order
@@ -2634,8 +2718,8 @@ const Manager = {
         <i class="ti ti-trash"></i> Delete record
       </button>` : isSent ? `
       <span class="sent-stamp"><i class="ti ti-circle-check"></i> All emailed</span>
-      <button class="btn btn-outline" data-reset-order="${o._id}" style="margin-top:8px">
-        <i class="ti ti-refresh"></i> Reset all to pending
+      <button class="btn btn-outline" data-put-back-order="${o._id}" style="margin-top:8px">
+        <i class="ti ti-arrow-back-up"></i> Put all lines back to pending
       </button>
       <button class="btn btn-outline" data-delete="${o._id}" style="margin-top:4px">
         <i class="ti ti-trash"></i> Delete record
@@ -2807,7 +2891,7 @@ const Manager = {
       </div>
       <div class="order-card-body${isOpen?' open':''}" id="body-${safeKey}">
         ${this._groupNotesHtml(entries)}
-        <div class="edit-note">Items reset from a previous delivery — edit quantities before re-sending.</div>
+        <div class="edit-note">Put back from an earlier email. Edit quantities before emailing again.</div>
         ${itemRows}
       </div>
     </div>`;
@@ -2846,69 +2930,71 @@ const Manager = {
   },
 
   async resetItemEmailed(orderId, category, partCode) {
-    try { await DB.resetItemEmailed(orderId, category, partCode); }
-    catch(e) { alert('Reset failed: ' + e.message); }
+    try { await DB.resetItemEmailed(orderId, category, partCode); this._toast(`${partCode} is back to pending`); }
+    catch(e) { console.error(e); alert(`Not put back: ${whyFailed(e)}.`); }
   },
 
   async resetOrderToPending(orderId) {
     try { await DB.resetOrderToPending(orderId); }
-    catch(e) { alert('Reset failed: ' + e.message); }
+    catch(e) { console.error(e); alert(`Not restored: ${whyFailed(e)}.`); }
   },
 
   // ══════════════════════════════════════════
   // EMAIL
   // ══════════════════════════════════════════
-  openCategoryEmail(category) {
-    const pendingOrders = this._materialsOrders().filter(o => this._orderHasPendingItems(o));
-    const byPart = new Map();
-    const lines  = [];   // exactly what the email will say, order by order
-    for (const order of pendingOrders) {
+  // What emailing a category covers right now: every pending line of it in every order,
+  // less the excluded ones.
+  _categoryLines(category) {
+    const byPart = new Map(), lines = [], orders = new Set();   // lines: exactly what the email will say, order by order
+    let excluded = 0;
+    for (const order of this._materialsOrders().filter(o => this._orderHasPendingItems(o))) {
       for (const item of (order.items || [])) {
         if (item.emailed || item.rejected || item.category !== category) continue;
-        if (this.isExcluded(category, order._id, item.partCode)) continue;
-        lines.push({ orderId: order._id, key: DB.lineKey(item), qty: item.qty });
+        if (this.isExcluded(category, order._id, item.partCode)) { excluded++; continue; }
+        lines.push({ orderId: order._id, key: DB.lineKey(item), qty: item.qty, description: item.description });
+        orders.add(order._id);
         const k = Intake.mergeKey(item);
         if (!byPart.has(k)) byPart.set(k, { ...item, qty: 0 });
         byPart.get(k).qty = round2(byPart.get(k).qty + (item.qty || 0));
       }
     }
-    const items = [...byPart.values()];
-    if (!items.length) { alert('No pending items for ' + category); return; }
+    return { lines, items: [...byPart.values()], orders: orders.size, excluded };
+  },
+
+  openCategoryEmail(category) {
+    const { lines, items, orders, excluded } = this._categoryLines(category);
+    if (!items.length) { this._toast(`Every ${category} line is excluded`, true); return; }
+    const n = items.length;
     this._openEmail({
-      kind: 'queue', category, lines,
+      kind: 'queue', category, lines, what: category,
+      covers: `${n} line${n !== 1 ? 's' : ''} from ${orders} order${orders !== 1 ? 's' : ''}`,
       // One deliveryId shared across every contributing order — this is what lets the
       // Deliveries page and Sent tab collapse a multi-order send into one card instead
       // of one per order.
       deliveryId: genDeliveryId(),
-    }, category, buildCategoryEmail(items, category, 'Material Order'));
+    }, category, buildCategoryEmail(items, category, 'Material Order'), excluded);
   },
 
-  // Every email goes through here. The draft says what Send will record; opening one
-  // replaces any other, and closing the panel (closePanel) drops it.
-  _openEmail(draft, title, { subject, body }) {
+  // Every email goes through here. The draft says what "Email sent" will record; opening
+  // one replaces any other, and closing the panel (closePanel) drops it.
+  _openEmail(draft, title, { subject, body }, excluded) {
     const s = Settings.get();
     this._emailDraft = draft;
     inlineError('email-error', '');
-    this._emailSending(false);
     document.getElementById('email-panel-title').textContent = title;
     document.getElementById('email-to').value      = s.supplierEmail;
     document.getElementById('email-cc').value      = s.ccEmail;
     document.getElementById('email-subject').value = subject;
     document.getElementById('email-body').value    = body;
+    document.getElementById('email-covers').textContent = draft.covers + (excluded ? ` · ${excluded} excluded` : '');
     this.openPanel('email-panel');
   },
 
-  _emailSending(on) {
-    const btn = document.getElementById('btn-send-email'), back = document.getElementById('btn-close-email');
-    if (btn)  { btn.disabled = on; btn.innerHTML = on ? '<i class="ti ti-loader" style="animation:spin 1s linear infinite"></i>Saving…' : '<i class="ti ti-send"></i>Send'; }
-    if (back) back.disabled = on;
-  },
-
-  // Records what the email covers, then opens it in Outlook. Nothing opens unless the
-  // record was saved, and a failure leaves the email and the cart as they were.
-  async sendEmail() {
+  // Opens the email in Outlook. Nothing is marked here: a mail link can't say whether the
+  // email was sent, so the question that follows asks.
+  openInOutlook() {
     const draft = this._emailDraft;
-    if (!draft || this._opBusy.has('email')) return;
+    if (!draft || this._emailOpen) return;
     const to      = document.getElementById('email-to').value.trim();
     const cc      = document.getElementById('email-cc').value.trim();
     const subject = document.getElementById('email-subject').value.trim();
@@ -2919,39 +3005,184 @@ const Manager = {
       return;
     }
     if (this._connState.connected === false || navigator.onLine === false) {
-      inlineError('email-error', 'Offline. Connect, then click Send.');
+      inlineError('email-error', 'Offline. Connect, then click Open in Outlook.');
+      return;
+    }
+    if (draft.kind === 'queue' && this._draftChanges(draft).length) {
+      inlineError('email-error', 'An order changed while this email was open. Go back and open the email again.');
+      return;
+    }
+    this._emailOpen = { draft, at: Date.now(), tried: false };
+    this._keepEmailOpen();
+    this.closePanel('email-panel');
+    this._showEmailQuestion();
+    setTimeout(() => { openMailto(to, cc, subject, body); }, 300);
+  },
+  _draftChanges(draft) {
+    return [...new Set(draft.lines.map(l => l.orderId))].flatMap(id => {
+      const o = this.orders.find(x => x._id === id);
+      return DB.changedLines(draft.lines.filter(l => l.orderId === id), o, draft.deliveryId);
+    });
+  },
+
+  // ── WAS IT SENT? ─────────────────────────────────────────────────────
+  // Kept on this PC, so a reload or a closed browser asks again instead of guessing.
+  _emailOpenKey() { return `mo_email_open${FirebaseConfig.isTestMode() ? '_test' : ''}`; },
+  _keepEmailOpen() {
+    try {
+      if (this._emailOpen) localStorage.setItem(this._emailOpenKey(), JSON.stringify(this._emailOpen));
+      else localStorage.removeItem(this._emailOpenKey());
+    } catch {}
+  },
+  _loadEmailOpen() {
+    const read = () => { try { return JSON.parse(localStorage.getItem(this._emailOpenKey()) || 'null'); } catch { return null; } };
+    const q = read();
+    if (q && q.draft) { this._emailOpen = q; this._showEmailQuestion(); }
+    // Answered, or opened, in another tab of this browser.
+    window.addEventListener('storage', e => {
+      if (e.key !== this._emailOpenKey() || this._opBusy.has('email')) return;
+      const now = read();
+      this._emailOpen = now && now.draft ? now : null;
+      this._showEmailQuestion();
+    });
+  },
+
+  _showEmailQuestion() {
+    document.getElementById('email-q')?.remove();
+    const q = this._emailOpen, root = document.getElementById('app-root');
+    if (root) root.inert = !!q;
+    if (!q) return;
+    const w = document.createElement('div'); w.id = 'email-q';
+    w.innerHTML = `<div class="success-overlay"><div class="success-card ask-card" role="alertdialog" aria-modal="true" aria-labelledby="email-q-title" tabindex="-1">
+        <div class="success-icon blue"><i class="ti ti-mail-forward"></i></div>
+        <h3 id="email-q-title">${esc(q.draft.what)} email opened in Outlook</h3>
+        <p>${esc(q.draft.covers)} · ${esc(fmtTime(q.at))}</p>
+        <div class="inline-error" id="email-q-error" role="alert" hidden></div>
+        <button class="btn btn-primary" id="btn-email-sent"></button>
+        <button class="btn btn-outline" id="btn-email-not-sent"></button>
+      </div></div>`;
+    document.body.appendChild(w);
+    this._emailQuestionBusy('');
+    document.getElementById('btn-email-sent')    .addEventListener('click', () => this.emailWasSent());
+    document.getElementById('btn-email-not-sent').addEventListener('click', () => this.emailNotSent());
+    w.querySelector('.ask-card').focus();   // not a button: Enter must not answer for anyone
+  },
+  _emailQuestionBusy(which) {
+    const sent = document.getElementById('btn-email-sent'), not = document.getElementById('btn-email-not-sent');
+    if (!sent || !not) return;
+    const spin = '<i class="ti ti-loader" style="animation:spin 1s linear infinite"></i>';
+    sent.disabled = not.disabled = !!which;
+    sent.innerHTML = which === 'sent' ? `${spin}Saving…` : '<i class="ti ti-check"></i>Email sent';
+    not.innerHTML  = which === 'not'  ? `${spin}Putting back…`
+      : `Not sent, keep ${this._emailOpen && this._emailOpen.draft.kind === 'queue' ? 'as pending' : 'in the cart'}`;
+  },
+
+  // Only this marks anything. If it fails the question stays, and pressing again is safe.
+  async emailWasSent() {
+    const q = this._emailOpen;
+    if (!q || this._opBusy.has('email')) return;
+    if (this._connState.connected === false || navigator.onLine === false) {
+      inlineError('email-q-error', 'Offline. Connect, then click Email sent.');
       return;
     }
     this._opBusy.add('email');
-    inlineError('email-error', '');
-    this._emailSending(true);
+    inlineError('email-q-error', '');
+    this._emailQuestionBusy('sent');
+    q.tried = true; this._keepEmailOpen();   // from here a reply may be lost with the lines marked
     try {
-      await this._recordEmail(draft);
+      for (;;) {
+        try { await this._recordEmail(q.draft); break; }
+        catch (e) {
+          if (e.code !== 'draft-changed' || !e.changed) throw e;
+          const left = await this._askChanged(q.draft, e.changed);
+          if (!left) return;
+          q.draft.lines = left; this._keepEmailOpen();
+          if (!left.length) break;
+        }
+      }
     } catch (e) {
       console.error('Email not recorded:', e);
-      inlineError('email-error', e.code === 'draft-changed'
-        ? 'An order changed while this email was open. Go back and open the email again.'
-        : `Not sent: ${whyFailed(e)}.${nothingDone(e, 'Nothing was marked as emailed.')} Click Send to try again.`);
+      inlineError('email-q-error', `Not saved: ${whyFailed(e)}.${nothingDone(e, 'Nothing was marked as emailed.')} Click Email sent to try again.`);
       return;
     } finally {
       this._opBusy.delete('email');
-      this._emailSending(false);
+      this._emailQuestionBusy('');
     }
-    this._afterEmail(draft);
-    this.closePanel('email-panel');
+    this._emailOpen = null; this._keepEmailOpen(); this._showEmailQuestion();
+    const marked = q.draft.kind !== 'queue' || q.draft.lines.length > 0;
+    this._afterEmail(q.draft);
+    if (marked) this._toast(`${q.draft.what} marked as emailed`, false, { label: 'Put back', run: () => this._putBackDraft(q.draft) });
+    this._backToCart(q.draft.kind);
+  },
 
-    const ow = document.getElementById('overlay-wrap');
-    ow.innerHTML = `
-      <div class="success-overlay">
-        <div class="success-card">
-          <div class="success-icon blue"><i class="ti ti-mail-forward"></i></div>
-          <h3>Opening Outlook…</h3>
-          <p>Outlook will open with the order pre-filled. Your email signature should appear automatically in your default account.</p>
-          <button class="btn btn-primary" id="btn-done-email">Done</button>
-        </div>
-      </div>`;
-    document.getElementById('btn-done-email').addEventListener('click', () => { ow.innerHTML = ''; });
-    setTimeout(() => { openMailto(to, cc, subject, body); }, 300);
+  // Some lines changed after the email was opened, so it said something else. Resolves with
+  // the lines still to mark, or null to leave the question open.
+  async _askChanged(draft, changed) {
+    const said = c => draft.lines.find(l => l.orderId === c.orderId && l.key === c.key) || {};
+    const left = draft.lines.slice();
+    for (const c of changed) {
+      const i = left.findIndex(l => l.orderId === c.orderId && l.key === c.key && l.qty === c.qty);
+      if (i >= 0) left.splice(i, 1);
+    }
+    const n = changed.length;
+    const go = await Ask.confirm({
+      title: `${n} line${n !== 1 ? 's' : ''} changed after this email was opened`,
+      rows: changed.map(c => [said(c).description || c.key, typeof c.now === 'number' ? `emailed ${c.qty}, now ${c.now}`
+        : c.now === 'emailed' ? 'already emailed' : c.now]),
+      yes: left.length ? `Mark the other ${left.length} as emailed` : 'Leave as they are', no: 'Go back',
+    });
+    return go ? left : null;
+  },
+
+  // Nothing was marked, so there is usually nothing to undo. If "Email sent" was pressed
+  // and failed, its reply may be all that was lost: take back whatever it did.
+  async emailNotSent() {
+    const q = this._emailOpen;
+    if (!q || this._opBusy.has('email')) return;
+    const { draft } = q;
+    if (q.tried) {
+      this._opBusy.add('email');
+      inlineError('email-q-error', '');
+      this._emailQuestionBusy('not');
+      try {
+        if (navigator.onLine === false) throw Object.assign(new Error('offline'), { code: 'unavailable' });
+        await DB.putBackEmail(this._draftOrderIds(draft), this._draftKeys(draft), draft.kind !== 'queue');
+      } catch (e) {
+        console.error('Put back failed:', e);
+        inlineError('email-q-error', `Not put back: ${whyFailed(e)}. Click Not sent to try again.`);
+        return;
+      } finally {
+        this._opBusy.delete('email');
+        this._emailQuestionBusy('');
+      }
+    }
+    this._emailOpen = null; this._keepEmailOpen(); this._showEmailQuestion();
+    if (draft.kind === 'queue') {
+      // Land on the lines, ready to fix.
+      this._openCombinedCats.add(draft.category);
+      this.setMainTab('queue'); this.setView('pending');
+      return;
+    }
+    const cart = draft.kind === 'newOrder' ? 'no' : 'co';
+    for (const i of draft.order.items) this._cartAdd(cart, i, true);   // still there, unless the page was reloaded
+    if (cart === 'no') { if (!this._noNote) this._noNote = draft.order.note || ''; this._updateNoBadge(); this.renderNoList(); }
+    else { this._updateCoBadge(); this.renderCoList(); }
+    this._backToCart(draft.kind);
+  },
+  // Back to the cart's review, if it still holds anything.
+  _backToCart(kind) {
+    if (kind === 'newOrder' && this.noCount())    { this.setMainTab('new-order'); this.noOpenReview(); }
+    if (kind === 'consumables' && this.coCount()) { this.setMainTab('stock'); this.openPanel('cons-order-panel'); this.coOpenReview(); }
+  },
+
+  _draftOrderIds(draft) { return draft.kind === 'queue' ? draft.lines.map(l => l.orderId) : [draft.orderId]; },
+  _draftKeys(draft)     { return draft.kind === 'queue' ? [draft.deliveryId] : Object.values(draft.deliveryIds); },
+  // "Put back" on the message after "Email sent".
+  _putBackDraft(draft) {
+    return this._putBack({
+      what: draft.what, keys: this._draftKeys(draft), orderIds: this._draftOrderIds(draft),
+      toCart: draft.kind === 'consumables' ? draft.order.items : null,
+    });
   },
 
   // Queue emails mark the orders' lines; emails from a cart save that cart's lines as an
@@ -2978,7 +3209,7 @@ const Manager = {
     for (const i of draft.order.items) delete cart._items[i.id];
     if (draft.kind === 'newOrder') {
       this._updateNoBadge(); this.renderNoList();
-      if (this.noCount() === 0) { this._noNote = ''; this.orderRef = genRef(); }
+      if (this.noCount() === 0) { this._noNote = ''; this.orderRef = genRef(); this._keepCarts(); }
     } else {
       this._updateCoBadge(); this.renderCoList();
       if (this.coCount() === 0) this._coOrderRef = null;
@@ -2993,6 +3224,8 @@ const Manager = {
     for (const i of items) if (!deliveryIds[i.category]) deliveryIds[i.category] = genDeliveryId();   // one delivery per category
     return {
       kind, orderId: DB.newOrderId(), deliveryIds,
+      what:   Object.keys(deliveryIds).length === 1 ? items[0].category : 'Consumables',
+      covers: `${items.length} line${items.length !== 1 ? 's' : ''}`,
       order: {
         ref, deviceName, ...extra,
         items: items.map(i => ({
@@ -3028,8 +3261,57 @@ const Manager = {
     if (document.getElementById('no-review-panel')?.classList.contains('open')) this._renderNoReview();
   },
   _updateNoBadge() {
+    this._keepCarts();
     const b = document.getElementById('new-order-badge'); if (!b) return;
     const n = this.noCount(); b.textContent = n; b.classList.toggle('zero', n === 0);
+  },
+
+  // Both carts are kept on this PC through a reload, by what each line is (stockId), as
+  // ids can change with the catalogue.
+  _cartsKey() { return `mo_carts${FirebaseConfig.isTestMode() ? '_test' : ''}`; },
+  _keepCarts() {
+    if (!this._cartsLoaded) return;
+    const list = (items, waiting) => [...items.map(i => ({ sid: stockId(i), qty: i.qty })), ...waiting];
+    try {
+      localStorage.setItem(this._cartsKey(), JSON.stringify({
+        at: Date.now(), note: this._noNote,
+        no: list(this.noItems(), this._cartWaiting.no), co: list(this.coItems(), this._cartWaiting.co),
+      }));
+    } catch {}
+  },
+  _loadCarts() {
+    try {
+      const v = JSON.parse(localStorage.getItem(this._cartsKey()) || 'null');
+      if (v && v.at > Date.now() - 14 * 86400000) {
+        this._cartWaiting = { no: v.no || [], co: v.co || [] };
+        this._noNote = v.note || '';
+      }
+    } catch {}
+    this._cartsLoaded = true;
+    this._fillCarts();
+  },
+  // Lines whose item is in the list go into the cart. The rest wait: items made on a
+  // device only appear once the stock list has arrived.
+  _fillCarts() {
+    for (const [cart, catalog] of [['no', this.materials], ['co', this.consumables]]) {
+      const waiting = this._cartWaiting[cart]; if (!waiting.length) continue;
+      this._cartWaiting[cart] = waiting.filter(l => {
+        const m = catalog.find(x => stockId(x) === l.sid);
+        const items = this['_' + cart]._items;
+        if (m && l.qty > 0) items[m.id] = round2((items[m.id] || 0) + l.qty);
+        return !m;
+      });
+      if (cart === 'no') { this._updateNoBadge(); this.renderNoList(); } else { this._updateCoBadge(); this.renderCoList(); }
+    }
+  },
+  // Puts one order line back in a cart. keep: leave it alone if it is there already;
+  // otherwise it adds to what is there.
+  _cartAdd(cart, line, keep) {
+    const catalog = cart === 'no' ? this.materials : this.consumables, sid = stockId(line);
+    const m = catalog.find(x => stockId(x) === sid), items = this['_' + cart]._items;
+    if (!m) { this._cartWaiting[cart].push({ sid, qty: line.qty }); return; }
+    if (!items[m.id])  items[m.id] = line.qty;
+    else if (!keep)    items[m.id] = round2(items[m.id] + line.qty);
   },
 
   // Typed quantities in the three carts (New Order, Consumables Order, Receive Stock) and
@@ -3232,6 +3514,7 @@ const Manager = {
     if (document.getElementById('co-review-panel')?.classList.contains('open')) this._renderCoReview();
   },
   _updateCoBadge() {
+    this._keepCarts();
     const b = document.getElementById('co-badge'); if (!b) return;
     const n = this.coCount(); b.textContent = n; b.classList.toggle('zero', n === 0);
   },
@@ -3499,6 +3782,7 @@ const Manager = {
       // Fold in ghosts (items created on-device, CSV row pending) so every panel
       // — stock, ordering, barcodes — treats them as real consumables.
       this.consumables = GhostItems.merge(this._baseConsumables, records);
+      this._fillCarts();
       this._reconcileGhosts(records);
       this.renderStockTabs();
       this.renderStockList();
@@ -4006,13 +4290,16 @@ const Manager = {
     this._bcPromptLink(code);
   },
 
-  _toast(msg, isWarning) {
+  // action: { label, run } — one thing that can still be done about it, offered for longer.
+  _toast(msg, isWarning, action) {
     let el = document.getElementById('scan-toast');
-    if (!el) { el = document.createElement('div'); el.id = 'scan-toast'; document.body.appendChild(el); }
-    el.className = `scan-toast${isWarning ? ' warn' : ''} show`;
-    el.innerHTML = `<i class="ti ${isWarning ? 'ti-alert-triangle' : 'ti-circle-check'}"></i> ${esc(msg)}`;
+    if (!el) { el = document.createElement('div'); el.id = 'scan-toast'; el.setAttribute('role', 'status'); document.body.appendChild(el); }
+    el.className = `scan-toast${isWarning ? ' warn' : ''}${action ? ' has-action' : ''} show`;
+    el.innerHTML = `<i class="ti ${isWarning ? 'ti-alert-triangle' : 'ti-circle-check'}"></i> ${esc(msg)}${action ? `<button class="toast-action">${esc(action.label)}</button>` : ''}`;
+    const hide = () => el.classList.remove('show', 'has-action');
+    if (action) el.querySelector('.toast-action').addEventListener('click', () => { hide(); action.run(); });
     clearTimeout(this._toastTimer);
-    this._toastTimer = setTimeout(() => el.classList.remove('show'), 2600);
+    this._toastTimer = setTimeout(hide, action ? 10000 : 2600);
   },
 
   // Unknown barcode scanned with the panel open: choose which item it belongs to —

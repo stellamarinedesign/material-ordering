@@ -781,6 +781,11 @@ button { cursor: pointer; }
 .scan-toast.show { opacity: 1; transform: translate(-50%, 0); }
 .scan-toast.warn { background: var(--toast-warn-bg); }
 .scan-toast .ti { font-size: 18px; flex-shrink: 0; }
+.scan-toast.has-action.show { pointer-events: auto; }
+.toast-action {
+  min-height: 36px; margin: -6px -8px -6px 6px; padding: 0 12px; border-radius: var(--radius);
+  border: 1px solid rgba(255,255,255,0.45); background: none; color: #fff; font: inherit; cursor: pointer; white-space: nowrap;
+}
 /* Item picker shown when an unrecognised barcode is scanned during setup */
 .scan-link-list { display: flex; flex-direction: column; gap: 4px; max-height: 300px; overflow-y: auto; text-align: left; }
 .scan-link-row {
@@ -1152,6 +1157,11 @@ button.bc-chip { font-family: var(--mono); line-height: inherit; }
 .success-icon.red   { background: var(--red-bg);   color: var(--red-text); }
 /* A question with two named answers (Ask.confirm) */
 #ask-wrap .success-overlay { z-index: 130; }
+/* "Was it sent?" — under the sign-in gate and any question on top of it */
+#email-q .success-overlay { z-index: 90; }
+#email-q .ask-card:focus { outline: none; }
+#email-q .inline-error { margin-bottom: 12px; }
+.email-covers { flex: 1; font-size: 14px; color: var(--text2); font-variant-numeric: tabular-nums; }
 .ask-card { max-width: 400px; }
 .ask-card h3 { text-wrap: balance; }
 .ask-card .btn + .btn { margin-top: 8px; }
