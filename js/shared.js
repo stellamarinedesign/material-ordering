@@ -1,9 +1,9 @@
-// shared.js — v2026-11-26.2
+// shared.js — v2026-11-26.3
 
 // The build date plus that day's counter — "2026-10-06.2" is the second build
 // on 6 Oct 2026 (the production board's scheme). Set by tools/bump-version.py;
 // shown to people with a leading "v" (see verLabel).
-const APP_VERSION = '2026-11-26.2';
+const APP_VERSION = '2026-11-26.3';
 
 // Numeric version comparison, part by part. Returns true if `a` is strictly
 // newer than `b`. Reads both the dated form and the "v0.56"-style numbers used
@@ -338,19 +338,30 @@ const Data = {
   // Settings → Materials catalogue) it is read from there; until then, and on
   // a device that can't reach the catalogue and has never seen it, from
   // materials.csv exactly as before:
-  //   1. the last catalogue this device saw — instant, and works offline
+  //   1. the last catalogue this device saw, or failing that the last CSV — instant, and
+  //      works offline. A saved CSV is checked against the site behind the page:
+  //      onChange(list) if it differs.
   //   2. the catalogue, fetched (a few seconds at most, then we stop waiting
   //      so a bad connection can never hold the page on a blank screen)
-  //   3. materials.csv → its own cache → the built-in defaults
+  //   3. materials.csv → the built-in defaults
   // Data.watch() then keeps whichever list is showing live.
   _source: 'csv',     // 'catalogue' once the list is coming from the database
   _csvUrl: null,
-  async load(csvUrl) {
+  _saved(key) {
+    try { const c = JSON.parse(localStorage.getItem(key) || 'null'); return Array.isArray(c) && c.length ? c : null; } catch { return null; }
+  },
+  async load(csvUrl, onChange) {
     this._csvUrl = csvUrl;
     try {
       const c = JSON.parse(localStorage.getItem('mo_cat_cache') || 'null');
       if (Array.isArray(c) && c.length) { this._list = c; this._source = 'catalogue'; return c; }
     } catch {}
+    const saved = this._saved('mo_mat_cache');
+    if (saved) {
+      this._list = saved; this._source = 'csv';
+      this._loadCsv(csvUrl).then(l => { if (onChange && this._source === 'csv' && JSON.stringify(l) !== JSON.stringify(saved)) onChange(l); });
+      return saved;
+    }
     if (typeof DB !== 'undefined' && DB.isReady() && DB.getCatalog) {
       const doc = await Promise.race([
         DB.getCatalog().catch(() => null),
@@ -401,12 +412,9 @@ const Data = {
   async _loadCsv(csvUrl) {
     this._source = 'csv';
     try {
-      const res = await fetch(csvUrl + '?nocache=' + Date.now());
-      if (!res.ok) throw new Error('HTTP ' + res.status);
-      const text = this._decode(await res.arrayBuffer());
-      if (text.trim().startsWith('<')) throw new Error('Got HTML — check file exists in repo');
-      const parsed = this._parseCsv(text);
+      const parsed = await this._fetchCsv(csvUrl);
       if (parsed.length) {
+        if (this._source !== 'csv') return this._list;   // the catalogue arrived meanwhile
         this._list = parsed;
         try { localStorage.setItem('mo_mat_cache', JSON.stringify(parsed)); } catch {}
         return parsed;
@@ -417,23 +425,31 @@ const Data = {
     this._list = [...DEFAULT_MATERIALS];
     return this._list;
   },
-  async loadConsumables(csvUrl) {
+  // The saved list first, the site's behind it: onChange(list) if it differs.
+  async loadConsumables(csvUrl, onChange) {
+    const fetched = this._fetchCsv(csvUrl).then(parsed => {
+      if (!parsed.length) throw new Error('CSV parsed to 0 rows');
+      try { localStorage.setItem('mo_cons_cache', JSON.stringify(parsed)); } catch {}
+      return parsed;
+    }).catch(e => { console.warn('[Consumables] CSV load failed:', e.message); return null; });
+    const saved = this._saved('mo_cons_cache');
+    if (saved) {
+      this._consumablesList = saved;
+      fetched.then(l => { if (l && JSON.stringify(l) !== JSON.stringify(saved)) { this._consumablesList = l; if (onChange) onChange(l); } });
+      return saved;
+    }
+    this._consumablesList = await fetched || [];
+    return this._consumablesList;
+  },
+  async _fetchCsv(url) {
+    const stop = new AbortController(), t = setTimeout(() => stop.abort(), 8000);
     try {
-      const res = await fetch(csvUrl + '?nocache=' + Date.now());
+      const res = await fetch(url + '?nocache=' + Date.now(), { signal: stop.signal });
       if (!res.ok) throw new Error('HTTP ' + res.status);
       const text = this._decode(await res.arrayBuffer());
       if (text.trim().startsWith('<')) throw new Error('Got HTML — check file exists in repo');
-      const parsed = this._parseCsv(text);
-      if (parsed.length) {
-        this._consumablesList = parsed;
-        try { localStorage.setItem('mo_cons_cache', JSON.stringify(parsed)); } catch {}
-        return parsed;
-      }
-      throw new Error('CSV parsed to 0 rows');
-    } catch (e) { console.warn('[Consumables] CSV load failed:', e.message); }
-    try { const c = localStorage.getItem('mo_cons_cache'); if (c) { this._consumablesList = JSON.parse(c); return this._consumablesList; } } catch {}
-    this._consumablesList = [];
-    return [];
+      return this._parseCsv(text);
+    } finally { clearTimeout(t); }
   },
   get() { return this._list || [...DEFAULT_MATERIALS]; },
   // The CSVs are edited in Excel, which saves either UTF-8 (with a BOM, when
@@ -590,14 +606,15 @@ function phraseRe(t) {
 // Typing searches every category; clearing the box goes back to the one that was open, or
 // to one tapped meanwhile. cat/sub: the names of the page's own fields. True if they changed.
 function searchScope(app, q, cat, sub) {
-  if (q && !app._scopeWas) {
-    app._scopeWas = [app[cat], app[sub]];
+  const was = `_was${cat}`;
+  if (q && !app[was]) {
+    app[was] = [app[cat], app[sub]];
     app[cat] = app[sub] = null;
     return true;
   }
-  if (!q && app._scopeWas) {
-    if (!app[cat]) [app[cat], app[sub]] = app._scopeWas;
-    app._scopeWas = null;
+  if (!q && app[was]) {
+    if (!app[cat]) [app[cat], app[sub]] = app[was];
+    app[was] = null;
     return true;
   }
   return false;
@@ -656,6 +673,8 @@ const Order = {
   clear()       { this._items={}; },
   count()       { return Object.keys(this._items).length; },
   isEmpty()     { return this.count()===0; },
+  all()         { return this._items; },
+  replace(items){ this._items = items; },
   items(mats)   {
     return Object.keys(this._items).map(id=>{
       const m=mats.find(x=>x.id==id); return m?{...m,qty:this._items[id]}:null;
@@ -674,6 +693,15 @@ const Kept = {
     try { const v = JSON.parse(localStorage.getItem(this._key(name)) || 'null'); return v && v.at > Date.now() - maxAge ? v : null; } catch { return null; }
   },
   lines(items) { return items.map(i => ({ sid: stockId(i), qty: i.qty, ...(i.mode ? { mode: i.mode } : {}) })); },
+  // A cart (id -> anything) carried over to a list whose ids may have changed.
+  move(cart, from, to) {
+    const out = {};
+    for (const [id, v] of Object.entries(cart)) {
+      const was = from.find(m => m.id == id), now = was && to.find(m => stockId(m) === stockId(was));
+      if (now) out[now.id] = v;
+    }
+    return out;
+  },
   fill(lines, catalog, put) {
     for (const l of lines || []) { const m = catalog.find(x => stockId(x) === l.sid); if (m && l.qty >= 0) put(m, l); }
   },
@@ -1325,9 +1353,10 @@ const Count = {
     return round2(mode === 'add' ? was + qty : mode === 'subtract' ? Math.max(0, was - qty) : qty);
   },
   // "3 Metre recorded → 8": what is recorded now and, once a count is entered, after it.
-  line(rec, unit, qty, mode) {
+  // known: the recorded counts have arrived, so "not counted yet" is true.
+  line(rec, unit, qty, mode, known) {
     const has = rec && rec.qty != null;
-    const now = has ? `${rec.qty} ${esc(unit)} recorded` : 'not counted yet';
+    const now = has ? `${rec.qty} ${esc(unit)} recorded` : known ? 'not counted yet' : '…';
     return this.ready(qty, mode) ? `${now} → <strong>${this.after(has ? rec.qty : 0, qty, mode)}</strong>` : now;
   },
   controls(attr, id, qty, mode) {
@@ -1349,12 +1378,48 @@ const Count = {
     return raw === '' || !isFinite(n) || n < 0 ? undefined : round2(n);
   },
   // Typing updates the card where it is: no redraw, so the caret and the next tap stay put.
-  typed(el, rec, unit, qty, mode) {
+  typed(el, rec, unit, qty, mode, known) {
     const card = el.closest('.mat-card'); if (!card) return;
     const on = this.ready(qty, mode), tick = card.querySelector('.st-tick'), line = card.querySelector('.st-recorded');
     card.classList.toggle('in-order', on);
     if (tick) { tick.classList.toggle('ready', on); tick.disabled = !on; }
-    if (line) line.innerHTML = this.line(rec, unit, qty, mode);
+    if (line) line.innerHTML = this.line(rec, unit, qty, mode, known);
+  },
+};
+
+// ── START-UP ─────────────────────────────────────────────────────────────
+// Each page's HTML carries a cover (#boot): its header and some blank rows, painted before
+// any script has loaded. It holds no data and it is opaque, so it is also what hides the
+// page until a sign-in is known. It goes when the page is drawn and the sign-in is known,
+// or at once for the sign-in dialog or a "can't connect" card.
+const Boot = {
+  _waiting: new Set(['page', 'sign-in']),
+  ready(what) { this._waiting.delete(what); if (!this._waiting.size) this.gone(); },
+  gone()      { document.getElementById('boot')?.remove(); },
+};
+// Blank rows the size of what is coming, until the first data arrives.
+function skeleton(n, cls) { return `<div class="skels ${cls || ''}" aria-hidden="true">${'<div class="skel"></div>'.repeat(n)}</div>`; }
+
+// Live lists that have stopped. Firestore doesn't restart one that has failed, so without
+// this the page goes on showing old rows under "Live".
+const Lost = {
+  _lists: new Map(),   // what -> how to start it again
+  add(what, again) { this._lists.set(what, again); this.render(); },
+  back(what)       { if (this._lists.delete(what)) this.render(); },
+  render() {
+    let el = document.getElementById('lost-lists');
+    if (!this._lists.size) { if (el) el.remove(); return; }
+    if (!el) {
+      el = document.createElement('div'); el.id = 'lost-lists'; el.className = 'update-banner'; el.setAttribute('role', 'alert');
+      const at = document.getElementById('update-banner-wrap'); if (!at) return;
+      at.after(el);
+    }
+    el.innerHTML = `<i class="ti ti-alert-triangle"></i><span>Stopped updating: ${esc([...this._lists.keys()].join(', '))}. What is shown may be old.</span><button>Retry</button>`;
+    el.querySelector('button').addEventListener('click', () => {
+      const all = [...this._lists.values()];
+      this._lists.clear(); this.render();
+      all.forEach(again => again());
+    });
   },
 };
 
@@ -1428,7 +1493,11 @@ const Ask = {
   _open: null,
   // Something that has to be read before carrying on.
   tell(title, body) { return this.confirm({ title, body, yes: 'Close' }); },
-  confirm({ title, body, rows, yes, no, danger }) {
+  // A typed answer: resolves with it, or null. The scanner can type it too.
+  async text({ title, body, label, value, placeholder, yes, no }) {
+    return await this.confirm({ title, body, yes, no, field: { label, value, placeholder } }) || null;
+  },
+  confirm({ title, body, rows, yes, no, danger, field }) {
     return new Promise(resolve => {
       if (this._open) this._open(false);   // one at a time: an earlier one gets the safe answer
       const from = document.activeElement;
@@ -1437,34 +1506,64 @@ const Ask = {
           <h3 id="ask-title">${esc(title)}</h3>
           ${body ? `<p>${esc(body)}</p>` : ''}
           ${rows && rows.length ? `<div class="ask-rows">${rows.map(r => `<div class="ask-row"><span>${esc(r[0])}</span><span class="ask-val">${esc(r[1])}</span></div>`).join('')}</div>` : ''}
-          <button class="btn btn-primary" data-ask="yes">${esc(yes)}</button>
+          ${field ? `<div class="setup-field ask-field">${field.label ? `<label for="ask-text">${esc(field.label)}</label>` : ''}<input id="ask-text" type="text" autocomplete="off" spellcheck="false" value="${esc(field.value || '')}" placeholder="${esc(field.placeholder || '')}"></div>` : ''}
+          <button class="btn ${danger ? 'btn-danger' : 'btn-primary'}" data-ask="yes">${esc(yes)}</button>
           ${no ? `<button class="btn btn-outline" data-ask="no">${esc(no)}</button>` : ''}
         </div></div>`;
+      const input = w.querySelector('#ask-text');
       const done = v => {
         document.removeEventListener('keydown', key, true);
         w.remove(); this._open = null;
         try { if (from && from.isConnected) from.focus({ preventScroll: true }); } catch {}
         resolve(v);
       };
-      const key = e => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); done(false); } };
+      const agree = () => {
+        if (!input) { done(true); return; }
+        const v = input.value.trim();
+        if (v) done(v); else input.focus();
+      };
+      const key = e => {
+        if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); done(false); }
+        if (e.key === 'Enter' && e.target === input) { e.preventDefault(); e.stopPropagation(); agree(); }
+      };
       w.addEventListener('click', e => {
         const b = e.target.closest('[data-ask]');
-        if (b) done(b.dataset.ask === 'yes');
+        if (b) { if (b.dataset.ask === 'yes') agree(); else done(false); }
         else if (e.target.classList.contains('success-overlay')) done(false);
       });
       document.addEventListener('keydown', key, true);
       this._open = done;
       document.body.appendChild(w);
-      w.querySelector(`[data-ask="${danger ? 'no' : 'yes'}"]`).focus();
+      (input || w.querySelector(`[data-ask="${danger && no ? 'no' : 'yes'}"]`)).focus();
     });
   },
 };
+// A failure with nowhere of its own to sit. next: what to do about it.
+function tellFailed(title, e, next) {
+  console.error(title, e);
+  if (e && e.code === 'permission-denied') return Ask.tell(title, 'This sign-in is not allowed to do that.');
+  const why = whyFailed(e);
+  return Ask.tell(title, `${why[0].toUpperCase()}${why.slice(1)}. ${next || 'Try again.'}`);
+}
+// A button at work: says what it is doing and can't be pressed again. Returns what puts
+// it back (the list may have redrawn it meanwhile, which is the same thing).
+function busyBtn(btn, label) {
+  if (!btn) return () => {};
+  const was = btn.innerHTML, w = btn.offsetWidth;
+  btn.disabled = true;
+  if (w) btn.style.minWidth = `${w}px`;
+  btn.innerHTML = `<i class="ti ti-loader" style="animation:spin 1s linear infinite"></i> ${esc(label)}`;
+  return () => { btn.disabled = false; btn.style.minWidth = ''; btn.innerHTML = was; };
+}
 // Why a write didn't go through, in words for whoever is holding the device.
 function whyFailed(e) {
   const code = (e && e.code) || '', msg = (e && e.message) || '';
   if (navigator.onLine === false || /unavailable|deadline-exceeded/.test(code) || /offline/i.test(msg)) return 'the connection dropped';
   if (/permission-denied/.test(code)) return 'this sign-in is not allowed to';
   if (code === 'delivery-changed') return 'the manager changed this delivery';
+  if (msg === 'INSUFFICIENT_STOCK') return 'there is not enough in stock';
+  if (msg === 'Stock record not found') return 'this item is not tracked yet';
+  if (msg === 'GHOST_EXISTS') return 'an item with that name was just made';
   return 'the database refused it';
 }
 // "Nothing was saved" can only be promised when the server answered: a dropped connection

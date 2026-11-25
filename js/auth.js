@@ -1,4 +1,4 @@
-// auth.js — v2026-11-26.2
+// auth.js — v2026-11-26.3
 //
 // Sign-in (Firebase email + password, compat SDK) and WHO IS WHAT, on every
 // page. The same model as the production board:
@@ -126,16 +126,16 @@ const Auth = {
   // auth state change AND again once the access document has been read, so a
   // page's role decisions (the manager guard) are made on real information.
   start(onChange) {
-    if (this._started || typeof firebase === 'undefined' || typeof firebase.auth !== 'function') return;
+    if (this._started) return;
+    if (typeof firebase === 'undefined' || typeof firebase.auth !== 'function') { Boot.ready('sign-in'); return; }
     this._started = true;
     this._onChange = onChange || null;
-    // Nothing shows until a sign-in is known: an opaque curtain goes up now,
-    // comes down the moment Firebase reports a user, or becomes the sign-in
-    // dialog if there is none. No page content is ever glimpsed signed out.
-    this._gate(`<div class="success-card auth-card" style="max-width:380px"><div class="auth-logo"></div></div>`);
+    // Nothing shows until a sign-in is known: the page's opaque start-up cover (Boot) stays
+    // until Firebase reports a user, or the sign-in dialog takes its place if there is
+    // none. No page content is ever glimpsed signed out.
     firebase.auth().onAuthStateChanged(user => {
       this._user = user || null;
-      if (user) this._closeGate();
+      if (user) { this._closeGate(); Boot.ready('sign-in'); }
       this._stopAccess();
       this._access = null;
       this._accessState = user ? 'loading' : 'none';
@@ -224,15 +224,15 @@ const Auth = {
   async claim(btn) {
     const err = document.getElementById('auth-claim-err');
     if (!this.isSignedIn()) return;
-    if (btn) btn.disabled = true;
+    const back = busyBtn(btn, 'Saving…');
     try {
       await DB.saveAccess({ managers: [this.email()], engineers: [], floor: [], masters: [] });
       this._reload();
     } catch (e) {
-      if (btn) btn.disabled = false;
+      back();
       if (err) err.textContent = (e && e.code === 'permission-denied')
         ? 'Refused — an accounts list already exists, so a master has to add this account.'
-        : 'Could not save — ' + ((e && e.message) || e);
+        : `Not saved: ${whyFailed(e)}. Try again.`;
     }
   },
 
@@ -240,7 +240,7 @@ const Auth = {
     await firebase.auth().signInWithEmailAndPassword(String(email || '').trim(), String(password || ''));
   },
   async signOut() {
-    if (!confirm('Sign out on this device?')) return;
+    if (!await Ask.confirm({ title: 'Sign out on this device?', body: 'It needs the email and password to get back in.', yes: 'Sign out', no: 'Stay signed in', danger: true })) return;
     await firebase.auth().signOut();
   },
   // Change the signed-in account's password, here, no email in the loop.
@@ -300,6 +300,7 @@ const Auth = {
   openDialog() {
     if (document.getElementById('auth-card')) return;   // already open
     const dn = this.deviceName;
+    Boot.gone();
     this._gate(`
         <div class="success-card auth-card" id="auth-card" style="max-width:380px;text-align:left">
           <div class="auth-logo"></div>
@@ -318,12 +319,12 @@ const Auth = {
       const device = dn ? document.getElementById('auth-device').value.trim() : '';
       if (dn && !device) { err('Enter a device name.'); return; }
       if (!email || !pass) { err('Enter the email and password.'); return; }
-      const btn = document.getElementById('auth-submit'); btn.disabled = true; err('');
+      const back = busyBtn(document.getElementById('auth-submit'), 'Signing in…'); err('');
       try {
         await this.signIn(email, pass);
         if (dn) dn.save(device);
         this._reload();
-      } catch (e) { err(this._friendly(e)); btn.disabled = false; }
+      } catch (e) { err(this._friendly(e)); back(); }
     };
     document.getElementById('auth-submit').addEventListener('click', submit);
     document.getElementById('auth-pass').addEventListener('keydown', e => { if (e.key === 'Enter') submit(); });
@@ -359,12 +360,12 @@ const Auth = {
       if (next.length < this.PASSWORD_MIN) return err(`The new password needs at least ${this.PASSWORD_MIN} characters.`);
       if (next !== again) return err('The two new passwords are not the same.');
       if (next === current) return err('That is the current password.');
-      const btn = $('pw-save'); btn.disabled = true; err('');
+      const back = busyBtn($('pw-save'), 'Changing…'); err('');
       try {
         await this.changePassword(current, next);
         ow.innerHTML = '';
         this._toast('Password changed. Use the new one from now on.');
-      } catch (e) { err(this._friendly(e)); btn.disabled = false; }
+      } catch (e) { err(this._friendly(e)); back(); }
     };
     $('pw-save').addEventListener('click', submit);
     for (const id of ['pw-current', 'pw-new', 'pw-again']) $(id).addEventListener('keydown', e => { if (e.key === 'Enter') submit(); });
@@ -372,11 +373,7 @@ const Auth = {
     $('pw-current').focus();
   },
 
-  // The page's toast where there is one (the manager page), else an alert.
-  _toast(msg) {
-    const page = (typeof Manager !== 'undefined' && Manager._toast) ? Manager : null;
-    if (page) page._toast(msg); else alert(msg);
-  },
+  _toast(msg) { toast(msg); },
 
   // Firebase's error codes are not sentences. Make them ones.
   _friendly(e) {

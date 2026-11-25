@@ -1,4 +1,4 @@
-// firebase-sync.js — v2026-11-26.2
+// firebase-sync.js — v2026-11-26.3
 let _db = null, _configured = false, _config = null, _second = null;
 
 // Signed-in email for stamping writes (null when the device isn't signed in —
@@ -25,11 +25,25 @@ function _tx(fn) {
   });
   return Promise.race([work, slow]).finally(() => clearTimeout(timer));
 }
-// Listener errors funnel here; a permission-denied means the rules now require
-// sign-in and this device has none — pages set DB.onDenied to prompt for it.
-function _listenErr(label, err) {
-  console.error(label, err);
-  if (err && err.code === 'permission-denied' && typeof DB.onDenied === 'function') DB.onDenied(err);
+// A live list that failed. A permission-denied means the rules now require sign-in and this
+// device has none — pages set DB.onDenied to prompt for it. Anything else and the list has
+// stopped for good, so the page says which and offers to start it again (Lost in shared.js).
+function _listenErr(what, err, again) {
+  console.error(`${what} listen error:`, err);
+  if (err && err.code === 'permission-denied') { if (typeof DB.onDenied === 'function') DB.onDenied(err); return; }
+  if (again && typeof Lost !== 'undefined') Lost.add(what, again);
+}
+// A whole collection, live: callback(docs, fromCache). fromCache with nothing in it means
+// the server hasn't answered yet, not that there is nothing.
+function _liveList(what, query, docs, callback) {
+  let off = null;
+  const start = () => {
+    off = query().onSnapshot(
+      snap => { if (typeof Lost !== 'undefined') Lost.back(what); callback(docs(snap), !!(snap.metadata && snap.metadata.fromCache)); },
+      err  => _listenErr(what, err, start));
+  };
+  start();
+  return () => { if (off) off(); };
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -175,9 +189,8 @@ const DB = {
   // "remember my own id after submitting" bookkeeping is inherently too late.
   listenOrders(callback) {
     if (!this.isReady()) return ()=>{};
-    return _db.collection('orders').orderBy('submittedAt','desc')
-      .onSnapshot(snap=>callback(snap.docs.map(d=>({_id:d.id, _pendingWrite:d.metadata.hasPendingWrites, ...d.data()}))),
-        err=>_listenErr('Listen error:',err));
+    return _liveList('Orders', () => _db.collection('orders').orderBy('submittedAt','desc'),
+      snap => snap.docs.map(d=>({_id:d.id, _pendingWrite:d.metadata.hasPendingWrites, ...d.data()})), callback);
   },
 
   // ── CONNECTION STATUS & APP VERSION ─────────────────────────────────
@@ -626,6 +639,25 @@ const DB = {
     });
   },
 
+  // A rejected order back in the queue as it was: lines already emailed stay emailed, so
+  // they can't be sent a second time. If every line had been rejected one by one, they all
+  // come back.
+  async restoreOrder(orderId) {
+    if (!this.isReady()) throw new Error('Firebase not initialised');
+    const ref = _db.collection('orders').doc(orderId);
+    await _tx(async tx => {
+      const doc = await tx.get(ref);
+      if (!doc.exists) return;
+      const was = doc.data().items || [];
+      const items = was.length && was.every(i => i.rejected) ? was.map(i => ({ ...i, rejected: false })) : was;
+      const live  = items.filter(i => !i.rejected);
+      tx.update(ref, {
+        items, status: live.length > 0 && live.every(i => i.emailed) ? 'sent' : 'pending',
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+      });
+    });
+  },
+
   async resetOrderToPending(orderId) {
     if (!this.isReady()) throw new Error('Firebase not initialised');
     const ref = _db.collection('orders').doc(orderId);
@@ -649,11 +681,8 @@ const DB = {
 
   listenMaterialStock(callback) {
     if (!this.isReady()) return ()=>{};
-    return _db.collection('material_stock')
-      .onSnapshot(
-        snap => callback(snap.docs.map(d => ({ _id: d.id, ...d.data() }))),
-        err  => _listenErr('Material stock listen error:', err)
-      );
+    return _liveList('Recorded counts', () => _db.collection('material_stock'),
+      snap => snap.docs.map(d => ({ _id: d.id, ...d.data() })), callback);
   },
 
   // Records a stocktake — one item (progressive tick) or many (Review & submit).
@@ -739,10 +768,8 @@ const DB = {
   // with materials.csv, it must never be thrown at a sign-in prompt for it.
   listenCatalog(callback) {
     if (!this.isReady()) return ()=>{};
-    return _db.collection('meta').doc('catalogMaterials').onSnapshot(
-      snap => callback(snap.exists ? snap.data() : null, snap.metadata.fromCache),
-      err  => console.warn('Catalogue listen error:', err)
-    );
+    return _liveList('Materials list', () => _db.collection('meta').doc('catalogMaterials'),
+      snap => snap.exists ? snap.data() : null, callback);
   },
   // Every catalogue change goes through here: mutate(currentDoc|null) returns
   // the next document (or null to leave it alone) and runs inside a transaction,
@@ -834,11 +861,8 @@ const DB = {
 
   listenStock(callback) {
     if (!this.isReady()) return ()=>{};
-    return _db.collection('stock')
-      .onSnapshot(
-        snap => callback(snap.docs.map(d => ({ _id: d.id, ...d.data() }))),
-        err  => _listenErr('Stock listen error:', err)
-      );
+    return _liveList('Stock levels', () => _db.collection('stock'),
+      snap => snap.docs.map(d => ({ _id: d.id, ...d.data() })), callback);
   },
 
   // Enable tracking for an item (creates doc if not exists, or sets tracked=true).

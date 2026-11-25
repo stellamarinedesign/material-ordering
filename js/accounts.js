@@ -1,4 +1,4 @@
-// accounts.js — v2026-11-26.2
+// accounts.js — v2026-11-26.3
 //
 // Manager page only: the Accounts section of Settings, for a MASTER and for
 // nobody else — absent otherwise, not greyed. Every listed address with its
@@ -60,7 +60,7 @@ const Accounts = {
           <div class="acct-add">
             <input type="email" id="acct-new-email" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="name@example.com" value="${esc(this._newEmail || '')}">
             ${roleSel('floor', 'id="acct-new-role"')}
-            <button class="btn-sm btn-sm-save" data-acct-add${this._busy ? ' disabled' : ''}>Add</button>
+            <button class="btn-sm btn-sm-save" data-acct-add${this._busy ? ' disabled' : ''}>${this._busy ? 'Adding…' : 'Add account'}</button>
           </div>
           <div class="auth-err" id="acct-err">${esc(this._err)}</div>
           ${this._fresh ? this._freshHtml(this._fresh) : ''}
@@ -115,7 +115,7 @@ const Accounts = {
     const row = t.closest('[data-acct-row]'); if (!row) return;
     const email = row.dataset.acctRow;
     if (t.closest('[data-acct-make]'))   this._makeUser(email, t.closest('[data-acct-make]'));
-    if (t.closest('[data-acct-remove]')) this._save(Access.withoutAccount(Auth.access(), email), `${email} removed from the lists.`);
+    if (t.closest('[data-acct-remove]')) this._remove(email);
   },
   _onChange(e) {
     const t = e.target, row = t.closest('[data-acct-row]'); if (!row) return;
@@ -124,6 +124,10 @@ const Accounts = {
     if (t.matches('[data-acct-master]')) this._save(Access.withMaster(Auth.access(), email, t.checked), t.checked ? `${email} is now a master.` : `${email} is no longer a master.`);
   },
 
+  async _remove(email) {
+    if (!await Ask.confirm({ title: 'Remove this account?', body: `${email} stays able to sign in and sees nothing.`, yes: 'Remove account', no: 'Keep account', danger: true })) return;
+    await this._save(Access.withoutAccount(Auth.access(), email), `${email} removed from the lists.`);
+  },
   // Write the lists; log it; redraw. Returns whether it saved.
   async _save(next, note) {
     this._err = 'Saving…'; this.refresh();
@@ -135,7 +139,8 @@ const Accounts = {
       Manager._toast(note);
       return true;
     } catch (e) {
-      this._err = 'Could not save — ' + (e && e.code === 'permission-denied' ? 'the database refused it (not a master?)' : ((e && e.message) || e));
+      console.error('Accounts not saved:', e);
+      this._err = `Not saved: ${whyFailed(e)}. Try again.`;
       this.refresh();
       return false;
     }
@@ -157,7 +162,7 @@ const Accounts = {
     } finally { this._busy = false; this.refresh(); }
   },
   async _makeUser(email, btn) {
-    if (btn) btn.disabled = true;
+    const back = busyBtn(btn, 'Making…');
     const password = Access.tempPassword();
     try {
       await DB.createAccount(email, password);
@@ -167,7 +172,7 @@ const Accounts = {
       const code = (e && e.code) || '';
       this._fresh = code === 'auth/email-already-in-use' ? { email, exists: true } : { email, failed: Auth._friendly(e) };
     } finally {
-      if (btn) btn.disabled = false;
+      back();
       this.refresh();
       document.querySelector('.acct-fresh')?.scrollIntoView({ block: 'nearest' });
     }

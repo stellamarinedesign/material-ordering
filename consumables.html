@@ -12,9 +12,11 @@
   <title>Consumables Checkout</title>
   <link rel="icon" type="image/png" href="favicon.png">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" media="print" onload="this.media='all'">
   <link rel="stylesheet" href="fonts/tabler-icons.min.css">
-  <link rel="stylesheet" href="css/style.css?v=2026-11-26.2">
-  <link rel="stylesheet" href="css/themes.css?v=2026-11-26.2">
+  <link rel="stylesheet" href="css/style.css?v=2026-11-26.3">
+  <link rel="stylesheet" href="css/themes.css?v=2026-11-26.3">
   <style>
     .cons-stock-badge {
       font-size: 11px; font-family: var(--mono); padding: 2px 8px;
@@ -120,15 +122,26 @@
   </style>
 </head>
 <body class="floor">
+<!-- Start-up cover: painted before any script; see Boot in js/shared.js -->
+<div id="boot">
+  <div class="header"><div class="col"><div class="header-inner">
+    <span class="header-logo"></span>
+    <div class="header-left"><div class="header-title">Consumables Checkout</div><div class="header-ref"><span class="live-dot connecting"></span>Connecting…</div></div>
+  </div></div></div>
+  <div class="boot-tabs"></div>
+  <div class="col boot-rows"><div class="skel"></div><div class="skel"></div><div class="skel"></div><div class="skel"></div><div class="skel"></div><div class="skel"></div><div class="skel"></div><div class="skel"></div></div>
+  <div class="boot-late"><p>Can't reach the app. Check the Wi-Fi, then tap Reload.</p><button class="btn btn-primary" onclick="location.reload()">Reload</button></div>
+</div>
+<script>setTimeout(function(){var b=document.getElementById('boot');if(b)b.classList.add('late');},12000);</script>
 <div id="root"></div>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
 <!-- APP CHECK: remove this line to disable App Check (also remove init block in firebase-sync.js) -->
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-check-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
-<script src="js/shared.js?v=2026-11-26.2"></script>
-<script src="js/firebase-sync.js?v=2026-11-26.2"></script>
-<script src="js/auth.js?v=2026-11-26.2"></script>
+<script src="js/shared.js?v=2026-11-26.3"></script>
+<script src="js/firebase-sync.js?v=2026-11-26.3"></script>
+<script src="js/auth.js?v=2026-11-26.3"></script>
 <script>
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.getRegistrations().then(rs => rs.forEach(r => r.unregister()));
@@ -154,13 +167,14 @@ const ConsApp = {
   async init() {
     FirebaseConfig.forget();
     const ok = await DB.init(FirebaseConfig.get());
-    if (!ok) { this.showSetup('Could not connect to the database.'); return; }
-    this._baseConsumables = await Data.loadConsumables('./consumables.csv');
-    this.consumables = this._baseConsumables;
+    if (!ok) { this.showSetup("Can't reach the database. Check the Wi-Fi, then tap Reload."); return; }
+    DB.onDenied = () => Auth.denied();
     Auth.deviceName = ConsumablesDeviceName;
     Auth.start();
-    DB.onDenied = () => Auth.denied();
+    this._baseConsumables = await Data.loadConsumables('./consumables.csv', list => this._setConsumables(list));
+    this.consumables = this._baseConsumables;
     this.renderShell();
+    Boot.ready('page');
     this.startStockListening();
     this.startConnectionStatus();
     this.startVersionCheck();
@@ -169,6 +183,7 @@ const ConsApp = {
   // Firebase itself could not be reached (no network at first load, the SDK
   // blocked): a plain card and a Reload. The config is in the code (shared.js).
   showSetup(err) {
+    Boot.gone();
     document.getElementById('root').innerHTML = `
       <div class="setup-screen"><div class="setup-card" style="text-align:center">
         <div class="auth-logo"></div>
@@ -344,15 +359,25 @@ const ConsApp = {
     });
   },
 
+  // A changed list: the selection moves over by what each line is.
+  _setConsumables(list) {
+    const was = this.consumables;
+    this._baseConsumables = list;
+    this.consumables = GhostItems.merge(list, this._stock);
+    this._items = Kept.move(this._items, was, this.consumables);
+    if (!document.getElementById('app-root')) return;
+    this.renderTabs(); this._changed();
+  },
+
   startStockListening() {
     if (this._unsubStock) this._unsubStock();
-    this._unsubStock = DB.listenStock(records => {
+    this._unsubStock = DB.listenStock((records, fromCache) => {
       this._stock = records;
-      this._stockReady = true;
+      if (!fromCache || records.length) this._stockReady = true;
       // Fold in ghosts (items created during setup, CSV row pending) so tradesmen
       // can sign them out the same day they're shelved.
       this.consumables = GhostItems.merge(this._baseConsumables, records);
-      this._loadKept();
+      if (this._stockReady) this._loadKept();
       // Tabs are computed from TRACKED items, which need stock data — the initial
       // renderShell ran before any stock arrived, so they must be re-rendered here
       // too or the category bar stays stuck on just "All".
@@ -568,8 +593,9 @@ const ConsApp = {
     if (!q.trim()) filtered = [...filtered]; // the list is shared; a search result is its own
     filtered.sort((a,b)=>(order[this._stockStatus(a)]??0)-(order[this._stockStatus(b)]??0)||descCompare(a.description,b.description));
 
+    if (!this._stockReady) { list.innerHTML = skeleton(8, 'tiles'); return; }
     if (!filtered.length) {
-      list.innerHTML = this._stockReady && note || `<div class="empty-state"><i class="ti ti-package-off"></i><p>${this._stockReady ? 'No consumables in stock.' : 'Loading stock levels…'}</p></div>`;
+      list.innerHTML = note || `<div class="empty-state"><i class="ti ti-package-off"></i><p>No consumables in stock.</p></div>`;
       return;
     }
 

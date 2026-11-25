@@ -13,9 +13,11 @@
   <link rel="manifest" href="manifest.json">
   <link rel="icon" type="image/png" href="favicon.png">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" media="print" onload="this.media='all'">
   <link rel="stylesheet" href="fonts/tabler-icons.min.css">
-  <link rel="stylesheet" href="css/style.css?v=2026-11-26.2">
-  <link rel="stylesheet" href="css/themes.css?v=2026-11-26.2">
+  <link rel="stylesheet" href="css/style.css?v=2026-11-26.3">
+  <link rel="stylesheet" href="css/themes.css?v=2026-11-26.3">
   <style>
     /* Prominent header button — stocktakes are worker-run, no manager needed */
     .stocktake-btn {
@@ -52,15 +54,26 @@
   </style>
 </head>
 <body class="floor">
+<!-- Start-up cover: painted before any script; see Boot in js/shared.js -->
+<div id="boot">
+  <div class="header"><div class="col"><div class="header-inner">
+    <span class="header-logo"></span>
+    <div class="header-left"><div class="header-title">Material Orders</div><div class="header-ref"><span class="live-dot connecting"></span>Connecting…</div></div>
+  </div></div></div>
+  <div class="boot-tabs"></div>
+  <div class="col boot-rows"><div class="skel"></div><div class="skel"></div><div class="skel"></div><div class="skel"></div><div class="skel"></div><div class="skel"></div><div class="skel"></div><div class="skel"></div></div>
+  <div class="boot-late"><p>Can't reach the app. Check the Wi-Fi, then tap Reload.</p><button class="btn btn-primary" onclick="location.reload()">Reload</button></div>
+</div>
+<script>setTimeout(function(){var b=document.getElementById('boot');if(b)b.classList.add('late');},12000);</script>
 <div id="root"></div>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
 <!-- APP CHECK: remove this line to disable App Check (also remove init block in firebase-sync.js) -->
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-check-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
-<script src="js/shared.js?v=2026-11-26.2"></script>
-<script src="js/firebase-sync.js?v=2026-11-26.2"></script>
-<script src="js/auth.js?v=2026-11-26.2"></script>
+<script src="js/shared.js?v=2026-11-26.3"></script>
+<script src="js/firebase-sync.js?v=2026-11-26.3"></script>
+<script src="js/auth.js?v=2026-11-26.3"></script>
 <script>
 const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker global
   activeCat:  null,
@@ -84,21 +97,19 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
   _stTickBusy:    new Set(),        // per-item tick in-flight guards
 
   async init() {
-    if ('serviceWorker' in navigator) {
-      const regs = await navigator.serviceWorker.getRegistrations();
-      for (const r of regs) await r.unregister();
-    }
+    if ('serviceWorker' in navigator) navigator.serviceWorker.getRegistrations().then(rs => rs.forEach(r => r.unregister()));
     FirebaseConfig.forget();
     const ok = await DB.init(FirebaseConfig.get());
-    if (!ok) { this.showSetup('Could not connect to the database.'); return; }
-    this.materials = await Data.load('./materials.csv');
-    this._loadKept();
+    if (!ok) { this.showSetup("Can't reach the database. Check the Wi-Fi, then tap Reload."); return; }
     // Test mode has its own list, so a waiting order only ever goes to the database it was made for.
     Outbox.start(`mo_outbox${FirebaseConfig.isTestMode() ? '_test' : ''}`, () => this._renderOutbox());
+    DB.onDenied = () => Auth.denied();
     Auth.deviceName = DeviceName;
     Auth.start(user => { if (user) Outbox.resume(); });
-    DB.onDenied = () => Auth.denied();
+    this.materials = await Data.load('./materials.csv', list => this._setMaterials(list));
+    this._loadKept();
     this.renderApp();
+    Boot.ready('page');
     this._renderOutbox();
     this.startConnectionStatus();
     this.startVersionCheck();
@@ -128,6 +139,7 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
   // Firebase itself could not be reached (no network at first load, the SDK
   // blocked): a plain card and a Reload. The config is in the code (shared.js).
   showSetup(err) {
+    Boot.gone();
     document.getElementById('root').innerHTML = `
       <div class="setup-screen"><div class="setup-card" style="text-align:center">
         <div class="auth-logo"></div>
@@ -456,7 +468,7 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
       <div class="mat-info">
         <div class="mat-name">${descHtml(m.description)}</div>
         ${showCode ? `<div class="mat-partcode">${esc(m.partCode)}</div>` : '<div class="mat-partcode"></div>'}
-        <div class="mat-unit">${esc(unit)} · <span class="st-recorded">${Count.line(rec, unit, qty, mode)}</span></div>
+        <div class="mat-unit">${esc(unit)} · <span class="st-recorded">${Count.line(rec, unit, qty, mode, this._matStockReady)}</span></div>
       </div>
       ${Count.controls('st', m.id, qty, mode)}
     </div>`;
@@ -688,25 +700,33 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
   // ══════════════════════════════════════════
   startMatStockListening() {
     if (this._unsubMatStock) this._unsubMatStock();
-    this._unsubMatStock = DB.listenMaterialStock(recs => {
+    this._unsubMatStock = DB.listenMaterialStock((recs, fromCache) => {
       this._matStock = recs;
+      if (!fromCache || recs.length) this._matStockReady = true;
       if (this._stocktakeMode) this.renderList();  // refresh "recorded" figures live
     });
   },
 
   // Live materials list (Data.watch): when the manager changes the catalogue
-  // the tabs and list follow. Ids are permanent, so the cart is untouched; a
-  // category tab that no longer exists falls back to All.
+  // the tabs and list follow. A category tab that no longer exists falls back to All.
   startCatalogueWatch() {
     if (this._unsubCatalogue) this._unsubCatalogue();
-    this._unsubCatalogue = Data.watch(list => {
-      this.materials = list;
-      if (this.activeCat && !Data.categories(list).includes(this.activeCat)) { this.activeCat = null; this.activeSub = null; }
-      else if (this.activeSub && !Data.subcategories(list, this.activeCat).includes(this.activeSub)) this.activeSub = null;
-      const restoreFocus = captureInputFocus();
-      this.renderTabs(); this.renderList();
-      restoreFocus();
-    });
+    this._unsubCatalogue = Data.watch(list => this._setMaterials(list));
+  },
+  // A changed list: the order and the counts move over by what each line is.
+  _setMaterials(list) {
+    Order.replace(Kept.move(Order.all(), this.materials, list));
+    this._st._items = Kept.move(this._st._items, this.materials, list);
+    this._stModes   = Kept.move(this._stModes,   this.materials, list);
+    this.materials = list;
+    if (!document.getElementById('app-root')) return;   // not drawn yet
+    if (this.activeCat && !Data.categories(list).includes(this.activeCat)) { this.activeCat = null; this.activeSub = null; }
+    else if (this.activeSub && !Data.subcategories(list, this.activeCat).includes(this.activeSub)) this.activeSub = null;
+    const restoreFocus = captureInputFocus();
+    this.renderTabs(); this.renderList();
+    restoreFocus();
+    this.updateBadge(); this._updateStBadge();
+    if (document.getElementById('review-panel')?.classList.contains('open')) this._renderReviewContents();
   },
 
   toggleStocktakeMode() {
@@ -740,7 +760,7 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
   stType(el) {
     const id = +el.dataset.stQid, m = this.materials.find(x => x.id == id); if (!m) return;
     this.stSet(id, Count.read(el));
-    Count.typed(el, this._matStock.find(r => r._id === stockId(m)), stocktakeUnit(m), this.stGet(id), this.stModeOf(id));
+    Count.typed(el, this._matStock.find(r => r._id === stockId(m)), stocktakeUnit(m), this.stGet(id), this.stModeOf(id), this._matStockReady);
     this._updateStBadge();
   },
   stSetMode(id, mode) {
@@ -859,7 +879,7 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
   },
 
   newOrder() {
-    Order.clear(); this._orderNote=''; this._lastOrderId=null; this.orderRef=genRef(); this.activeCat=null; this.activeSub=null; this._scopeWas=null;
+    Order.clear(); this._orderNote=''; this._lastOrderId=null; this.orderRef=genRef(); this.activeCat=null; this.activeSub=null; this._wasactiveCat=null;
     this.closePanel('success-panel'); this.updateBadge();
     const ref=document.getElementById('order-ref'); if(ref) ref.textContent=this.orderRef;
     const srch=document.getElementById('search');   if(srch) srch.value='';

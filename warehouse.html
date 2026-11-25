@@ -9,21 +9,34 @@
   <title>Warehouse Intake</title>
   <link rel="icon" type="image/png" href="favicon.png">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" media="print" onload="this.media='all'">
   <link rel="stylesheet" href="fonts/tabler-icons.min.css">
-  <link rel="stylesheet" href="css/style.css?v=2026-11-26.2">
-  <link rel="stylesheet" href="css/themes.css?v=2026-11-26.2">
+  <link rel="stylesheet" href="css/style.css?v=2026-11-26.3">
+  <link rel="stylesheet" href="css/themes.css?v=2026-11-26.3">
 </head>
 <body class="floor">
+<!-- Start-up cover: painted before any script; see Boot in js/shared.js -->
+<div id="boot">
+  <div class="header"><div class="col"><div class="header-inner">
+    <span class="header-logo"></span>
+    <div class="header-left"><div class="header-title">Warehouse Intake</div><div class="header-ref"><span class="live-dot connecting"></span>Connecting…</div></div>
+  </div></div></div>
+  <div class="boot-tabs"></div>
+  <div class="col boot-rows"><div class="skel"></div><div class="skel"></div><div class="skel"></div><div class="skel"></div><div class="skel"></div></div>
+  <div class="boot-late"><p>Can't reach the app. Check the Wi-Fi, then tap Reload.</p><button class="btn btn-primary" onclick="location.reload()">Reload</button></div>
+</div>
+<script>setTimeout(function(){var b=document.getElementById('boot');if(b)b.classList.add('late');},12000);</script>
 <div id="root"></div>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
 <!-- APP CHECK: remove this line to disable App Check (also remove init block in firebase-sync.js) -->
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-check-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
-<script src="js/shared.js?v=2026-11-26.2"></script>
-<script src="js/firebase-sync.js?v=2026-11-26.2"></script>
-<script src="js/auth.js?v=2026-11-26.2"></script>
-<script src="js/intake.js?v=2026-11-26.2"></script>
+<script src="js/shared.js?v=2026-11-26.3"></script>
+<script src="js/firebase-sync.js?v=2026-11-26.3"></script>
+<script src="js/auth.js?v=2026-11-26.3"></script>
+<script src="js/intake.js?v=2026-11-26.3"></script>
 <script>
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.getRegistrations().then(rs => rs.forEach(r => r.unregister()));
@@ -31,8 +44,6 @@ if ('serviceWorker' in navigator) {
 
 const Warehouse = {
   orders:      [],
-  materials:   [],
-  consumables: [],
   activeTab:   'materials',
   _filters:    { materials: 'outstanding', consumables: 'outstanding' },
   _openOrders: new Set(),
@@ -44,14 +55,14 @@ const Warehouse = {
   async init() {
     FirebaseConfig.forget();
     const ok = await DB.init(FirebaseConfig.get());
-    if (!ok) { this.showSetup('Could not connect to the database.'); return; }
-    this.materials   = await Data.load('./materials.csv');
-    this.consumables = await Data.loadConsumables('./consumables.csv');
+    if (!ok) { this.showSetup("Can't reach the database. Check the Wi-Fi, then tap Reload."); return; }
     this._drafts = Intake.loadDrafts('warehouse');   // ticks left unsaved on this device
+    DB.onDenied = () => Auth.denied();
     Auth.deviceName = WarehouseDeviceName;
     Auth.start();
-    DB.onDenied = () => Auth.denied();
     this.renderShell();
+    this.renderList('materials'); this.renderList('consumables');
+    Boot.ready('page');
     this.startListening();
     this.startConnectionStatus();
     this.startVersionCheck();
@@ -60,6 +71,7 @@ const Warehouse = {
   // Firebase itself could not be reached (no network at first load, the SDK
   // blocked): a plain card and a Reload. The config is in the code (shared.js).
   showSetup(err) {
+    Boot.gone();
     document.getElementById('root').innerHTML = `
       <div class="setup-screen"><div class="setup-card" style="text-align:center">
         <div class="auth-logo"></div>
@@ -273,8 +285,9 @@ const Warehouse = {
 
   // ── LIVE DATA ─────────────────────────────────────────────────────────
   startListening() {
-    this._unsubOrders = DB.listenOrders(orders => {
+    this._unsubOrders = DB.listenOrders((orders, fromCache) => {
       this.orders = orders;
+      if (!fromCache || orders.length) this._ordersReady = true;
       this.renderList('materials');
       this.renderList('consumables');
     });
@@ -282,6 +295,7 @@ const Warehouse = {
 
   renderList(type) {
     const el = document.getElementById(`intake-list-${type}`); if (!el) return;
+    if (!this._ordersReady) { el.innerHTML = skeleton(4, 'tall'); return; }
     const restoreFocus = captureInputFocus(); // live snapshots re-render mid-typing
     el.innerHTML = Intake.renderCategoryList(this.orders, type, this._filters[type], this._openOrders, this._drafts);
     restoreFocus();

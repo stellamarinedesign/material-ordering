@@ -1,4 +1,4 @@
-// catalogue.js — v2026-11-26.2
+// catalogue.js — v2026-11-26.3
 //
 // Manager page only: the materials catalogue (Settings → Materials catalogue).
 // The list every page orders from lives in the database (meta/catalogMaterials,
@@ -328,8 +328,8 @@ const Catalogue = {
     this.render();
     this._loadErp();
   },
-  close() {
-    if (this.review && !confirm('Close without applying this import? Nothing has been changed yet.')) return;
+  async close() {
+    if (this.review && !await Ask.confirm({ title: 'Close without applying this import?', body: 'Nothing has been changed yet.', yes: 'Close', no: 'Keep reviewing' })) return;
     this.review = null;
     this._host.closePanel('catalogue-panel');
   },
@@ -337,8 +337,7 @@ const Catalogue = {
   _toast(msg, warn) { this._host._toast(msg, warn); },
   _fail(e, what) {
     console.error('[Catalogue]', what, e);
-    const denied = e && e.code === 'permission-denied';
-    this._toast(denied ? `${what}: the database refused it — this account can't change the catalogue.` : `${what}: ${(e && e.message) || 'something went wrong'}`, true);
+    tellFailed(what, e);
   },
 
   // Fed by the page's Data.watch — every change to the catalogue document.
@@ -393,11 +392,11 @@ const Catalogue = {
     </select>`;
   },
   // Handles a "New…" choice on any of those dropdowns; returns the final value.
-  _pickValue(sel) {
+  async _pickValue(sel) {
     if (sel.value !== '__new') return sel.value;
     const field = sel.dataset.pick;
     const label = { category: 'category', subcategory: 'type', qtyType: 'unit' }[field];
-    const name = (prompt(`Name of the new ${label}:`) || '').trim();
+    const name = await Ask.text({ title: `New ${label}`, label: 'Name', yes: `Add ${label}`, no: 'Cancel' });
     if (name && !this._vocab(field).includes(name)) this._extra[field].push(name);
     const keep = name || sel.dataset.prev || '';
     sel.outerHTML = this._pick(field, keep, [...sel.attributes].filter(a => a.name !== 'class' && a.name !== 'data-pick').map(a => `${a.name}="${esc(a.value)}"`).join(' '));
@@ -442,7 +441,7 @@ const Catalogue = {
       </div></div>`;
   },
   async moveToDatabase(btn) {
-    if (btn) btn.disabled = true;
+    const back = busyBtn(btn, 'Moving…');
     try {
       // Straight from the file — never from a cached or built-in fallback list.
       const res = await fetch(this.csvUrl + '?nocache=' + Date.now());
@@ -451,7 +450,7 @@ const Catalogue = {
       if (!list.length) throw new Error('materials.csv came back empty');
       const done = await DB.updateCatalog(cur => cur ? null : this.seed(list), { by: this._by() });
       this._toast(done ? `Moved ${list.length} materials into the database` : 'The list was already moved from another device');
-    } catch (e) { this._fail(e, 'Move failed'); if (btn) btn.disabled = false; }
+    } catch (e) { back(); this._fail(e, 'List not moved'); }
   },
 
   // ── MATERIALS tab ─────────────────────────────────────────────────────
@@ -600,7 +599,7 @@ const Catalogue = {
     const err = m => { $('cf-err').textContent = m || ''; };
     if (!form.shown) return err('Give the material a description.');
     if (!form.category || !form.subcategory || !form.qtyType) return err('Choose a category, a type and how it is ordered.');
-    const btn = $('cf-save'); btn.disabled = true; err('');
+    const back = busyBtn($('cf-save'), 'Saving…'); err('');
     try {
       const next = await DB.updateCatalog(cur => this.applyForm(cur, form), { by: this._by() });
       // The stocktake count is filed under the code (or the description, with
@@ -613,8 +612,9 @@ const Catalogue = {
       document.getElementById('overlay-wrap').innerHTML = '';
       this._toast(before ? 'Saved' : 'Added to the catalogue');
     } catch (e) {
-      btn.disabled = false;
-      err(e && e.code === 'permission-denied' ? "The database refused it — this account can't change the catalogue." : ((e && e.message) || 'Could not save.'));
+      console.error('[Catalogue] not saved', e);
+      back();
+      err(`Not saved: ${whyFailed(e)}. Try again.`);
     }
   },
   async _setRetired(it, retired) {
@@ -625,7 +625,7 @@ const Catalogue = {
       }, { by: this._by() });
       document.getElementById('overlay-wrap').innerHTML = '';
       this._toast(retired ? 'Retired — hidden from ordering and stocktake' : 'Restored');
-    } catch (e) { this._fail(e, 'Could not save'); }
+    } catch (e) { this._fail(e, retired ? 'Not retired' : 'Not restored'); }
   },
 
   // ── IMPORT tab ────────────────────────────────────────────────────────
@@ -764,10 +764,10 @@ const Catalogue = {
       add.push({ code: a.part.code, erpDesc: a.part.desc, category: s.category, subcategory: s.subcategory, qtyType: s.qtyType });
     }
     const dec = { changed: r.dec, add, retire: [...r.retire] };
-    btn.disabled = true;
+    const back = busyBtn(btn, 'Applying…');
     try {
       await DB.updateCatalog(cur => this.applyImport(cur, r.parsed, dec), { by: this._by(), keepPrevious: 'import' });
-    } catch (e) { btn.disabled = false; this._fail(e, 'Import not applied'); return; }
+    } catch (e) { back(); this._fail(e, 'Import not applied'); return; }
     // The list itself, slimmed, becomes the baseline for the next upload and
     // what "Add a material" searches. `fresh` = the parts offered as new this time.
     const erp = {
@@ -776,7 +776,7 @@ const Catalogue = {
       count: r.parsed.parts.length, fresh: r.diff.added.map(a => a.part.code), importedBy: this._by(),
     };
     try { await DB.saveErpParts(erp); this._setErp(erp); }
-    catch (e) { this._fail(e, 'Catalogue updated, but the part list itself was not stored'); }
+    catch (e) { this._fail(e, 'Import applied, part list not stored'); }
     this.review = null;
     this.tab = 'materials'; this.filter = 'all'; this.query = '';
     this.render();
@@ -784,10 +784,12 @@ const Catalogue = {
   },
   async undoImport(btn) {
     const redo = this.doc.hasUndo === 'undo';
-    if (!confirm(redo ? 'Put the import back as it was applied?' : 'Undo the last import? The catalogue goes back to how it was just before it — edits made on this screen since then are undone too.')) return;
-    btn.disabled = true;
+    if (!await Ask.confirm(redo
+      ? { title: 'Put the import back?', body: 'The catalogue goes back to how it was just after it.', yes: 'Put import back', no: 'Leave it undone' }
+      : { title: 'Undo the last import?', body: 'The catalogue goes back to how it was just before it. Edits made on this screen since then are undone too.', yes: 'Undo import', no: 'Keep import', danger: true })) return;
+    const back = busyBtn(btn, redo ? 'Putting back…' : 'Undoing…');
     try { await DB.restorePreviousCatalog(this._by()); this._toast(redo ? 'Import put back' : 'Import undone'); }
-    catch (e) { btn.disabled = false; this._fail(e, 'Could not undo'); }
+    catch (e) { back(); this._fail(e, redo ? 'Import not put back' : 'Import not undone'); }
   },
 
   // ── Events (delegated from the panel) ─────────────────────────────────
@@ -847,7 +849,7 @@ const Catalogue = {
     } else if (t.matches('[data-pick]')) {
       const code = t.closest('[data-add-code]').dataset.addCode, field = t.dataset.pick;
       t.dataset.prev = r.add[code][field] || '';
-      r.add[code][field] = this._pickValue(t);
+      this._pickValue(t).then(v => { r.add[code][field] = v; this._updateReviewSummary(); });
     }
     this._updateReviewSummary();
   },

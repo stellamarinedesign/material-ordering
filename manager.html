@@ -9,23 +9,36 @@
   <title>Material Orders — Manager</title>
   <link rel="icon" type="image/png" href="favicon.png">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" media="print" onload="this.media='all'">
   <link rel="stylesheet" href="fonts/tabler-icons.min.css">
-  <link rel="stylesheet" href="css/style.css?v=2026-11-26.2">
-  <link rel="stylesheet" href="css/themes.css?v=2026-11-26.2">
+  <link rel="stylesheet" href="css/style.css?v=2026-11-26.3">
+  <link rel="stylesheet" href="css/themes.css?v=2026-11-26.3">
 </head>
 <body>
+<!-- Start-up cover: painted before any script; see Boot in js/shared.js -->
+<div id="boot">
+  <div class="header manager-hdr"><div class="col"><div class="header-inner">
+    <span class="header-logo"></span>
+    <div class="header-left"><div class="header-title">Material Orders — Manager</div><div class="header-ref"><span class="live-dot connecting"></span>Connecting…</div></div>
+  </div></div></div>
+  <div class="boot-tabs"></div>
+  <div class="col boot-rows"><div class="skel"></div><div class="skel"></div><div class="skel"></div><div class="skel"></div><div class="skel"></div><div class="skel"></div></div>
+  <div class="boot-late"><p>Can't reach the app. Check the Wi-Fi, then tap Reload.</p><button class="btn btn-primary" onclick="location.reload()">Reload</button></div>
+</div>
+<script>setTimeout(function(){var b=document.getElementById('boot');if(b)b.classList.add('late');},12000);</script>
 <div id="root"></div>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
 <!-- APP CHECK: remove this line to disable App Check (also remove init block in firebase-sync.js) -->
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-check-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
-<script src="js/shared.js?v=2026-11-26.2"></script>
-<script src="js/firebase-sync.js?v=2026-11-26.2"></script>
-<script src="js/auth.js?v=2026-11-26.2"></script>
-<script src="js/intake.js?v=2026-11-26.2"></script>
-<script src="js/catalogue.js?v=2026-11-26.2"></script>
-<script src="js/accounts.js?v=2026-11-26.2"></script>
+<script src="js/shared.js?v=2026-11-26.3"></script>
+<script src="js/firebase-sync.js?v=2026-11-26.3"></script>
+<script src="js/auth.js?v=2026-11-26.3"></script>
+<script src="js/intake.js?v=2026-11-26.3"></script>
+<script src="js/catalogue.js?v=2026-11-26.3"></script>
+<script src="js/accounts.js?v=2026-11-26.3"></script>
 <!-- Vendored xlsx-js-style (SheetJS fork with cell styling) — stocktake Excel exports -->
 <script src="js/xlsx-style.min.js"></script>
 <!-- Vendored ExcelJS — used only for the consumables export, which embeds drawn
@@ -155,13 +168,15 @@ const Manager = {
   async init() {
     FirebaseConfig.forget();
     const ok = await DB.init(FirebaseConfig.get());
-    if (!ok) { this.showSetup('Could not connect to the database.'); return; }
-    this.materials    = await Data.load('./materials.csv');
-    this._baseConsumables = await Data.loadConsumables('./consumables.csv');
-    this.consumables  = this._baseConsumables;
+    if (!ok) { this.showSetup("Can't reach the database. Check the Wi-Fi, then tap Reload."); return; }
+    DB.onDenied = () => Auth.denied();
     Auth.deviceName = ManagerDeviceName;
     Auth.start(() => Auth.guardManagerPage());
-    DB.onDenied = () => Auth.denied();
+    [this.materials, this._baseConsumables] = await Promise.all([
+      Data.load('./materials.csv', list => this._setMaterials(list)),
+      Data.loadConsumables('./consumables.csv', list => this._setConsumables(list)),
+    ]);
+    this.consumables  = this._baseConsumables;
     this.orderRef  = genRef();
     this._intakeDrafts = Intake.loadDrafts('manager');
     this._loadStaged();
@@ -169,6 +184,7 @@ const Manager = {
     this._loadCarts();
     this._loadOwed();
     this._loadEmailOpen();
+    Boot.ready('page');
     const verEl = document.getElementById('app-version');
     if (verEl) verEl.textContent = verLabel(APP_VERSION);
     this.startListening();
@@ -230,6 +246,7 @@ const Manager = {
   // Firebase itself could not be reached (no network at first load, the SDK
   // blocked): a plain card and a Reload. The config is in the code (shared.js).
   showSetup(err) {
+    Boot.gone();
     document.getElementById('root').innerHTML = `
       <div class="setup-screen"><div class="setup-card" style="text-align:center">
         <div class="auth-logo"></div>
@@ -250,12 +267,12 @@ const Manager = {
             <span class="header-logo"></span>
             <div class="header-left">
               <div class="header-title">Material Orders — Manager</div>
-              <div class="header-ref"><span class="live-dot" id="live-dot"></span><span id="live-label">Live</span> &nbsp;·&nbsp; <span id="app-version" style="opacity:0.6;font-family:var(--mono)"></span></div>
+              <div class="header-ref"><span class="live-dot connecting" id="live-dot"></span><span id="live-label">Connecting…</span> &nbsp;·&nbsp; <span id="app-version" style="opacity:0.6;font-family:var(--mono)"></span></div>
             </div>
             <div class="header-actions">
               <span class="role-pill" id="role-pill">${esc(ManagerDeviceName.get() || 'Manager')}</span>
               <span id="auth-pill"></span>
-              <button class="icon-btn" id="btn-settings" title="Settings"><i class="ti ti-settings"></i></button>
+              <button class="icon-btn" id="btn-settings" aria-label="Settings"><i class="ti ti-settings"></i></button>
             </div>
           </div></div>
         </div>
@@ -266,7 +283,7 @@ const Manager = {
         <!-- MAIN TABS -->
         <div style="background:var(--surface);border-bottom:1px solid var(--border);flex-shrink:0">
           <div class="col" style="padding:0">
-            <div style="display:flex;overflow-x:auto;scrollbar-width:none;align-items:stretch">
+            <div class="main-tabs" id="main-tabs">
               <div class="main-tab-group">
                 <div class="main-tab-group-label">Materials</div>
                 <div style="display:flex">
@@ -349,9 +366,9 @@ const Manager = {
             <input type="search" id="no-search" placeholder="Search part code or description…" autocomplete="off">
           </div></div></div>
           <div class="app-scroll" id="no-scroll"><div class="col"><div class="mat-list" id="no-mat-list"></div></div></div>
-          <div class="action-bar"><div class="action-bar-inner">
-            <button class="btn btn-danger" id="btn-no-clear-main"><i class="ti ti-x"></i> Clear order</button>
-            <button class="btn btn-primary" id="btn-no-review" style="margin-top:2px"><i class="ti ti-clipboard-list"></i>Review &amp; compose email</button>
+          <div class="action-bar"><div class="action-bar-inner split">
+            <button class="btn-text" id="btn-no-clear-main" hidden>Clear order</button>
+            <button class="btn btn-primary" id="btn-no-review"><i class="ti ti-clipboard-list"></i>Review &amp; compose email</button>
           </div></div>
         </div>
 
@@ -385,9 +402,9 @@ const Manager = {
               <i class="ti ti-x"></i><span id="history-filter-label">All items</span>
             </div>
             <input type="search" id="history-item-search" placeholder="Filter by item…" autocomplete="off"
-              style="width:140px;height:28px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);padding:0 10px;font-size:12px;color:var(--text);outline:none">
+              style="width:150px;height:36px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);padding:0 10px;font-size:12px;color:var(--text);outline:none">
             <input type="search" id="history-person-search" placeholder="Filter by checkout name…" autocomplete="off"
-              style="width:210px;height:28px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);padding:0 10px;font-size:12px;color:var(--text);outline:none">
+              style="width:210px;height:36px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);padding:0 10px;font-size:12px;color:var(--text);outline:none">
           </div>
           <div class="app-scroll" id="history-scroll">
             <div id="history-list" class="history-list"></div>
@@ -405,7 +422,7 @@ const Manager = {
                 <div class="intake-filter-chip" data-filter="completed"><i class="ti ti-circle-check"></i> Completed</div>
                 <div class="intake-filter-chip" data-filter="cancelled"><i class="ti ti-ban"></i> Cancelled</div>
               </div>
-              <button class="icon-btn" id="btn-intake-edit-mat" title="Edit mode — combine/cancel deliveries"><i class="ti ti-pencil"></i></button>
+              <button class="btn-sm" id="btn-intake-edit-mat"><i class="ti ti-pencil"></i> Edit deliveries</button>
             </div>
           </div>
           <div class="intake-scroll app-scroll">
@@ -435,7 +452,7 @@ const Manager = {
             <div id="stocktake-export-bar" style="display:flex;align-items:center;gap:12px;padding:8px 0 2px;flex-wrap:wrap">
               <button class="btn-sm btn-sm-save" id="btn-st-export"><i class="ti ti-file-spreadsheet"></i> Export stocktake</button>
               <button class="btn-sm" id="btn-st-export-blank"><i class="ti ti-printer"></i> Export blank count sheet</button>
-              <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text2);cursor:pointer">
+              <label style="display:flex;align-items:center;gap:8px;min-height:36px;font-size:12px;color:var(--text2);cursor:pointer">
                 <input type="checkbox" id="st-export-grouped" checked style="width:16px;height:16px">
                 Group by category &amp; subcategory
               </label>
@@ -471,7 +488,7 @@ const Manager = {
                 <div class="intake-filter-chip" data-filter="completed"><i class="ti ti-circle-check"></i> Completed</div>
                 <div class="intake-filter-chip" data-filter="cancelled"><i class="ti ti-ban"></i> Cancelled</div>
               </div>
-              <button class="icon-btn" id="btn-intake-edit-cons" title="Edit mode — combine/cancel deliveries"><i class="ti ti-pencil"></i></button>
+              <button class="btn-sm" id="btn-intake-edit-cons"><i class="ti ti-pencil"></i> Edit deliveries</button>
             </div>
           </div>
           <div class="intake-scroll app-scroll">
@@ -516,8 +533,7 @@ const Manager = {
           </div>
           <div class="panel-scroll"><div class="panel-col" id="no-review-contents"></div></div>
           <div class="action-bar"><div class="action-bar-inner">
-            <button class="btn btn-danger" id="btn-no-clear-inner"><i class="ti ti-x"></i> Clear order</button>
-            <button class="btn btn-orange" id="btn-no-add-to-orders" style="margin-top:2px">
+            <button class="btn btn-orange" id="btn-no-add-to-orders">
               <i class="ti ti-send"></i> Add to order queue
             </button>
             <div id="no-email-buttons" style="margin-top:2px"></div>
@@ -537,9 +553,9 @@ const Manager = {
             <input type="search" id="co-search" placeholder="Search part code or description…" autocomplete="off">
           </div></div></div>
           <div class="app-scroll" id="co-scroll"><div class="col"><div class="mat-list" id="co-mat-list"></div></div></div>
-          <div class="action-bar"><div class="action-bar-inner">
-            <button class="btn btn-danger" id="btn-co-clear-main"><i class="ti ti-x"></i> Clear order</button>
-            <button class="btn btn-primary" id="btn-co-review" style="margin-top:2px"><i class="ti ti-clipboard-list"></i>Review &amp; compose email
+          <div class="action-bar"><div class="action-bar-inner split">
+            <button class="btn-text" id="btn-co-clear-main" hidden>Clear order</button>
+            <button class="btn btn-primary" id="btn-co-review"><i class="ti ti-clipboard-list"></i>Review &amp; compose email
               <span class="sidebar-count zero" id="co-badge" style="margin-left:4px">0</span>
             </button>
           </div></div>
@@ -580,10 +596,12 @@ const Manager = {
           <div class="app-scroll" id="receive-scroll"><div class="col"><div class="mat-list" id="receive-mat-list"></div></div></div>
           <div class="action-bar"><div class="action-bar-inner">
             <div class="inline-error" id="receive-error" role="alert" hidden></div>
-            <button class="btn btn-danger" id="btn-receive-clear-main"><i class="ti ti-x"></i> Clear order</button>
-            <button class="btn btn-primary" id="btn-receive-submit" style="margin-top:2px"><i class="ti ti-truck-delivery"></i>Confirm Stock Received
+            <div class="action-bar-inner split" style="width:100%">
+            <button class="btn-text" id="btn-receive-clear-main" hidden>Clear list</button>
+            <button class="btn btn-primary" id="btn-receive-submit"><i class="ti ti-truck-delivery"></i>Confirm Stock Received
               <span class="sidebar-count zero" id="receive-badge" style="margin-left:4px">0</span>
             </button>
+            </div>
           </div></div>
         </div>
 
@@ -662,7 +680,7 @@ const Manager = {
       document.querySelectorAll('#stocktake-filter .intake-filter-chip').forEach(c => c.classList.toggle('active', c === chip));
       this.renderStocktakeView();
     });
-    document.getElementById('stocktake-search').addEventListener('input', () => this._renderStActiveList());
+    document.getElementById('stocktake-search').addEventListener('input', e => { if (searchScope(this, e.target.value.trim(), '_stActiveCat', '_stActiveSub')) this.renderStocktakeTabs(); this._renderStActiveList(); });
     document.getElementById('stocktake-tabs-wrap').addEventListener('click', e => {
       const c = e.target.closest('[data-st-cat-idx]');
       const s = e.target.closest('[data-st-sub-idx]');
@@ -692,8 +710,9 @@ const Manager = {
       const inp = e.target.closest('[data-mst-qid]'); if (inp) this.mstType(inp);
     });
     document.getElementById('btn-mst-review').addEventListener('click', () => this.mstOpenReview());
-    document.getElementById('btn-mst-clear').addEventListener('click', () => {
-      if (!confirm('Clear all entered counts?')) return;
+    document.getElementById('btn-mst-clear').addEventListener('click', async () => {
+      if (!this.mstCount()) { toast('No counts entered yet', true); return; }
+      if (!await Ask.confirm({ title: 'Clear every count entered here?', body: 'Counts already recorded stay recorded.', yes: 'Clear counts', no: 'Keep counts', danger: true })) return;
       this._mstCart = {}; this._mstModes = {};
       this._updateMstBadge(); this.renderStocktakeCount();
     });
@@ -763,13 +782,9 @@ const Manager = {
     document.getElementById('btn-no-review')      .addEventListener('click', () => this.noOpenReview());
     document.getElementById('btn-close-no-review').addEventListener('click', () => this.closePanel('no-review-panel'));
     document.getElementById('btn-no-add-to-orders').addEventListener('click', () => this.noAddToOrders());
-    document.getElementById('btn-no-clear-main').addEventListener('click', () => {
-      if (!confirm('Clear all items?')) return;
-      this._no._items = {}; this._cartWaiting.no = []; this._noNote = ''; this.orderRef = genRef();
-      this._updateNoBadge(); this.renderNoList(); this.closePanel('no-review-panel');
-    });
-    document.getElementById('btn-no-clear-inner').addEventListener('click', () => {
-      if (!confirm('Clear all items?')) return;
+    document.getElementById('btn-no-clear-main').addEventListener('click', async () => {
+      const n = this.noCount();
+      if (!await Ask.confirm({ title: 'Clear this order?', body: `${n} line${n !== 1 ? 's' : ''} will be taken off.`, yes: 'Clear order', no: 'Keep order', danger: true })) return;
       this._no._items = {}; this._cartWaiting.no = []; this._noNote = ''; this.orderRef = genRef();
       this._updateNoBadge(); this.renderNoList(); this.closePanel('no-review-panel');
     });
@@ -791,17 +806,18 @@ const Manager = {
       if (bin) { e.stopPropagation(); this.coZero(+bin.dataset.bin); }
     });
     this._cartFields('co-mat-list', 'qid', () => this.consumables, 'co');
-    document.getElementById('co-search').addEventListener('input', () => this.renderCoList());
+    document.getElementById('co-search').addEventListener('input', e => { if (searchScope(this, e.target.value.trim(), '_coActiveCat', '_coActiveSub')) this.renderCoTabs(); this.renderCoList(); });
     document.getElementById('btn-co-review').addEventListener('click', () => this.coOpenReview());
-    document.getElementById('btn-co-clear-main').addEventListener('click', () => {
-      if (!confirm('Clear all items?')) return;
+    document.getElementById('btn-co-clear-main').addEventListener('click', async () => {
+      const n = this.coCount();
+      if (!await Ask.confirm({ title: 'Clear this order?', body: `${n} line${n !== 1 ? 's' : ''} will be taken off.`, yes: 'Clear order', no: 'Keep order', danger: true })) return;
       this._co._items = {}; this._cartWaiting.co = []; this._coOrderRef = null;
       this._updateCoBadge(); this.renderCoList(); this.closePanel('co-review-panel');
     });
     document.getElementById('btn-close-co-review').addEventListener('click', () => this.closePanel('co-review-panel'));
     document.getElementById('co-review-contents').addEventListener('click', e => {
       const dec=e.target.closest('[data-rdec]'), inc=e.target.closest('[data-rinc]'), rem=e.target.closest('[data-rrem]');
-      if (dec) this.coAdj(+dec.dataset.rdec, -1);
+      if (dec && this.coGet(+dec.dataset.rdec) > 1) this.coAdj(+dec.dataset.rdec, -1);   // at 1 it stops: Remove takes a line off
       if (inc) this.coAdj(+inc.dataset.rinc,  1);
       if (rem) this.coZero(+rem.dataset.rrem);
     });
@@ -809,14 +825,8 @@ const Manager = {
     document.getElementById('co-email-buttons').addEventListener('click', e => {
       const all = e.target.closest('[data-co-email-all]');
       const cat = e.target.closest('[data-co-cat]');
-      const clr = e.target.closest('[data-co-clear]');
       if (all) this.coOpenBulkEmail();
       else if (cat) this.coOpenCategoryEmail(cat.dataset.coCat);
-      else if (clr) {
-        if (!confirm('Clear all items?')) return;
-        this._co._items = {}; this._cartWaiting.co = []; this._coOrderRef = null;
-        this._updateCoBadge(); this.renderCoList(); this.closePanel('co-review-panel');
-      }
     });
 
     // Receive Stock panel
@@ -836,10 +846,11 @@ const Manager = {
       if (bin) { e.stopPropagation(); this.receiveZero(+bin.dataset.bin); }
     });
     this._cartFields('receive-mat-list', 'qid', () => this.consumables, 'receive');
-    document.getElementById('receive-search').addEventListener('input', () => this.renderReceiveList());
+    document.getElementById('receive-search').addEventListener('input', e => { if (searchScope(this, e.target.value.trim(), '_receiveActiveCat', '_receiveActiveSub')) this.renderReceiveTabs(); this.renderReceiveList(); });
     document.getElementById('btn-receive-submit').addEventListener('click', () => this.receiveSubmit());
-    document.getElementById('btn-receive-clear-main').addEventListener('click', () => {
-      if (!confirm('Clear all items?')) return;
+    document.getElementById('btn-receive-clear-main').addEventListener('click', async () => {
+      const n = this.receiveCount();
+      if (!await Ask.confirm({ title: 'Clear this list?', body: `${n} line${n !== 1 ? 's' : ''} will be taken off.`, yes: 'Clear list', no: 'Keep list', danger: true })) return;
       this._receive._items = {};
       document.getElementById('receive-reference').value = '';
       inlineError('receive-error', '');
@@ -890,7 +901,7 @@ const Manager = {
       if (combDel)    { e.stopPropagation(); this.excludeCombinedLine(combDel.dataset.combDel, combDel.dataset.orderId, combDel.dataset.partcode); return; }
       if (combMrg)    { e.stopPropagation(); this.localMergeLines(combMrg.dataset.combMerge, combMrg.dataset.partcode); return; }
       if (resetItem)  { e.stopPropagation(); this.resetItemEmailed(resetItem.dataset.resetItem, resetItem.dataset.category, resetItem.dataset.partcode); return; }
-      if (resetOrder) { e.stopPropagation(); this.resetOrderToPending(resetOrder.dataset.resetOrder); return; }
+      if (resetOrder) { e.stopPropagation(); this.restoreOrder(resetOrder.dataset.resetOrder); return; }
       const unexclude = e.target.closest('[data-unexclude]');
       const unmerge   = e.target.closest('[data-unmerge]');
       if (unexclude)  { e.stopPropagation(); this.unexcludeLine(unexclude.dataset.unexclude, unexclude.dataset.orderId, unexclude.dataset.partcode); return; }
@@ -935,7 +946,7 @@ const Manager = {
       if (bin) { e.stopPropagation(); this.noZero(+bin.dataset.bin); }
     });
     this._cartFields('no-mat-list', 'qid', () => this.materials, 'no');
-    document.getElementById('no-search').addEventListener('input', () => this.renderNoList());
+    document.getElementById('no-search').addEventListener('input', e => { if (searchScope(this, e.target.value.trim(), 'activeCat', 'activeSub')) this.renderNoTabs(); this.renderNoList(); });
     document.getElementById('no-review-contents').addEventListener('click', e => {
       const dec=e.target.closest('[data-rdec]'), inc=e.target.closest('[data-rinc]'), rem=e.target.closest('[data-rrem]');
       if (dec) this.noRevAdj(+dec.dataset.rdec, -1);
@@ -975,7 +986,7 @@ const Manager = {
       if (saveThresh)  { e.stopPropagation(); this.stockSaveThresholds(saveThresh.dataset.stockThresh); return; }
       if (hdr)         { this.toggleStockCard(hdr.dataset.stockHdr); }
     });
-    document.getElementById('stock-search').addEventListener('input', () => this.renderStockList());
+    document.getElementById('stock-search').addEventListener('input', e => { if (searchScope(this, e.target.value.trim(), '_stockActiveCat', '_stockActiveSub')) this.renderStockTabs(); this.renderStockList(); });
     document.getElementById('stock-tabs-wrap').addEventListener('click', e => {
       const t = e.target.closest('[data-stock-cat]');
       const s = e.target.closest('[data-stock-sub]');
@@ -1042,6 +1053,8 @@ const Manager = {
     document.getElementById('history-person-search').addEventListener('input', () => this.renderHistoryList());
     document.getElementById('history-item-search').addEventListener('input', () => this.renderHistoryList());
 
+    Strip.watch(document.getElementById('main-tabs'), 'main');
+    ['intake-filter-mat', 'intake-filter-cons', 'stocktake-filter', 'barcodes-filter'].forEach(id => Strip.watch(document.getElementById(id), id));
     this._populateSettings();
     this.renderQueue();
     this.renderNoTabs();
@@ -1095,6 +1108,7 @@ const Manager = {
       document.getElementById(id)?.classList.toggle('active', key === tab);
     });
     if (tab === 'history') this._loadHistory();
+    Strip.watch(document.getElementById('main-tabs'), 'main');
   },
 
   // ══════════════════════════════════════════
@@ -1103,6 +1117,7 @@ const Manager = {
   renderIntakeMat() {
     if (this._editMode.materials) { this.renderEditList('materials'); return; }
     const el = document.getElementById('intake-list-mat'); if (!el) return;
+    if (!this._ordersReady) { el.innerHTML = skeleton(4, 'tall'); return; }
     const restoreFocus = captureInputFocus(); // live snapshots re-render mid-typing
     el.innerHTML = Intake.renderCategoryList(this.orders, 'materials', this._intakeFilter.materials, this._intakeOpenOrders, this._intakeDrafts, true);
     restoreFocus();
@@ -1111,6 +1126,7 @@ const Manager = {
   renderIntakeCons() {
     if (this._editMode.consumables) { this.renderEditList('consumables'); return; }
     const el = document.getElementById('intake-list-cons'); if (!el) return;
+    if (!this._ordersReady) { el.innerHTML = skeleton(4, 'tall'); return; }
     const restoreFocus = captureInputFocus();
     el.innerHTML = Intake.renderCategoryList(this.orders, 'consumables', this._intakeFilter.consumables, this._intakeOpenOrders, this._intakeDrafts, true);
     restoreFocus();
@@ -1324,8 +1340,7 @@ const Manager = {
     try {
       await Promise.all(orderIds.map(id => DB.setDeliveryCancelled(id, groupKey, false)));
     } catch (e) {
-      console.error('Restore failed:', e);
-      alert('Restore failed — please try again.');
+      tellFailed('Delivery not restored', e);
     }
   },
 
@@ -1438,9 +1453,12 @@ const Manager = {
     // Warn if any selected delivery has already had its received quantities added to
     // stock — cancelling won't pull that stock back out.
     const nStocked = groups.filter(g => Intake.appliedStockTotal(g.entries) > 0).length;
-    const stockWarn = nStocked > 0
-      ? `\n\nWARNING: ${nStocked} of these deliver${nStocked === 1 ? 'y has' : 'ies have'} already had received quantities added to consumables stock. Cancelling will NOT remove that stock — adjust it manually in the Stock tab if needed.` : '';
-    if (!confirm(`Cancel ${groups.length} deliver${groups.length === 1 ? 'y' : 'ies'}? They'll move to the Cancelled tab and stop being tracked for receiving. Other deliveries from the same orders are not affected. You can restore them later.${stockWarn}`)) return;
+    const n = groups.length, many = n !== 1;
+    if (!await Ask.confirm({
+      title: many ? `Cancel ${n} deliveries?` : `Cancel the ${groups[0].category} delivery?`,
+      body: `${many ? 'They move' : 'It moves'} to Cancelled, and can be restored from there.${nStocked ? ' What was added to stock stays in stock.' : ''}`,
+      yes: many ? 'Cancel deliveries' : 'Cancel delivery', no: many ? 'Keep deliveries' : 'Keep delivery', danger: true,
+    })) return;
     try {
       const ops = [];
       for (const g of groups) {
@@ -1451,8 +1469,7 @@ const Manager = {
       this._editSelected[type].clear();
       this.toggleEditMode(type);
     } catch (e) {
-      console.error('Cancel failed:', e);
-      alert('Cancel failed: ' + e.message);
+      tellFailed('Not cancelled', e, 'Some may have been. Check the list, then try again.');
     }
   },
 
@@ -1461,14 +1478,17 @@ const Manager = {
     if (orderIds.length < 2) return;
     const [target, ...sources] = orderIds;
     const targetOrder = this.orders.find(o => o._id === target);
-    if (!confirm(`Combine the selected deliveries into one order ("${targetOrder?.ref || target}")? This merges ${orderIds.length} order documents and permanently deletes the other ${sources.length} — cannot be undone.`)) return;
+    if (!await Ask.confirm({
+      title: `Combine ${orderIds.length} orders into one?`,
+      body: `Everything moves to ${targetOrder?.ref || target} and the other ${sources.length === 1 ? 'order is' : sources.length + ' orders are'} deleted. This cannot be undone.`,
+      yes: 'Combine orders', no: 'Keep separate', danger: true,
+    })) return;
     try {
       await DB.combineOrders(target, sources);
       this._editSelected[type].clear();
       this.toggleEditMode(type);
     } catch (e) {
-      console.error('Combine failed:', e);
-      alert('Combine failed: ' + e.message);
+      tellFailed('Not combined', e);
     }
   },
 
@@ -1478,7 +1498,12 @@ const Manager = {
   async deleteSelectedDeliveries(type) {
     const groups = this._editSelectedGroups(type);
     if (!groups.length) return;
-    if (!confirm(`Permanently delete ${groups.length} cancelled deliver${groups.length === 1 ? 'y' : 'ies'}? Items belonging to other deliveries on the same orders are kept. This cannot be undone.`)) return;
+    const n = groups.length, many = n !== 1;
+    if (!await Ask.confirm({
+      title: many ? `Delete ${n} cancelled deliveries?` : `Delete the cancelled ${groups[0].category} delivery?`,
+      body: 'This cannot be undone.', rows: groups.map(g => [g.category, `${g.entries.length} line${g.entries.length !== 1 ? 's' : ''}`]),
+      yes: many ? 'Delete deliveries' : 'Delete delivery', no: many ? 'Keep deliveries' : 'Keep delivery', danger: true,
+    })) return;
     try {
       const ops = [];
       for (const g of groups) {
@@ -1493,8 +1518,7 @@ const Manager = {
       this._editSelected[type].clear();
       this.toggleEditMode(type);
     } catch (e) {
-      console.error('Delete failed:', e);
-      alert('Delete failed: ' + e.message);
+      tellFailed('Not deleted', e, 'Some may have been. Check the list, then try again.');
     }
   },
 
@@ -1505,8 +1529,9 @@ const Manager = {
   // ══════════════════════════════════════════
   startMatStockListening() {
     if (this._unsubMatStockMgr) this._unsubMatStockMgr();
-    this._unsubMatStockMgr = DB.listenMaterialStock(recs => {
+    this._unsubMatStockMgr = DB.listenMaterialStock((recs, fromCache) => {
       this._matStock = recs;
+      if (!fromCache || recs.length) this._matStockReady = true;
       if (this.mainTab === 'stocktake' && this._stocktakeView !== 'history') this._renderStActiveList();
     });
   },
@@ -1516,19 +1541,35 @@ const Manager = {
   // screen in Settings. A category tab that no longer exists falls back to All.
   startCatalogueWatch() {
     if (this._unsubCatalogue) this._unsubCatalogue();
-    this._unsubCatalogue = Data.watch(list => {
-      this.materials = list;
-      const cats = Data.categories(list);
-      if (this.activeCat && !cats.includes(this.activeCat)) { this.activeCat = null; this.activeSub = null; }
-      else if (this.activeSub && !Data.subcategories(list, this.activeCat).includes(this.activeSub)) this.activeSub = null;
-      if (this._stActiveCat && !cats.includes(this._stActiveCat)) { this._stActiveCat = null; this._stActiveSub = null; }
-      else if (this._stActiveSub && !Data.subcategories(list, this._stActiveCat).includes(this._stActiveSub)) this._stActiveSub = null;
-      const restoreFocus = captureInputFocus();
-      this._fillCarts();
-      this.renderNoTabs(); this.renderNoList();
-      this.renderStocktakeTabs(); this._renderStActiveList();
-      restoreFocus();
-    }, doc => Catalogue.onDoc(doc));
+    this._unsubCatalogue = Data.watch(list => this._setMaterials(list), doc => Catalogue.onDoc(doc));
+  },
+  _setMaterials(list) {
+    this._no._items = Kept.move(this._no._items, this.materials, list);
+    this._mstCart   = Kept.move(this._mstCart,   this.materials, list);
+    this._mstModes  = Kept.move(this._mstModes,  this.materials, list);
+    this.materials = list;
+    if (!document.getElementById('app-root')) return;   // not drawn yet
+    const cats = Data.categories(list);
+    if (this.activeCat && !cats.includes(this.activeCat)) { this.activeCat = null; this.activeSub = null; }
+    else if (this.activeSub && !Data.subcategories(list, this.activeCat).includes(this.activeSub)) this.activeSub = null;
+    if (this._stActiveCat && !cats.includes(this._stActiveCat)) { this._stActiveCat = null; this._stActiveSub = null; }
+    else if (this._stActiveSub && !Data.subcategories(list, this._stActiveCat).includes(this._stActiveSub)) this._stActiveSub = null;
+    const restoreFocus = captureInputFocus();
+    this._fillCarts();
+    this.renderNoTabs(); this.renderNoList();
+    this.renderStocktakeTabs(); this._renderStActiveList();
+    restoreFocus();
+  },
+  _setConsumables(list) {
+    const was = this.consumables;
+    this._baseConsumables = list;
+    this.consumables = GhostItems.merge(list, this._stock);
+    this._co._items      = Kept.move(this._co._items,      was, this.consumables);
+    this._receive._items = Kept.move(this._receive._items, was, this.consumables);
+    if (!document.getElementById('app-root')) return;
+    this._fillCarts();
+    this.renderStockTabs(); this.renderStockList();
+    this.renderCoTabs(); this.renderCoList(); this.renderReceiveTabs(); this.renderReceiveList();
   },
 
   renderStocktakeView() {
@@ -1558,15 +1599,9 @@ const Manager = {
   // Category tabs + subcategory subtabs, exactly like the ordering menus.
   renderStocktakeTabs() {
     const wrap = document.getElementById('stocktake-tabs-wrap'); if (!wrap) return;
-    this._stCats = Data.categories(this.materials);
+    this._stCats = Data.categoriesBySize(this.materials);
     this._stSubs = this._stActiveCat ? Data.subcategories(this.materials, this._stActiveCat) : [];
-    const catBtns = this._stCats.map((c,i) => `<button class="tab ${this._stActiveCat===c?'active':''}" data-st-cat-idx="${i}">${esc(c)}</button>`).join('');
-    let subHtml = '';
-    if (this._stActiveCat && this._stSubs.length) {
-      const subBtns = this._stSubs.map((s,i) => `<button class="tab ${this._stActiveSub===s?'active':''}" data-st-sub-idx="${i}">${esc(s)}</button>`).join('');
-      subHtml = `<div class="tabs-bar sub-bar"><div class="tabs-inner"><button class="tab ${!this._stActiveSub?'active':''}" data-st-sub-idx="-1">All</button>${subBtns}</div></div>`;
-    }
-    wrap.innerHTML = `<div class="tabs-bar"><div class="tabs-inner"><button class="tab ${!this._stActiveCat?'active':''}" data-st-cat-idx="-1">All</button>${catBtns}</div></div>${subHtml}`;
+    Strip.draw(wrap, { cats: this._stCats, cat: this._stActiveCat, subs: this._stSubs, sub: this._stActiveSub, catAttr: 'st-cat-idx', subAttr: 'st-sub-idx' });
   },
 
   stqSetCat(cat) { this._stActiveCat=cat; this._stActiveSub=null; this.renderStocktakeTabs(); this._renderStActiveList(); },
@@ -1578,20 +1613,20 @@ const Manager = {
     const stockMap = this._stStockMap();
     // Same filtering/sorting engine as the ordering pages — active category/subcategory
     // tabs + search, items sorted by description. No section headers; the tabs organise.
-    const filtered = Data.filter(this.materials, this._stActiveCat, this._stActiveSub, q);
-    if (!filtered.length) { el.innerHTML = `<div class="empty-state"><i class="ti ti-package-off"></i><p>No materials found.</p></div>`; return; }
-    el.innerHTML = filtered.map(m => {
+    const filtered = Data.filter(this.materials, this._stActiveCat, this._stActiveSub, q), note = searchNote(filtered, q);
+    if (!filtered.length) { el.innerHTML = note || `<div class="empty-state"><i class="ti ti-package-off"></i><p>No materials found.</p></div>`; return; }
+    el.innerHTML = note + filtered.map(m => {
       const rec = stockMap.get(stockId(m));
       const unit = stocktakeUnit(m);
       const showCode = m.partCode && !Data.isDummyCode(m.partCode);
-      const counted = rec && rec.qty != null;
+      const counted = rec && rec.qty != null, known = this._matStockReady;
       const when = rec?.updatedAt?.toDate ? fmtTime(rec.updatedAt.toDate()) : '';
       return `<div class="stocktake-row">
         <div class="stocktake-row-info">
           <div class="stocktake-row-name">${descHtml(m.description)}</div>
           <div class="stocktake-row-meta">${showCode ? esc(m.partCode) + ' · ' : ''}${esc(unit)}${counted && when ? ` · counted ${when}${rec.updatedBy ? ' by ' + esc(rec.updatedBy) : ''}` : ''}</div>
         </div>
-        <div class="stocktake-qty${counted ? '' : ' uncounted'}">${counted ? rec.qty + ' ' + esc(unit) : '—'}</div>
+        <div class="stocktake-qty${counted ? '' : ' uncounted'}">${counted ? rec.qty + ' ' + esc(unit) : known ? '—' : '…'}</div>
       </div>`;
     }).join('');
   },
@@ -1610,7 +1645,7 @@ const Manager = {
   mstType(el) {
     const id = +el.dataset.mstQid, m = this.materials.find(x => x.id == id); if (!m) return;
     this.mstSet(id, Count.read(el));
-    Count.typed(el, this._stStockMap().get(stockId(m)), stocktakeUnit(m), this.mstGet(id), this.mstModeOf(id));
+    Count.typed(el, this._stStockMap().get(stockId(m)), stocktakeUnit(m), this.mstGet(id), this.mstModeOf(id), this._matStockReady);
     this._updateMstBadge();
   },
   mstSetMode(id, mode) { if (mode === 'set') delete this._mstModes[id]; else this._mstModes[id] = mode; this.renderStocktakeCount(); },
@@ -1638,10 +1673,10 @@ const Manager = {
     const el = document.getElementById('stocktake-count-list'); if (!el) return;
     const q = document.getElementById('stocktake-search')?.value || '';
     const stockMap = this._stStockMap();
-    const filtered = Data.filter(this.materials, this._stActiveCat, this._stActiveSub, q);
-    if (!filtered.length) { el.innerHTML = `<div class="empty-state"><i class="ti ti-package-off"></i><p>No materials found.</p></div>`; return; }
+    const filtered = Data.filter(this.materials, this._stActiveCat, this._stActiveSub, q), note = searchNote(filtered, q);
+    if (!filtered.length) { el.innerHTML = note || `<div class="empty-state"><i class="ti ti-package-off"></i><p>No materials found.</p></div>`; return; }
     const restoreFocus = captureInputFocus(); // live stock updates re-render mid-typing
-    el.innerHTML = filtered.map(m => {
+    el.innerHTML = note + filtered.map(m => {
       const qty = this.mstGet(m.id), mode = this.mstModeOf(m.id);
       const unit = stocktakeUnit(m);
       const rec = stockMap.get(stockId(m));
@@ -1651,7 +1686,7 @@ const Manager = {
         <div class="mat-info">
           <div class="mat-name">${descHtml(m.description)}</div>
           ${showCode ? `<div class="mat-partcode">${esc(m.partCode)}</div>` : '<div class="mat-partcode"></div>'}
-          <div class="mat-unit">${esc(unit)} · <span class="st-recorded">${Count.line(rec, unit, qty, mode)}</span></div>
+          <div class="mat-unit">${esc(unit)} · <span class="st-recorded">${Count.line(rec, unit, qty, mode, this._matStockReady)}</span></div>
         </div>
         ${Count.controls('mst', m.id, qty, mode)}
       </div>`;
@@ -1785,7 +1820,7 @@ const Manager = {
     catch { return new Set(); }
   },
   openStocktakeExport(blank) {
-    if (typeof XLSX === 'undefined') { alert('Export library failed to load — refresh the page and try again.'); return; }
+    if (typeof XLSX === 'undefined') { Ask.tell('Not exported', 'The export part of this page did not load. Refresh the page, then try again.'); return; }
     const cats = Data.categories(this.materials);
     const skipped = this._stExportSkipped();
     const ow = document.getElementById('overlay-wrap');
@@ -1818,7 +1853,7 @@ const Manager = {
   },
 
   exportStocktake(blank, skip) {
-    if (typeof XLSX === 'undefined') { alert('Export library failed to load — refresh the page and try again.'); return; }
+    if (typeof XLSX === 'undefined') { Ask.tell('Not exported', 'The export part of this page did not load. Refresh the page, then try again.'); return; }
     const grouped = document.getElementById('st-export-grouped')?.checked !== false;
     const wb = this._stocktakeWorkbook(blank, grouped, skip || new Set());
     const d = new Date(), date = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -1922,8 +1957,9 @@ const Manager = {
 
   startListening() {
     if (this.unsubscribe) this.unsubscribe();
-    this.unsubscribe = DB.listenOrders(orders => {
+    this.unsubscribe = DB.listenOrders((orders, fromCache) => {
       this.orders = orders;
+      if (!fromCache || orders.length) this._ordersReady = true;
       this._tidyStaged();
       this._settleOwed();
       const n = this._materialsOrders().filter(o => this._orderHasPendingItems(o)).length;
@@ -2004,6 +2040,7 @@ const Manager = {
 
   renderQueue() {
     const wrap = document.getElementById('order-queue'); if (!wrap) return;
+    if (!this._ordersReady) { wrap.innerHTML = skeleton(5, 'tall'); return; }
     // Preserve open card state
     wrap.querySelectorAll('.order-card-body.open').forEach(el => this._openCards.add(el.id.replace('body-', '')));
     const restoreFocus = captureInputFocus(); // snapshots re-render while qty fields are focused
@@ -2073,17 +2110,17 @@ const Manager = {
                 </div>
                 <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
                   <span style="font-size:12px;color:var(--text3);font-family:var(--mono)">${merged.qty} ${esc(pGroup.qtyType||'')}</span>
-                  <button class="btn-sm" data-unmerge="${esc(cat)}" data-partcode="${esc(pGroup.partCode)}" style="font-size:10px;padding:3px 8px">
+                  <button class="btn-sm" data-unmerge="${esc(cat)}" data-partcode="${esc(pGroup.partCode)}">
                     <i class="ti ti-git-branch"></i> Unmerge
                   </button>
                 </div>
               </div>
               ${excludedLines.map(line => `
-                <div class="combined-sub-row" style="opacity:0.35">
+                <div class="combined-sub-row excluded">
                   <div class="combined-sub-device"><i class="ti ti-device-ipad" style="font-size:11px"></i><span>${esc(line.deviceName||line.orderRef||'Unknown')}</span><span style="margin-left:4px;opacity:0.6;font-size:10px">${line.submittedAt?fmtTime(line.submittedAt):''}</span><span style="font-size:10px;color:var(--text3);margin-left:4px">(excluded)</span></div>
-                  <div style="display:flex;gap:4px">
-                    <button class="btn-sm" data-unexclude="${esc(cat)}" data-order-id="${esc(line.orderId)}" data-partcode="${esc(pGroup.partCode)}" style="font-size:10px;padding:2px 6px">Restore</button>
-                    <button class="btn-sm btn-sm-danger" data-reject-item="${esc(line.orderId)}" data-partcode="${esc(pGroup.partCode)}" style="font-size:10px;padding:2px 6px" title="Reject this line — it leaves the combined list but the rest of the order stays; restore it from the order card below"><i class="ti ti-ban"></i> Reject</button>
+                  <div class="excluded-acts">
+                    <button class="btn-sm" data-unexclude="${esc(cat)}" data-order-id="${esc(line.orderId)}" data-partcode="${esc(pGroup.partCode)}">Restore</button>
+                    <button class="btn-sm btn-sm-danger" data-reject-item="${esc(line.orderId)}" data-partcode="${esc(pGroup.partCode)}" title="Reject this line — it leaves the combined list but the rest of the order stays; restore it from the order card below"><i class="ti ti-ban"></i> Reject</button>
                   </div>
                 </div>`).join('')}`;
             }
@@ -2105,7 +2142,7 @@ const Manager = {
                 : line.deviceName
                   ? `<span style="font-size:11px;color:var(--text3);font-family:var(--mono)">${esc(line.deviceName)}</span>${line.submittedAt ? `<span style="opacity:0.6;margin-left:4px;font-size:11px;font-family:var(--mono);white-space:nowrap;flex-shrink:0">${fmtTime(line.submittedAt)}</span>` : ''}`
                   : line.submittedAt ? `<span style="opacity:0.6;font-size:11px;font-family:var(--mono);white-space:nowrap">${fmtTime(line.submittedAt)}</span>` : '';
-              return `<div class="combined-main-row"${isExc ? ' style="opacity:0.35"' : ''}>
+              return `<div class="combined-main-row${isExc ? ' excluded' : ''}">
                 <div class="combined-main-info">
                   <div class="combined-main-name">${descHtml(pGroup.description)}</div>
                   <div class="combined-main-code" style="display:flex;align-items:center;gap:4px">
@@ -2114,9 +2151,9 @@ const Manager = {
                   </div>
                 </div>
                 ${isExc
-                  ? `<div style="display:flex;gap:4px;flex-shrink:0">
-                      <button class="btn-sm" data-unexclude="${esc(cat)}" data-order-id="${esc(line.orderId)}" data-partcode="${esc(pGroup.partCode)}" style="font-size:10px;padding:2px 6px">Restore</button>
-                      <button class="btn-sm btn-sm-danger" data-reject-item="${esc(line.orderId)}" data-partcode="${esc(pGroup.partCode)}" style="font-size:10px;padding:2px 6px" title="Reject this line — it leaves the combined list but the rest of the order stays; restore it from the order card below"><i class="ti ti-ban"></i> Reject</button>
+                  ? `<div class="excluded-acts">
+                      <button class="btn-sm" data-unexclude="${esc(cat)}" data-order-id="${esc(line.orderId)}" data-partcode="${esc(pGroup.partCode)}">Restore</button>
+                      <button class="btn-sm btn-sm-danger" data-reject-item="${esc(line.orderId)}" data-partcode="${esc(pGroup.partCode)}" title="Reject this line — it leaves the combined list but the rest of the order stays; restore it from the order card below"><i class="ti ti-ban"></i> Reject</button>
                     </div>`
                   : `<div class="qty-row" style="flex-shrink:0">
                       <button class="qty-btn" data-cqdec="${esc(cat)}" data-order-id="${esc(line.orderId)}" data-partcode="${esc(pGroup.partCode)}">−</button>
@@ -2126,7 +2163,7 @@ const Manager = {
                       <button class="qty-btn" data-cqinc="${esc(cat)}" data-order-id="${esc(line.orderId)}" data-partcode="${esc(pGroup.partCode)}">+</button>
                     </div>
                     <span style="font-size:11px;color:var(--text3);font-family:var(--mono);margin-left:4px;min-width:40px">${esc(pGroup.qtyType||'')}</span>
-                    <button class="btn-sm btn-sm-danger" data-comb-del="${esc(cat)}" data-order-id="${esc(line.orderId)}" data-partcode="${esc(pGroup.partCode)}" style="font-size:11px;padding:3px 6px" title="Exclude from email">
+                    <button class="btn-sm btn-sm-danger" data-comb-del="${esc(cat)}" data-order-id="${esc(line.orderId)}" data-partcode="${esc(pGroup.partCode)}" title="Exclude from email">
                       <i class="ti ti-eye-off"></i>
                     </button>`
                 }
@@ -2140,7 +2177,7 @@ const Manager = {
                 </div>
                 <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
                   <span style="font-size:12px;color:var(--text3);font-family:var(--mono)">Total: ${totalQty} ${esc(pGroup.qtyType||'')}</span>
-                  <button class="btn-sm btn-sm-save" data-comb-merge="${esc(cat)}" data-partcode="${esc(pGroup.partCode)}" style="font-size:10px;padding:3px 8px;white-space:nowrap">
+                  <button class="btn-sm btn-sm-save" data-comb-merge="${esc(cat)}" data-partcode="${esc(pGroup.partCode)}">
                     <i class="ti ti-git-merge"></i> Merge
                   </button>
                 </div>
@@ -2160,21 +2197,21 @@ const Manager = {
                     <button class="qty-btn" data-cqinc="${esc(cat)}" data-order-id="${esc(line.orderId)}" data-partcode="${esc(pGroup.partCode)}">+</button>
                   </div>
                   <span style="font-size:11px;color:var(--text3);font-family:var(--mono);margin-left:4px;min-width:40px;flex-shrink:0">${esc(line.qtyType||'')}</span>
-                  <button class="btn-sm btn-sm-danger" data-comb-del="${esc(cat)}" data-order-id="${esc(line.orderId)}" data-partcode="${esc(pGroup.partCode)}" style="font-size:11px;padding:3px 6px" title="Exclude from email">
+                  <button class="btn-sm btn-sm-danger" data-comb-del="${esc(cat)}" data-order-id="${esc(line.orderId)}" data-partcode="${esc(pGroup.partCode)}" title="Exclude from email">
                     <i class="ti ti-eye-off"></i>
                   </button>
                 </div>`).join('');
               const excludedRowsHtml = excludedLines.map(line => `
-                <div class="combined-sub-row" style="opacity:0.35">
+                <div class="combined-sub-row excluded">
                   <div class="combined-sub-device">
                     <i class="ti ti-eye-off" style="font-size:11px"></i>
                     <span>${esc(line.deviceName||line.orderRef||'Unknown')}</span>
                     ${line.submittedAt ? `<span style="margin-left:4px;opacity:0.6;font-size:10px">${fmtTime(line.submittedAt)}</span>` : ''}
                     <span style="font-size:10px;color:var(--text3);margin-left:4px">(excluded)</span>
                   </div>
-                  <div style="display:flex;gap:4px">
-                    <button class="btn-sm" data-unexclude="${esc(cat)}" data-order-id="${esc(line.orderId)}" data-partcode="${esc(pGroup.partCode)}" style="font-size:10px;padding:2px 6px">Restore</button>
-                    <button class="btn-sm btn-sm-danger" data-reject-item="${esc(line.orderId)}" data-partcode="${esc(pGroup.partCode)}" style="font-size:10px;padding:2px 6px" title="Reject this line — it leaves the combined list but the rest of the order stays; restore it from the order card below"><i class="ti ti-ban"></i> Reject</button>
+                  <div class="excluded-acts">
+                    <button class="btn-sm" data-unexclude="${esc(cat)}" data-order-id="${esc(line.orderId)}" data-partcode="${esc(pGroup.partCode)}">Restore</button>
+                    <button class="btn-sm btn-sm-danger" data-reject-item="${esc(line.orderId)}" data-partcode="${esc(pGroup.partCode)}" title="Reject this line — it leaves the combined list but the rest of the order stays; restore it from the order card below"><i class="ti ti-ban"></i> Reject</button>
                   </div>
                 </div>`).join('');
               return mainRow + subRows + excludedRowsHtml;
@@ -2189,7 +2226,7 @@ const Manager = {
                 <span style="font-size:11px;color:var(--text3);font-family:var(--mono)">${Object.keys(g.byPartCode).length} item${Object.keys(g.byPartCode).length!==1?'s':''}</span>
               </div>
               <div style="display:flex;align-items:center;gap:8px">
-                <button class="btn-sm btn-sm-save" data-cat-email="${esc(cat)}" style="font-size:11px;padding:4px 10px">
+                <button class="btn-sm btn-sm-save" data-cat-email="${esc(cat)}">
                   <i class="ti ti-mail"></i> Email
                 </button>
                 <i class="ti ti-chevron-right chevron ${isOpen?'open':''}" id="comb-chev-${catKey}"></i>
@@ -2417,25 +2454,31 @@ const Manager = {
     if (this._combExcluded.size + this._combMerged.size !== before) this._keepStaged();
   },
 
+  // Rejecting acts at once and offers to undo: nothing is lost, it only leaves the queue.
   async rejectOrder(id) {
-    try { await DB.rejectOrder(id); } catch(e) { alert('Failed: ' + e.message); }
+    const o = this.orders.find(x => x._id === id), was = (o && o.status) || 'pending';
+    try {
+      await DB.rejectOrder(id);
+      this._toast(`${(o && o.ref) || 'Order'} rejected`, false, { label: 'Undo', run: () => DB.updateStatus(id, was === 'rejected' ? 'pending' : was).catch(e => tellFailed('Not undone', e)) });
+    } catch (e) { tellFailed('Not rejected', e); }
   },
 
   async rejectItem(orderId, partCode) {
-    await new Promise(r => setTimeout(r, 0));
-    if (!confirm(`Reject ${partCode} from this order?`)) return;
     // Remove from local exclusions
     for (const key of [...this._combExcluded]) {
       if (key.endsWith(`|${partCode}|${orderId}`)) this._combExcluded.delete(key);
     }
     this._keepStaged();
-    try { await DB.rejectItem(orderId, partCode); } catch(e) { alert('Reject failed: ' + e.message); }
+    try {
+      await DB.rejectItem(orderId, partCode);
+      this._toast(`${partCode} rejected`, false, { label: 'Undo', run: () => this.unrejectItem(orderId, partCode) });
+    } catch (e) { tellFailed('Not rejected', e); }
   },
 
   // Undo for rejectItem — restoring is safe (the line just goes back to pending and
-  // reappears in the combined list), so no confirm dialog.
+  // reappears in the combined list), so no question.
   async unrejectItem(orderId, partCode) {
-    try { await DB.unrejectItem(orderId, partCode); } catch(e) { alert('Restore failed: ' + e.message); }
+    try { await DB.unrejectItem(orderId, partCode); } catch (e) { tellFailed('Not restored', e); }
   },
 
   // ── PUTTING AN EMAIL BACK ────────────────────────────────────────────
@@ -2548,7 +2591,7 @@ const Manager = {
     const pcSafe = partCode.replace(/[^a-zA-Z0-9]/g,'_');
     const inp = document.getElementById(`cqi-${catKey}-${pcSafe}-${orderId}`);
     if (inp) { inp.value = newQty; inp.defaultValue = newQty; inp._before = newQty; }
-    try { await DB.updateItems(orderId, items); } catch (e) { console.error(e); alert(`Quantity not saved: ${whyFailed(e)}.`); this.renderQueue(); }
+    try { await DB.updateItems(orderId, items); } catch (e) { tellFailed('Quantity not saved', e); this.renderQueue(); }
   },
 
   async editCombinedSubQty(cat, orderId, partCode, qty) {
@@ -2558,43 +2601,7 @@ const Manager = {
     const idx = items.findIndex(i => i.category === cat && i.partCode === partCode && !i.emailed);
     if (idx < 0) return;
     items[idx] = { ...items[idx], qty };
-    try { await DB.updateItems(orderId, items); } catch (e) { console.error(e); alert(`Quantity not saved: ${whyFailed(e)}.`); this.renderQueue(); }
-  },
-
-  async deleteCombinedLine(cat, orderId, partCode) {
-    if (!partCode) return;
-    // Defer confirm out of the click handler to avoid long-task violation
-    await new Promise(r => setTimeout(r, 0));
-    if (!confirm(`Remove ${partCode} from this order?`)) return;
-    const order = this.orders.find(o => o._id === orderId); if (!order) return;
-    const items = order.items.filter(i => !(i.category === cat && i.partCode === partCode && !i.emailed));
-    try { await DB.updateItems(orderId, items); } catch (e) { alert('Failed: ' + e.message); }
-  },
-
-  async mergeCombinedLines(cat, partCode) {
-    if (!cat || !partCode) { console.error('merge: missing params', cat, partCode); return; }
-    const pendingOrders = this._materialsOrders().filter(o => this._orderHasPendingItems(o));
-    const linesWithItem = pendingOrders.filter(o =>
-      o.items?.some(i => i.category === cat && i.partCode === partCode && !i.emailed)
-    );
-    if (linesWithItem.length < 2) return;
-    const deviceNames = [...new Set(linesWithItem.map(o => o.deviceName).filter(Boolean))];
-    const mergedDeviceName = deviceNames.length > 1 ? '__merged__' : (deviceNames[0] || '');
-    const totalQty = linesWithItem.reduce((sum, o) => {
-      const item = o.items.find(i => i.category === cat && i.partCode === partCode && !i.emailed);
-      return sum + (item?.qty || 0);
-    }, 0);
-    const first = linesWithItem[0];
-    const firstItems = [...first.items];
-    const firstIdx = firstItems.findIndex(i => i.category === cat && i.partCode === partCode && !i.emailed);
-    if (firstIdx >= 0) {
-      firstItems[firstIdx] = { ...firstItems[firstIdx], qty: totalQty, mergedDeviceName };
-    }
-    try { await DB.updateItems(first._id, firstItems); } catch (e) { alert('Merge failed: ' + e.message); return; }
-    for (const order of linesWithItem.slice(1)) {
-      const items = order.items.filter(i => !(i.category === cat && i.partCode === partCode && !i.emailed));
-      try { await DB.updateItems(order._id, items); } catch (e) { console.error(e); }
-    }
+    try { await DB.updateItems(orderId, items); } catch (e) { tellFailed('Quantity not saved', e); this.renderQueue(); }
   },
 
   _orderCard(o, inDeliveryGroup) {
@@ -2627,13 +2634,13 @@ const Manager = {
           ${item.rejected
             ? `<span class="status-pill status-rejected" style="font-size:10px;padding:2px 8px"><i class="ti ti-ban"></i> Rejected</span>
                <button class="btn-sm" data-unreject-item="${esc(o._id)}" data-partcode="${esc(item.partCode)}"
-                 style="font-size:10px;padding:2px 6px" title="Restore this item — it goes back to pending and reappears in the combined list">
+                 title="Restore this item — it goes back to pending and reappears in the combined list">
                  <i class="ti ti-refresh"></i> Restore
                </button>`
             : item.emailed
               ? `<span class="emailed-badge"><i class="ti ti-mail-check"></i> Emailed</span>
                  <button class="btn-sm" data-reset-item="${o._id}" data-category="${esc(item.category)}" data-partcode="${esc(item.partCode)}"
-                   style="font-size:10px;padding:2px 6px;color:var(--amber-text);border-color:var(--amber-text);background:var(--amber-bg)" title="Put this line back to pending">
+                   aria-label="Put this line back to pending" title="Put this line back to pending">
                    <i class="ti ti-arrow-back-up"></i>
                  </button>`
               : isPending
@@ -2643,8 +2650,7 @@ const Manager = {
                       data-qchange="${o._id}" data-idx="${idx}" id="qinp-${o._id}-${idx}">
                     <button class="qty-btn" data-qinc="${o._id}" data-idx="${idx}">+</button>
                   </div>
-                  <button class="btn-sm btn-sm-danger" data-reject-item="${esc(o._id)}" data-partcode="${esc(item.partCode)}"
-                    style="font-size:11px;padding:3px 6px" title="Reject this item">
+                  <button class="btn-sm btn-sm-danger line-reject" data-reject-item="${esc(o._id)}" data-partcode="${esc(item.partCode)}" aria-label="Reject this line" title="Reject this line">
                     <i class="ti ti-ban"></i>
                   </button>`
                 : `<span class="order-line-qty">× ${item.qty}</span>`}
@@ -2758,7 +2764,7 @@ const Manager = {
   async noteSave(id) {
     const ta = document.getElementById(`onote-input-${id}`); if (!ta) return;
     try { await DB.updateOrderNote(id, ta.value); this._noteEditing.delete(id); this.renderQueue(); }
-    catch (e) { alert('Failed to save note: ' + e.message); }
+    catch (e) { tellFailed('Note not saved', e, 'Click Save note to try again.'); }
   },
 
   // Groups pending items that have a deliveryId by delivery+category — these are
@@ -2879,29 +2885,31 @@ const Manager = {
     items[idx] = { ...items[idx], qty: newQty };
     const inp = document.getElementById(`qinp-${orderId}-${idx}`);
     if (inp) { inp.value = newQty; inp.defaultValue = newQty; inp._before = newQty; }
-    try { await DB.updateItems(orderId, items); } catch(e) { alert('Update failed: '+e.message); }
+    try { await DB.updateItems(orderId, items); } catch(e) { tellFailed('Quantity not saved', e); this.renderQueue(); }
   },
 
   async editQty(orderId, idx, qty) {
     const order = this.orders.find(o => o._id === orderId); if (!order) return;
     const items = [...order.items];
     items[idx] = { ...items[idx], qty };
-    try { await DB.updateItems(orderId, items); } catch(e) { alert('Update failed: '+e.message); }
+    try { await DB.updateItems(orderId, items); } catch(e) { tellFailed('Quantity not saved', e); this.renderQueue(); }
   },
 
   async deleteOrder(id) {
-    if (!confirm('Delete this order?')) return;
-    try { await DB.deleteOrder(id); } catch(e) { alert('Delete failed: '+e.message); }
+    const o = this.orders.find(x => x._id === id), n = ((o && o.items) || []).length;
+    if (!await Ask.confirm({ title: `Delete ${(o && o.ref) || 'this order'}?`, body: `${n} line${n !== 1 ? 's' : ''}. This cannot be undone.`, yes: 'Delete order', no: 'Keep order', danger: true })) return;
+    try { await DB.deleteOrder(id); this._toast('Order deleted'); } catch(e) { tellFailed('Not deleted', e); }
   },
 
   async resetItemEmailed(orderId, category, partCode) {
     try { await DB.resetItemEmailed(orderId, category, partCode); this._toast(`${partCode} is back to pending`); }
-    catch(e) { console.error(e); alert(`Not put back: ${whyFailed(e)}.`); }
+    catch(e) { tellFailed('Not put back', e); }
   },
 
-  async resetOrderToPending(orderId) {
-    try { await DB.resetOrderToPending(orderId); }
-    catch(e) { console.error(e); alert(`Not restored: ${whyFailed(e)}.`); }
+  async restoreOrder(orderId) {
+    const o = this.orders.find(x => x._id === orderId);
+    try { await DB.restoreOrder(orderId); this._toast(`${(o && o.ref) || 'Order'} is back in the queue`); }
+    catch(e) { tellFailed('Not restored', e); }
   },
 
   // ══════════════════════════════════════════
@@ -3212,7 +3220,7 @@ const Manager = {
   noAdj(id,d)     { this.noSet(id, round2(this.noGet(id)+d)); this._noChanged(); },
   noQuickAdd(id)  { if(!this.noGet(id)) this.noSet(id,1); this._noChanged(); },
   noZero(id)      { delete this._no._items[id]; this._noChanged(); },
-  noRevAdj(id,d)  { this.noAdj(id,d); },
+  noRevAdj(id,d)  { if (d < 0 && this.noGet(id) <= 1) return; this.noAdj(id,d); },   // at 1 it stops: Remove takes a line off
   noCount()       { return Object.keys(this._no._items).length; },
   noItems()       {
     return Object.keys(this._no._items).map(id => {
@@ -3229,6 +3237,7 @@ const Manager = {
     this._keepCarts();
     const b = document.getElementById('new-order-badge'); if (!b) return;
     const n = this.noCount(); b.textContent = n; b.classList.toggle('zero', n === 0);
+    const c = document.getElementById('btn-no-clear-main'); if (c) c.hidden = n === 0;
   },
 
   // Both carts are kept on this PC through a reload, by what each line is (stockId), as
@@ -3312,15 +3321,9 @@ const Manager = {
 
   renderNoTabs() {
     const wrap = document.getElementById('no-tabs-wrap'); if (!wrap) return;
-    this._cats = Data.categories(this.materials);
+    this._cats = Data.categoriesBySize(this.materials);
     this._subs = this.activeCat ? Data.subcategories(this.materials, this.activeCat) : [];
-    const catBtns = this._cats.map((c,i) => `<button class="tab ${this.activeCat===c?'active':''}" data-cat-idx="${i}">${esc(c)}</button>`).join('');
-    let subHtml = '';
-    if (this.activeCat && this._subs.length) {
-      const subBtns = this._subs.map((s,i) => `<button class="tab ${this.activeSub===s?'active':''}" data-sub-idx="${i}">${esc(s)}</button>`).join('');
-      subHtml = `<div class="tabs-bar sub-bar"><div class="tabs-inner"><button class="tab ${!this.activeSub?'active':''}" data-sub-idx="-1">All</button>${subBtns}</div></div>`;
-    }
-    wrap.innerHTML = `<div class="tabs-bar"><div class="tabs-inner"><button class="tab ${!this.activeCat?'active':''}" data-cat-idx="-1">All</button>${catBtns}</div></div>${subHtml}`;
+    Strip.draw(wrap, { cats: this._cats, cat: this.activeCat, subs: this._subs, sub: this.activeSub, catAttr: 'cat-idx', subAttr: 'sub-idx' });
   },
 
   noSetCat(cat) { this.activeCat=cat; this.activeSub=null; this.renderNoTabs(); this.renderNoList(); const s=document.getElementById('no-scroll'); if(s)s.scrollTop=0; },
@@ -3330,12 +3333,13 @@ const Manager = {
     const q = document.getElementById('no-search')?.value || '';
     const filtered = Data.filter(this.materials, this.activeCat, this.activeSub, q);
     const list = document.getElementById('no-mat-list'); if (!list) return;
+    const note = searchNote(filtered, q);
     if (!filtered.length) {
-      list.innerHTML = `<div class="empty-state"><i class="ti ti-package-off"></i><p>No materials found.</p></div>`;
+      list.innerHTML = note || `<div class="empty-state"><i class="ti ti-package-off"></i><p>No materials found.</p></div>`;
       return;
     }
     const restoreFocus = captureInputFocus();
-    list.innerHTML = filtered.map(m => {
+    list.innerHTML = note + filtered.map(m => {
       const qty = this.noGet(m.id), inOrder = qty > 0;
       const ci = CAT_ICONS[m.category] || CAT_ICONS.default;
       const showCode = m.partCode && !Data.isDummyCode(m.partCode);
@@ -3359,7 +3363,7 @@ const Manager = {
   },
 
   noOpenReview() {
-    if (this.noCount() === 0) { alert('No items on this order.'); return; }
+    if (this.noCount() === 0) { toast('No items on this order yet', true); return; }
     this._renderNoReview(); this.openPanel('no-review-panel');
   },
 
@@ -3418,11 +3422,12 @@ const Manager = {
   // ══════════════════════════════════════════
   async noAddToOrders() {
     if (this._opBusy.has('noAdd')) return; // double-tap would submit a duplicate order doc
-    if (this.noCount() === 0) { alert('No items on this order.'); return; }
+    if (this.noCount() === 0) { toast('No items on this order yet', true); return; }
     if (this._connState.connected === false || navigator.onLine === false) {
-      alert("You're currently offline — orders can't be submitted without a connection."); return;
+      Ask.tell('Not added to the queue', 'Offline. Connect, then click Add to order queue.'); return;
     }
     this._opBusy.add('noAdd');
+    const back = busyBtn(document.getElementById('btn-no-add-to-orders'), 'Adding…');
     const s = Settings.get();
     const deviceName = (s.managerName || 'Manager').trim() || 'Manager';
     const items = this.noItems().map(i => ({
@@ -3453,8 +3458,9 @@ const Manager = {
         </div>`;
       document.getElementById('btn-done-add').addEventListener('click', () => { ow.innerHTML = ''; });
     } catch(e) {
-      alert('Failed to submit: ' + e.message);
+      tellFailed('Not added to the queue', e, 'The order is still here. Click Add to order queue to try again.');
     } finally {
+      back();
       this._opBusy.delete('noAdd');
     }
   },
@@ -3482,19 +3488,14 @@ const Manager = {
     this._keepCarts();
     const b = document.getElementById('co-badge'); if (!b) return;
     const n = this.coCount(); b.textContent = n; b.classList.toggle('zero', n === 0);
+    const c = document.getElementById('btn-co-clear-main'); if (c) c.hidden = n === 0;
   },
 
   renderCoTabs() {
     const wrap = document.getElementById('co-tabs-wrap'); if (!wrap) return;
-    this._coCats = Data.categories(this.consumables);
+    this._coCats = Data.categoriesBySize(this.consumables);
     this._coSubs = this._coActiveCat ? Data.subcategories(this.consumables, this._coActiveCat) : [];
-    const catBtns = this._coCats.map((c,i) => `<button class="tab ${this._coActiveCat===c?'active':''}" data-co-cat-idx="${i}">${esc(c)}</button>`).join('');
-    let subHtml = '';
-    if (this._coActiveCat && this._coSubs.length) {
-      const subBtns = this._coSubs.map((s,i) => `<button class="tab ${this._coActiveSub===s?'active':''}" data-co-sub-idx="${i}">${esc(s)}</button>`).join('');
-      subHtml = `<div class="tabs-bar sub-bar"><div class="tabs-inner"><button class="tab ${!this._coActiveSub?'active':''}" data-co-sub-idx="-1">All</button>${subBtns}</div></div>`;
-    }
-    wrap.innerHTML = `<div class="tabs-bar"><div class="tabs-inner"><button class="tab ${!this._coActiveCat?'active':''}" data-co-cat-idx="-1">All</button>${catBtns}</div></div>${subHtml}`;
+    Strip.draw(wrap, { cats: this._coCats, cat: this._coActiveCat, subs: this._coSubs, sub: this._coActiveSub, catAttr: 'co-cat-idx', subAttr: 'co-sub-idx' });
   },
   coSetCat(cat) { this._coActiveCat=cat; this._coActiveSub=null; this.renderCoTabs(); this.renderCoList(); const s=document.getElementById('co-scroll'); if(s)s.scrollTop=0; },
   coSetSub(sub) { this._coActiveSub=sub; this.renderCoTabs(); this.renderCoList(); },
@@ -3504,14 +3505,15 @@ const Manager = {
     const q = document.getElementById('co-search')?.value || '';
     const filtered = Data.filter(this.consumables, this._coActiveCat, this._coActiveSub, q);
     const list = document.getElementById('co-mat-list'); if (!list) return;
-    if (!filtered.length) { list.innerHTML = `<div class="empty-state"><i class="ti ti-package-off"></i><p>No consumables found.</p></div>`; return; }
+    const note = searchNote(filtered, q);
+    if (!filtered.length) { list.innerHTML = note || `<div class="empty-state"><i class="ti ti-package-off"></i><p>No consumables found.</p></div>`; return; }
     const sorted = [...filtered].sort((a,b) => {
       const ta = this._stockFor(stockId(a))?.tracked ? 0 : 1;
       const tb = this._stockFor(stockId(b))?.tracked ? 0 : 1;
       return ta - tb || descCompare(a.description, b.description);
     });
     const restoreFocus = captureInputFocus(); // stock updates re-render mid-typing
-    list.innerHTML = sorted.map(m => {
+    list.innerHTML = note + sorted.map(m => {
       const qty = this.coGet(m.id), inOrder = qty > 0;
       const ci = CAT_ICONS[m.category] || CAT_ICONS.default;
       const showCode = m.partCode && !Data.isDummyCode(m.partCode);
@@ -3539,7 +3541,7 @@ const Manager = {
   },
 
   coOpenReview() {
-    if (this.coCount() === 0) { alert('No items on this order.'); return; }
+    if (this.coCount() === 0) { toast('No items on this order yet', true); return; }
     this._renderCoReview(); this.openPanel('co-review-panel');
   },
 
@@ -3578,8 +3580,7 @@ const Manager = {
     const emailAllBtn = cats.length > 1
       ? `<button class="btn btn-primary" data-co-email-all="1" style="margin-top:6px"><i class="ti ti-mail-forward"></i> Email all consumables</button>`
       : '';
-    btns.innerHTML = `<button class="btn btn-danger" data-co-clear="1"><i class="ti ti-x"></i> Clear order</button>` +
-      cats.map(cat => `
+    btns.innerHTML = cats.map(cat => `
       <button class="btn btn-green" data-co-cat="${esc(cat)}" style="margin-top:6px"><i class="ti ti-mail"></i> Email — ${esc(cat)}</button>`).join('') +
       emailAllBtn;
   },
@@ -3622,19 +3623,14 @@ const Manager = {
   _updateReceiveBadge() {
     const b = document.getElementById('receive-badge'); if (!b) return;
     const n = this.receiveCount(); b.textContent = n; b.classList.toggle('zero', n === 0);
+    const c = document.getElementById('btn-receive-clear-main'); if (c) c.hidden = n === 0;
   },
 
   renderReceiveTabs() {
     const wrap = document.getElementById('receive-tabs-wrap'); if (!wrap) return;
-    this._receiveCats = Data.categories(this.consumables);
+    this._receiveCats = Data.categoriesBySize(this.consumables);
     this._receiveSubs = this._receiveActiveCat ? Data.subcategories(this.consumables, this._receiveActiveCat) : [];
-    const catBtns = this._receiveCats.map((c,i) => `<button class="tab ${this._receiveActiveCat===c?'active':''}" data-rc-cat-idx="${i}">${esc(c)}</button>`).join('');
-    let subHtml = '';
-    if (this._receiveActiveCat && this._receiveSubs.length) {
-      const subBtns = this._receiveSubs.map((s,i) => `<button class="tab ${this._receiveActiveSub===s?'active':''}" data-rc-sub-idx="${i}">${esc(s)}</button>`).join('');
-      subHtml = `<div class="tabs-bar sub-bar"><div class="tabs-inner"><button class="tab ${!this._receiveActiveSub?'active':''}" data-rc-sub-idx="-1">All</button>${subBtns}</div></div>`;
-    }
-    wrap.innerHTML = `<div class="tabs-bar"><div class="tabs-inner"><button class="tab ${!this._receiveActiveCat?'active':''}" data-rc-cat-idx="-1">All</button>${catBtns}</div></div>${subHtml}`;
+    Strip.draw(wrap, { cats: this._receiveCats, cat: this._receiveActiveCat, subs: this._receiveSubs, sub: this._receiveActiveSub, catAttr: 'rc-cat-idx', subAttr: 'rc-sub-idx' });
   },
   receiveSetCat(cat) { this._receiveActiveCat=cat; this._receiveActiveSub=null; this.renderReceiveTabs(); this.renderReceiveList(); const s=document.getElementById('receive-scroll'); if(s)s.scrollTop=0; },
   receiveSetSub(sub) { this._receiveActiveSub=sub; this.renderReceiveTabs(); this.renderReceiveList(); },
@@ -3643,7 +3639,8 @@ const Manager = {
     const q = document.getElementById('receive-search')?.value || '';
     const filtered = Data.filter(this.consumables, this._receiveActiveCat, this._receiveActiveSub, q);
     const list = document.getElementById('receive-mat-list'); if (!list) return;
-    if (!filtered.length) { list.innerHTML = `<div class="empty-state"><i class="ti ti-package-off"></i><p>No consumables found.</p></div>`; return; }
+    const note = searchNote(filtered, q);
+    if (!filtered.length) { list.innerHTML = note || `<div class="empty-state"><i class="ti ti-package-off"></i><p>No consumables found.</p></div>`; return; }
     // Untracked items greyed and sorted to the bottom — visual only, still selectable
     // (receiving stock for an untracked item auto-enables tracking on submit)
     const sorted = [...filtered].sort((a,b) => {
@@ -3652,7 +3649,7 @@ const Manager = {
       return ta - tb || descCompare(a.description, b.description);
     });
     const restoreFocus = captureInputFocus(); // stock updates re-render mid-typing
-    list.innerHTML = sorted.map(m => {
+    list.innerHTML = note + sorted.map(m => {
       const qty = this.receiveGet(m.id), inOrder = qty > 0;
       const ci = CAT_ICONS[m.category] || CAT_ICONS.default;
       const showCode = m.partCode && !Data.isDummyCode(m.partCode);
@@ -3742,8 +3739,9 @@ const Manager = {
   // ══════════════════════════════════════════
   startStockListening() {
     if (this._unsubStock) this._unsubStock();
-    this._unsubStock = DB.listenStock(records => {
+    this._unsubStock = DB.listenStock((records, fromCache) => {
       this._stock = records;
+      if (!fromCache || records.length) this._stockReady = true;
       // Fold in ghosts (items created on-device, CSV row pending) so every panel
       // — stock, ordering, barcodes — treats them as real consumables.
       this.consumables = GhostItems.merge(this._baseConsumables, records);
@@ -3846,6 +3844,7 @@ const Manager = {
       this._stockSubs = [];
     }
     wrap.innerHTML += subHtml;
+    wrap.querySelectorAll('.tabs-inner').forEach((el, i) => Strip.watch(el, `stock:${i ? this._stockActiveCat : ''}`));
 
     // Reorder All button — only visible on the Low Stock tab, and only when at least one item has a reorder qty set
     const reorderBtn = document.getElementById('btn-reorder-all');
@@ -3857,7 +3856,8 @@ const Manager = {
 
   renderStockList() {
     const list = document.getElementById('stock-list'); if (!list) return;
-    const q = (document.getElementById('stock-search')?.value || '').toLowerCase();
+    if (!this._stockReady) { list.innerHTML = skeleton(8); return; }
+    const q = document.getElementById('stock-search')?.value || '';
     let items = [...this.consumables];
 
     if (this._stockActiveCat === '__low__') {
@@ -3869,7 +3869,8 @@ const Manager = {
       items = items.filter(m => m.category === this._stockActiveCat);
       if (this._stockActiveSub) items = items.filter(m => m.subcategory === this._stockActiveSub);
     }
-    if (q) items = items.filter(m => m.description.toLowerCase().includes(q) || m.partCode.toLowerCase().includes(q));
+    let note = '';
+    if (q.trim()) { const found = Data.filter(items, null, null, q); note = searchNote(found, q); items = [...found]; }
 
     // Sort: critical → warning → zero → ok → untracked
     const order = { critical:0, warning:1, zero:2, ok:3, untracked:4 };
@@ -3879,7 +3880,7 @@ const Manager = {
       return (order[sa]??4) - (order[sb]??4) || descCompare(a.description, b.description);
     });
 
-    if (!items.length) { list.innerHTML = `<div class="empty-state"><i class="ti ti-package-off"></i><p>No consumables found.</p></div>`; return; }
+    if (!items.length) { list.innerHTML = note || `<div class="empty-state"><i class="ti ti-package-off"></i><p>No consumables found.</p></div>`; return; }
 
     // Group by tracked / untracked with section headers (skip grouping on the Low Stock tab — already filtered)
     let html = '';
@@ -3898,7 +3899,7 @@ const Manager = {
       }
     }
     const restoreFocus = captureInputFocus(); // stock updates re-render mid-typing
-    list.innerHTML = html;
+    list.innerHTML = note + html;
 
     // Re-apply open state
     for (const sid of this._openStockCards) {
@@ -3943,17 +3944,17 @@ const Manager = {
             <span class="stock-action-label">Add stock</span>
             <input class="stock-delta-input" type="number" min="1" step="1" placeholder="${esc(m.boxUnit||'Box')}es" id="si-intake-box-${esc(sid)}">
             <span style="font-size:11px;color:var(--text3)">${esc(m.boxUnit||'Box')}(es)</span>
-            <button class="btn-sm btn-sm-save" data-stock-intake-boxn="${esc(sid)}" style="font-size:11px"><i class="ti ti-plus"></i> Intake</button>
-            <button class="btn-sm" data-stock-hist="${esc(sid)}" data-stock-name="${descHtml(m.description)}" style="font-size:11px;margin-left:auto"><i class="ti ti-history"></i></button>
+            <button class="btn-sm btn-sm-save" data-stock-intake-boxn="${esc(sid)}"><i class="ti ti-plus"></i> Intake</button>
+            <button class="btn-sm" data-stock-hist="${esc(sid)}" data-stock-name="${descHtml(m.description)}" style="margin-left:auto"><i class="ti ti-history"></i></button>
           </div>
           <div class="stock-action-row">
             <span class="stock-action-label">Remove stock</span>
             <input class="stock-delta-input" type="number" min="1" step="1" placeholder="Qty" id="si-remove-${esc(sid)}">
-            <button class="btn-sm btn-sm-danger" data-stock-remove="${esc(sid)}" style="font-size:11px"><i class="ti ti-minus"></i> Remove</button>
+            <button class="btn-sm btn-sm-danger" data-stock-remove="${esc(sid)}"><i class="ti ti-minus"></i> Remove</button>
             <span style="font-size:10px;color:var(--text3)">individual units</span>
           </div>
           <div class="stock-action-row">
-            <button class="btn-sm" data-stock-open-box="${esc(sid)}" style="font-size:11px" title="Round down to whole boxes — use when a box runs low and you're opening a fresh one, or take away a full box if already at a whole number">
+            <button class="btn-sm" data-stock-open-box="${esc(sid)}" title="Round down to whole boxes — use when a box runs low and you're opening a fresh one, or take away a full box if already at a whole number">
               <i class="ti ti-box-seam"></i> Open New Box / Remove Full ${esc((m.boxUnit||'Box'))}
             </button>
           </div>
@@ -3963,25 +3964,25 @@ const Manager = {
             <span style="font-size:10px;color:var(--text3)">${esc(m.boxUnit||'Box')}(es) +</span>
             <input class="stock-delta-input" type="number" min="0" step="1" placeholder="loose" id="si-set-loose-${esc(sid)}" style="width:56px">
             <span style="font-size:10px;color:var(--text3)">loose</span>
-            <button class="btn-sm" data-stock-set-boxed="${esc(sid)}" style="font-size:11px">Override</button>
+            <button class="btn-sm" data-stock-set-boxed="${esc(sid)}">Override</button>
           </div>`;
 
     const simpleIntakeRow = `
           <div class="stock-action-row">
             <span class="stock-action-label">Add stock</span>
             <input class="stock-delta-input" type="number" min="1" step="1" placeholder="Qty" id="si-intake-${esc(sid)}">
-            <button class="btn-sm btn-sm-save" data-stock-intake="${esc(sid)}" style="font-size:11px"><i class="ti ti-plus"></i> Intake</button>
-            <button class="btn-sm" data-stock-hist="${esc(sid)}" data-stock-name="${descHtml(m.description)}" style="font-size:11px;margin-left:auto"><i class="ti ti-history"></i></button>
+            <button class="btn-sm btn-sm-save" data-stock-intake="${esc(sid)}"><i class="ti ti-plus"></i> Intake</button>
+            <button class="btn-sm" data-stock-hist="${esc(sid)}" data-stock-name="${descHtml(m.description)}" style="margin-left:auto"><i class="ti ti-history"></i></button>
           </div>
           <div class="stock-action-row">
             <span class="stock-action-label">Remove stock</span>
             <input class="stock-delta-input" type="number" min="1" step="1" placeholder="Qty" id="si-remove-${esc(sid)}">
-            <button class="btn-sm btn-sm-danger" data-stock-remove="${esc(sid)}" style="font-size:11px"><i class="ti ti-minus"></i> Remove</button>
+            <button class="btn-sm btn-sm-danger" data-stock-remove="${esc(sid)}"><i class="ti ti-minus"></i> Remove</button>
           </div>
           <div class="stock-action-row">
             <span class="stock-action-label">Set absolute</span>
             <input class="stock-delta-input" type="number" min="0" step="1" placeholder="Qty" id="si-set-${esc(sid)}">
-            <button class="btn-sm" data-stock-set="${esc(sid)}" style="font-size:11px"><i class="ti ti-pencil"></i> Override</button>
+            <button class="btn-sm" data-stock-set="${esc(sid)}"><i class="ti ti-pencil"></i> Override</button>
           </div>`;
 
     const body = tracked ? `
@@ -3994,10 +3995,10 @@ const Manager = {
             <input class="stock-threshold-input" type="number" min="0" step="1" value="${rec?.warningQty||0}" id="si-warn-${esc(sid)}">
             <span class="stock-threshold-label" style="margin-left:8px">Reorder:</span>
             <input class="stock-threshold-input" type="number" min="0" step="1" value="${rec?.reorderQty||0}" id="si-reorder-${esc(sid)}">
-            <button class="btn-sm btn-sm-save" data-stock-thresh="${esc(sid)}" style="font-size:11px;margin-left:auto">Save</button>
+            <button class="btn-sm btn-sm-save" data-stock-thresh="${esc(sid)}" style="margin-left:auto">Save</button>
           </div>
           <div class="stock-action-row" style="border-top:1px solid var(--border);padding-top:8px;margin-top:2px">
-            <button class="btn-sm btn-sm-danger" data-stock-disable="${esc(sid)}" style="font-size:11px;margin-left:auto">Disable tracking</button>
+            <button class="btn-sm btn-sm-danger" data-stock-disable="${esc(sid)}" style="margin-left:auto">Disable tracking</button>
           </div>
         </div>
       </div>` : `
@@ -4006,7 +4007,7 @@ const Manager = {
           <div class="stock-action-row">
             <span style="font-size:12px;color:var(--text2);flex:1">Enable tracking to manage stock levels for this item.</span>
             <input class="stock-delta-input" type="number" min="0" step="1" placeholder="Initial qty" id="si-init-${esc(sid)}" style="width:80px">
-            <button class="btn-sm btn-sm-save" data-stock-enable="${esc(sid)}" style="font-size:11px"><i class="ti ti-check"></i> Enable</button>
+            <button class="btn-sm btn-sm-save" data-stock-enable="${esc(sid)}"><i class="ti ti-check"></i> Enable</button>
           </div>
         </div>
       </div>`;
@@ -4035,9 +4036,13 @@ const Manager = {
     if (opening) this._openStockCards.add(sid); else this._openStockCards.delete(sid);
   },
 
+  _stockName(sid) { const i = this.consumables.find(m => stockId(m) === sid); return (i && i.description) || sid; },
+  _stockBusy(what, sid, label) { return busyBtn(document.querySelector(`[data-stock-${what}="${CSS.escape(sid)}"]`), label); },
+
   async stockEnable(sid) {
     if (this._opBusy.has(`enable:${sid}`)) return;
     this._opBusy.add(`enable:${sid}`);
+    const back = this._stockBusy('enable', sid, 'Enabling…');
     try {
       const initEl = document.getElementById(`si-init-${sid}`);
       const initQty = parseInt(initEl?.value || '0') || 0;
@@ -4048,30 +4053,30 @@ const Manager = {
         const by = (s.managerName || 'Manager').trim() || 'Manager';
         await DB.adjustStock(sid, item?.description || sid, initQty, 'adjustment', by, genRef(), 'initial_qty');
       }
-    } catch(e) { alert('Failed to enable tracking: ' + e.message); }
-    finally { this._opBusy.delete(`enable:${sid}`); }
+    } catch(e) { tellFailed('Tracking not enabled', e); }
+    finally { back(); this._opBusy.delete(`enable:${sid}`); }
   },
 
   async stockDisable(sid) {
-    await new Promise(r => setTimeout(r, 0));
-    if (!confirm('Disable tracking for this item? Stock history will be preserved.')) return;
-    try { await DB.disableTracking(sid); } catch(e) { alert('Failed: ' + e.message); }
+    if (!await Ask.confirm({ title: `Stop tracking ${this._stockName(sid)}?`, body: 'It leaves the sign-out page. Its history is kept.', yes: 'Stop tracking', no: 'Keep tracking', danger: true })) return;
+    try { await DB.disableTracking(sid); } catch(e) { tellFailed('Still tracked', e); }
   },
 
   async stockIntake(sid) {
     if (this._opBusy.has(`intake:${sid}`)) return;
     const el = document.getElementById(`si-intake-${sid}`);
     const delta = parseInt(el?.value || '0');
-    if (!delta || delta <= 0) { alert('Enter a quantity to add.'); return; }
+    if (!delta || delta <= 0) { toast('Enter a quantity to add', true); el?.focus(); return; }
     const item = this.consumables.find(m => stockId(m) === sid);
     const s = Settings.get();
     const by = (s.managerName || 'Manager').trim() || 'Manager';
     this._opBusy.add(`intake:${sid}`);
+    const back = this._stockBusy('intake', sid, 'Adding…');
     try {
       await DB.adjustStock(sid, item?.description || sid, delta, 'adjustment', by, genRef(), 'panel_intake');
       this._usedField(`si-intake-${sid}`);
-    } catch(e) { alert('Intake failed: ' + e.message); }
-    finally { this._opBusy.delete(`intake:${sid}`); }
+    } catch(e) { tellFailed('Stock not added', e, 'Check the quantity, then try again.'); }
+    finally { back(); this._opBusy.delete(`intake:${sid}`); }
   },
 
   // Take inventory out from the manager side — e.g. damaged/wasted stock, or
@@ -4081,18 +4086,17 @@ const Manager = {
   async stockRemove(sid) {
     const el = document.getElementById(`si-remove-${sid}`);
     const delta = parseInt(el?.value || '0');
-    if (!delta || delta <= 0) { alert('Enter a quantity to remove.'); return; }
+    if (!delta || delta <= 0) { toast('Enter a quantity to remove', true); el?.focus(); return; }
     const item = this.consumables.find(m => stockId(m) === sid);
     const rec = this._stockFor(sid);
-    if (delta > (rec?.qty || 0)) { alert(`Only ${rec?.qty||0} in stock — can't remove ${delta}.`); return; }
-    await new Promise(r => setTimeout(r, 0));
-    if (!confirm(`Remove ${delta} ${item?.qtyType||'units'} of ${item?.description||sid}?`)) return;
+    if (delta > (rec?.qty || 0)) { toast(`Only ${rec?.qty||0} in stock`, true); el?.focus(); return; }
+    if (!await Ask.confirm({ title: `Remove ${delta} ${item?.qtyType||'units'}?`, body: `${this._stockName(sid)}: ${rec?.qty||0} now, ${round2((rec?.qty||0) - delta)} after.`, yes: 'Remove stock', no: 'Keep stock', danger: true })) return;
     const s = Settings.get();
     const by = (s.managerName || 'Manager').trim() || 'Manager';
     try {
       await DB.adjustStock(sid, item?.description || sid, -delta, 'adjustment', by, genRef(), 'remove');
       this._usedField(`si-remove-${sid}`);
-    } catch(e) { alert('Remove failed: ' + e.message); }
+    } catch(e) { tellFailed('Stock not removed', e, 'Check the quantity, then try again.'); }
   },
 
   // Intake N whole boxes (default workflow for boxed items — adds boxSize * N units)
@@ -4100,18 +4104,19 @@ const Manager = {
     if (this._opBusy.has(`intakebox:${sid}`)) return;
     const el = document.getElementById(`si-intake-box-${sid}`);
     const numBoxes = parseInt(el?.value || '0');
-    if (!numBoxes || numBoxes <= 0) { alert(`Enter a number of boxes received.`); return; }
+    if (!numBoxes || numBoxes <= 0) { toast('Enter a number of boxes', true); el?.focus(); return; }
     const item = this.consumables.find(m => stockId(m) === sid);
     if (!hasBoxTracking(item)) return;
     const delta = numBoxes * item.boxSize;
     const s = Settings.get();
     const by = (s.managerName || 'Manager').trim() || 'Manager';
     this._opBusy.add(`intakebox:${sid}`);
+    const back = this._stockBusy('intake-boxn', sid, 'Adding…');
     try {
       await DB.adjustStock(sid, item?.description || sid, delta, 'adjustment', by, genRef(), 'panel_intake_box');
       this._usedField(`si-intake-box-${sid}`);
-    } catch(e) { alert('Intake failed: ' + e.message); }
-    finally { this._opBusy.delete(`intakebox:${sid}`); }
+    } catch(e) { tellFailed('Stock not added', e, 'Check the quantity, then try again.'); }
+    finally { back(); this._opBusy.delete(`intakebox:${sid}`); }
   },
 
   // Stocktake-style correction: rounds the recorded qty down to the nearest whole box.
@@ -4131,21 +4136,19 @@ const Manager = {
       // Already a whole number of boxes — there's no loose remainder to round down.
       // This usually means a box was opened without anyone recording usage from
       // the previous one. Offer to take away one full box to correct for that.
-      if (currentQty < item.boxSize) { alert('Not enough stock to remove a full box.'); return; }
-      await new Promise(r => setTimeout(r, 0));
+      if (currentQty < item.boxSize) { toast(`Less than one ${unit} in stock`, true); return; }
       const newQty = currentQty - item.boxSize;
-      if (!confirm(`Already at a whole number of ${unit}(es). Remove one full ${unit} instead? This will take stock from ${currentQty} down to ${newQty} ${item.qtyType||'units'} (${newQty / item.boxSize} whole ${unit}(es)).`)) return;
+      if (!await Ask.confirm({ title: `Take off one full ${unit}?`, body: `${this._stockName(sid)} is already at whole ${unit}es: ${currentQty} now, ${newQty} after.`, yes: `Take off one ${unit}`, no: 'Keep stock', danger: true })) return;
       try {
         await DB.setStock(sid, item?.description || sid, newQty, by, genRef(), 'open_box');
-      } catch(e) { alert('Failed: ' + e.message); }
+      } catch(e) { tellFailed('Stock not changed', e); }
       return;
     }
 
-    await new Promise(r => setTimeout(r, 0));
-    if (!confirm(`Round stock down from ${currentQty} to ${roundedQty} ${item.qtyType||'units'} (${roundedQty / item.boxSize} whole ${unit}(es))?`)) return;
+    if (!await Ask.confirm({ title: `Round down to whole ${unit}es?`, body: `${this._stockName(sid)}: ${currentQty} now, ${roundedQty} after (${roundedQty / item.boxSize} ${unit}${roundedQty / item.boxSize !== 1 ? 'es' : ''}).`, yes: 'Round down', no: 'Keep stock' })) return;
     try {
       await DB.setStock(sid, item?.description || sid, roundedQty, by, genRef(), 'open_box');
-    } catch(e) { alert('Failed: ' + e.message); }
+    } catch(e) { tellFailed('Stock not changed', e); }
   },
 
   // Boxed-item override: whole boxes + optional loose units in an opened box
@@ -4156,31 +4159,29 @@ const Manager = {
     const looseEl = document.getElementById(`si-set-loose-${sid}`);
     const boxes = parseInt(boxesEl?.value || '0') || 0;
     const loose = looseEl?.value ? (parseInt(looseEl.value) || 0) : 0;
-    if (!boxesEl?.value && !looseEl?.value) { alert('Enter a number of boxes (and loose units if applicable).'); return; }
+    if (!boxesEl?.value && !looseEl?.value) { toast('Enter a number of boxes', true); boxesEl?.focus(); return; }
     const newQty = boxes * item.boxSize + loose;
-    await new Promise(r => setTimeout(r, 0));
-    if (!confirm(`Set stock to ${boxes} ${(item.boxUnit||'Box').toLowerCase()}(es)${loose?` + ${loose} loose`:''} = ${newQty} ${item.qtyType||'units'} total?`)) return;
+    if (!await Ask.confirm({ title: `Set stock to ${newQty}?`, body: `${this._stockName(sid)}: ${boxes} ${(item.boxUnit||'Box').toLowerCase()}${boxes !== 1 ? 'es' : ''}${loose?` and ${loose} loose`:''}. ${this._stockFor(sid)?.qty || 0} now.`, yes: 'Set stock', no: 'Keep stock' })) return;
     const s = Settings.get();
     const by = (s.managerName || 'Manager').trim() || 'Manager';
     try {
       await DB.setStock(sid, item?.description || sid, newQty, by, genRef());
       this._usedField(`si-set-boxes-${sid}`, `si-set-loose-${sid}`);
-    } catch(e) { alert('Override failed: ' + e.message); }
+    } catch(e) { tellFailed('Stock not changed', e); }
   },
 
   async stockSetAbsolute(sid) {
     const el = document.getElementById(`si-set-${sid}`);
     const newQty = parseInt(el?.value ?? '');
-    if (isNaN(newQty) || newQty < 0) { alert('Enter a valid quantity.'); return; }
-    await new Promise(r => setTimeout(r, 0));
-    if (!confirm(`Set stock to ${newQty}?`)) return;
+    if (isNaN(newQty) || newQty < 0) { toast('Enter a quantity', true); el?.focus(); return; }
+    if (!await Ask.confirm({ title: `Set stock to ${newQty}?`, body: `${this._stockName(sid)}: ${this._stockFor(sid)?.qty || 0} now.`, yes: 'Set stock', no: 'Keep stock' })) return;
     const item = this.consumables.find(m => stockId(m) === sid);
     const s = Settings.get();
     const by = (s.managerName || 'Manager').trim() || 'Manager';
     try {
       await DB.setStock(sid, item?.description || sid, newQty, by, genRef());
       this._usedField(`si-set-${sid}`);
-    } catch(e) { alert('Override failed: ' + e.message); }
+    } catch(e) { tellFailed('Stock not changed', e); }
   },
 
   async stockSaveThresholds(sid) {
@@ -4192,7 +4193,7 @@ const Manager = {
       await DB.updateThresholds(sid, reordQty, warnQty);
       const btn = document.querySelector(`[data-stock-thresh="${sid}"]`);
       if (btn) { btn.textContent = '✓ Saved'; setTimeout(() => btn.textContent = 'Save', 1500); }
-    } catch(e) { alert('Failed to save thresholds: ' + e.message); }
+    } catch(e) { tellFailed('Levels not saved', e); }
   },
 
   stockOpenHistory(sid, itemName) {
@@ -4211,7 +4212,7 @@ const Manager = {
       const rec = this._stockFor(stockId(m));
       return rec?.tracked && rec.warningQty > 0 && (rec.qty||0) <= rec.warningQty && (rec.reorderQty||0) > 0;
     });
-    if (!lowItems.length) { alert('No low-stock items have a reorder quantity set.'); return; }
+    if (!lowItems.length) { toast('No low-stock item has a reorder quantity', true); return; }
     for (const m of lowItems) {
       const rec = this._stockFor(stockId(m));
       // reorderQty is a stock threshold in individual units; boxed items are ordered
@@ -4301,7 +4302,7 @@ const Manager = {
         if (err.message === 'BARCODE_IN_USE') {
           const other = this.consumables.find(x => stockId(x) === err.existingId);
           this._toast(`Already linked to: ${other ? other.description : 'another item'}`, true);
-        } else alert('Failed to link: ' + err.message);
+        } else tellFailed('Barcode not linked', err, 'Scan it again.');
       }
     });
     document.getElementById('btn-bc-link-new').addEventListener('click', () => this._bcNewItemPrompt(code));
@@ -4340,6 +4341,7 @@ const Manager = {
           <h3>Starting count</h3>
           <p style="margin-bottom:10px">${descHtml(m.description)}${rec?.tracked ? `<br><span style="font-size:12px;color:var(--text3)">currently recorded: ${rec.qty||0} ${esc(m.qtyType||'Each')}</span>` : ''}</p>
           ${fields}
+          <div class="inline-error" id="bc-count-error" role="alert" hidden style="margin-bottom:10px"></div>
           <button class="btn btn-primary" id="btn-bc-count-save" style="width:100%">Save count</button>
           <button class="btn btn-outline" id="btn-bc-count-skip" style="width:100%;margin-top:8px">Skip — count later</button>
         </div>
@@ -4360,14 +4362,16 @@ const Manager = {
       const qty = total();
       // A scan landing in the focused field types the barcode digits — a shelf
       // count can't realistically be a 10+ digit number, so refuse it.
-      if (qty > 99999) { alert('That looks like a barcode scan, not a shelf count — please type the quantity.'); return; }
-      ow.innerHTML = '';
+      if (qty > 99999) { inlineError('bc-count-error', 'That looks like a barcode. Type the quantity.'); return; }
+      inlineError('bc-count-error', '');
+      const back = busyBtn(document.getElementById('btn-bc-count-save'), 'Saving…');
       const s = Settings.get();
       try {
         await DB.setInitialStock(sid, m.description, qty, `${(s.managerName || 'Manager').trim() || 'Manager'} — setup`);
+        ow.innerHTML = '';
         this._toast(`${m.description}: counted ${boxed ? boxDisplay(m, qty) : qty + ' ' + (m.qtyType||'Each')}`);
         setTimeout(() => this.renderBarcodesPanel(), 300);
-      } catch (e) { alert('Failed to save count: ' + e.message); }
+      } catch (e) { console.error(e); back(); inlineError('bc-count-error', `Not saved: ${whyFailed(e)}. Click Save count to try again.`); }
     };
     ow.querySelectorAll('input').forEach(inp => inp.addEventListener('keydown', e => { if (e.key === 'Enter') save(); }));
     document.getElementById('btn-bc-count-save').addEventListener('click', save);
@@ -4419,21 +4423,23 @@ const Manager = {
             </div>
             <div class="setup-field" style="flex:1"><label>Box size <span style="font-weight:400;color:var(--text3)">(optional)</span></label><input id="gh-boxsize" type="number" min="0" step="1" placeholder="e.g. 50"></div>
           </div>
+          <div class="inline-error" id="gh-error" role="alert" hidden style="margin-bottom:10px"></div>
           <button class="btn btn-primary" id="btn-gh-save" style="width:100%;margin-top:4px">Create item</button>
           <button class="btn btn-outline" id="btn-gh-cancel" style="width:100%;margin-top:8px">Cancel</button>
         </div>
       </div>`;
     const save = async () => {
       const name = document.getElementById('gh-name').value.trim();
-      if (!name) { alert('Please enter a name.'); return; }
+      const err = msg => { inlineError('gh-error', msg); document.getElementById('gh-name').focus(); };
+      if (!name) { err('Enter a name.'); return; }
       // A scan landing in the focused name field types digits + Enter — catch it.
-      if (/^\d{8,}$/.test(name)) { alert('That looks like a barcode scan — please type the item name.'); return; }
+      if (/^\d{8,}$/.test(name)) { err('That looks like a barcode. Type the name.'); return; }
       const sid = stockId({ partCode: 'SC0000', description: name });
       const clash = this.consumables.find(x => stockId(x) === sid);
-      if (clash) { alert(`An item with a very similar name already exists:\n"${clash.description}"\n\nUse that one, or change the name.`); return; }
+      if (clash) { err(`"${clash.description}" already exists. Use that one, or change the name.`); return; }
+      inlineError('gh-error', '');
       const boxSize = Math.max(0, parseInt(document.getElementById('gh-boxsize').value) || 0);
-      const btn = document.getElementById('btn-gh-save');
-      btn.disabled = true;
+      const back = busyBtn(document.getElementById('btn-gh-save'), 'Creating…');
       const s = Settings.get();
       const by = `${(s.managerName || 'Manager').trim() || 'Manager'} — setup`;
       try {
@@ -4460,8 +4466,9 @@ const Manager = {
         // carrying the new ghost may not have landed yet.
         this._bcCountPrompt(sid, { ...ghost, _ghost: true });
       } catch (e) {
-        btn.disabled = false;
-        alert('Failed to create item: ' + e.message);
+        console.error(e);
+        back();
+        inlineError('gh-error', `Not created: ${whyFailed(e)}. Click Create item to try again.`);
       }
     };
     document.getElementById('gh-name').addEventListener('keydown', e => { if (e.key === 'Enter') save(); });
@@ -4534,7 +4541,7 @@ const Manager = {
           <div style="display:flex;flex-wrap:wrap;gap:5px;margin-top:5px">
             ${codes.map(c => `<span class="bc-chip">${esc(c)} <button class="bc-chip-x" data-bc-unlink="${esc(c)}" data-sid="${esc(sid)}" title="Remove this barcode">✕</button></span>`).join('')}
             ${codes.length ? '' : '<span class="bc-chip none">no barcode yet</span>'}
-            <button class="btn-sm" data-bc-add="${esc(sid)}" style="font-size:10px;padding:2px 8px"><i class="ti ti-plus"></i> Add</button>
+            <button class="btn-sm" data-bc-add="${esc(sid)}"><i class="ti ti-plus"></i> Add</button>
             ${countChip}
           </div>
           ${log}
@@ -4546,13 +4553,13 @@ const Manager = {
 
   async bcUnlink(sid, code) {
     const m = this.consumables.find(x => stockId(x) === sid);
-    if (!confirm(`Remove barcode ${code} from "${m ? m.description : sid}"? Scanning it will no longer match this item.`)) return;
+    if (!await Ask.confirm({ title: 'Remove this barcode?', body: `${code} will no longer find ${m ? m.description : sid}.`, yes: 'Remove barcode', no: 'Keep barcode', danger: true })) return;
     const s = Settings.get();
     try {
       await DB.unlinkBarcode(sid, code, (s.managerName || 'Manager').trim() || 'Manager');
       // The stock listener will re-render, but do it now so it feels immediate.
       setTimeout(() => this.renderBarcodesPanel(), 300);
-    } catch (e) { alert('Failed to remove: ' + e.message); }
+    } catch (e) { tellFailed('Barcode not removed', e); }
   },
 
   // Add a barcode to a specific item. On the consumables iPad you can just SCAN into
@@ -4560,8 +4567,8 @@ const Manager = {
   // PC (no scanner), type or paste the number off the box.
   async bcManualAdd(sid) {
     const m = this.consumables.find(x => stockId(x) === sid);
-    const code = prompt(`Scan the barcode now, or type the number, for:\n${m ? m.description : sid}`);
-    if (!code || !code.trim()) return;
+    const code = await Ask.text({ title: m ? m.description : sid, body: 'Scan the barcode, or type its number.', label: 'Barcode', yes: 'Link barcode', no: 'Cancel' });
+    if (!code) return;
     const s = Settings.get();
     try {
       await DB.linkBarcode(sid, code.trim(), (s.managerName || 'Manager').trim() || 'Manager');
@@ -4572,8 +4579,8 @@ const Manager = {
     } catch (e) {
       if (e.message === 'BARCODE_IN_USE') {
         const other = this.consumables.find(x => stockId(x) === e.existingId);
-        alert(`That barcode is already linked to: ${other ? other.description : 'another item'}\n\nRemove it there first if it's wrong.`);
-      } else alert('Failed to link: ' + e.message);
+        Ask.tell('Barcode not linked', `It is already linked to ${other ? other.description : 'another item'}. Remove it there first.`);
+      } else tellFailed('Barcode not linked', e);
     }
   },
 
@@ -4635,7 +4642,7 @@ const Manager = {
   // as a scannable image, and the code as text (doubles as a backup of the barcode
   // data outside Firestore). Same template styling as the materials export.
   async exportConsumables() {
-    if (typeof ExcelJS === 'undefined') { alert('Export library failed to load — refresh the page and try again.'); return; }
+    if (typeof ExcelJS === 'undefined') { Ask.tell('Not exported', 'The export part of this page did not load. Refresh the page, then try again.'); return; }
     const thin = { style: 'thin', color: { argb: 'FF000000' } };
     const BORDER    = { top: thin, left: thin, bottom: thin, right: thin };
     const F_HEADER  = { name: 'Calibri', size: 11, bold: true, color: { argb: 'FFFFFFFF' } };
@@ -4790,9 +4797,9 @@ const Manager = {
             <div class="history-meta">${ts} · ${totalAbs} total units</div>
           </div>
           ${allReverted
-            ? `<button class="btn-sm" data-hist-session-unrevert="${esc(sessId)}" style="font-size:10px;padding:2px 7px">Unrevert all</button>
-               <button class="btn-sm btn-sm-danger" data-hist-session-delete="${esc(sessId)}" style="font-size:10px;padding:2px 7px">Delete</button>`
-            : `<button class="btn-sm btn-sm-danger" data-hist-session-revert="${esc(sessId)}" style="font-size:10px;padding:2px 7px">Revert all</button>`}
+            ? `<button class="btn-sm" data-hist-session-unrevert="${esc(sessId)}">Unrevert all</button>
+               <button class="btn-sm btn-sm-danger" data-hist-session-delete="${esc(sessId)}">Delete</button>`
+            : `<button class="btn-sm btn-sm-danger" data-hist-session-revert="${esc(sessId)}">Revert all</button>`}
           <i class="ti ti-chevron-right chevron ${isOpen?'open':''}" style="margin-right:2px"></i>
         </div>
         <div class="history-session-body ${isOpen?'open':''}" id="hist-sess-${esc(sessId)}">
@@ -4835,9 +4842,9 @@ const Manager = {
     }
 
     const revertBtn = r.reverted
-      ? `<button class="btn-sm" data-hist-unrevert="${esc(r._id)}" style="font-size:10px;padding:2px 7px">Unrevert</button>
-         <button class="btn-sm btn-sm-danger" data-hist-delete="${esc(r._id)}" style="font-size:10px;padding:2px 7px">Delete</button>`
-      : `<button class="btn-sm btn-sm-danger" data-hist-revert="${esc(r._id)}" style="font-size:10px;padding:2px 7px">Revert</button>`;
+      ? `<button class="btn-sm" data-hist-unrevert="${esc(r._id)}">Unrevert</button>
+         <button class="btn-sm btn-sm-danger" data-hist-delete="${esc(r._id)}">Delete</button>`
+      : `<button class="btn-sm btn-sm-danger" data-hist-revert="${esc(r._id)}">Revert</button>`;
     return `<div class="history-row${r.reverted?' reverted':''}${nested?' nested':''}">
       <span class="history-action-pill ${action}">${action}</span>
       <span class="history-delta ${dClass}">${deltaDisplay}</span>
@@ -4856,67 +4863,50 @@ const Manager = {
   },
 
   async historyRevert(historyId) {
-    await new Promise(r => setTimeout(r, 0));
-    if (!confirm('Revert this stock change? The quantity it caused will be reversed.')) return;
+    const r = this._historyRecords.find(x => x._id === historyId);
+    if (!await Ask.confirm({ title: 'Reverse this stock change?', body: r ? `${r.itemName || r.stockId}: stock goes ${r.delta < 0 ? 'up' : 'down'} by ${Math.abs(r.delta)}.` : '', yes: 'Reverse change', no: 'Keep change', danger: true })) return;
     try {
       await DB.revertHistoryRecord(historyId);
       this._loadHistory(); // refresh to reflect reverted flag
-    } catch(e) { alert('Revert failed: ' + e.message); }
+    } catch(e) { tellFailed('Not reversed', e); }
   },
 
   async historyUnrevert(historyId) {
-    await new Promise(r => setTimeout(r, 0));
-    if (!confirm('Re-apply this stock change?')) return;
+    if (!await Ask.confirm({ title: 'Make this stock change again?', yes: 'Make change again', no: 'Leave reversed' })) return;
     try {
       await DB.unrevertHistoryRecord(historyId);
       this._loadHistory();
-    } catch(e) { alert('Unrevert failed: ' + e.message); }
+    } catch(e) { tellFailed('Not changed', e); }
   },
 
   async historyDelete(historyId) {
-    await new Promise(r => setTimeout(r, 0));
-    if (!confirm('Permanently delete this reverted entry? This cannot be undone.')) return;
+    if (!await Ask.confirm({ title: 'Delete this reversed entry?', body: 'This cannot be undone.', yes: 'Delete entry', no: 'Keep entry', danger: true })) return;
     try {
       await DB.deleteHistoryRecord(historyId);
       this._loadHistory();
-    } catch(e) { alert('Delete failed: ' + e.message); }
+    } catch(e) { tellFailed('Not deleted', e); }
   },
 
-  // Session-level operations: fetch all records for the session, then act on each
-  async historySessionRevert(sessId) {
-    await new Promise(r => setTimeout(r, 0));
-    if (!confirm('Revert all stock changes in this order session?')) return;
+  // Session-level operations: fetch all records for the session, then act on each. Each
+  // is safe to repeat, so a run that stops part-way can be started again.
+  async _historySession(sessId, ask, failed, each) {
+    if (!await Ask.confirm(ask)) return;
     try {
-      const records = await DB.fetchSessionRecords(sessId);
-      for (const r of records) {
-        if (!r.reverted) await DB.revertHistoryRecord(r._id);
-      }
-      this._loadHistory();
-    } catch(e) { alert('Session revert failed: ' + e.message); }
+      for (const r of await DB.fetchSessionRecords(sessId)) await each(r);
+    } catch(e) { tellFailed(failed, e, 'Some of it may have been done. Try again to finish.'); }
+    this._loadHistory();
   },
-
-  async historySessionUnrevert(sessId) {
-    await new Promise(r => setTimeout(r, 0));
-    if (!confirm('Re-apply all stock changes in this order session?')) return;
-    try {
-      const records = await DB.fetchSessionRecords(sessId);
-      for (const r of records) {
-        if (r.reverted) await DB.unrevertHistoryRecord(r._id);
-      }
-      this._loadHistory();
-    } catch(e) { alert('Session unrevert failed: ' + e.message); }
+  historySessionRevert(sessId) {
+    return this._historySession(sessId, { title: 'Reverse every stock change in this group?', yes: 'Reverse changes', no: 'Keep changes', danger: true },
+      'Not all reversed', r => r.reverted ? null : DB.revertHistoryRecord(r._id));
   },
-
-  async historySessionDelete(sessId) {
-    await new Promise(r => setTimeout(r, 0));
-    if (!confirm('Permanently delete all entries in this reverted order session? This cannot be undone.')) return;
-    try {
-      const records = await DB.fetchSessionRecords(sessId);
-      for (const r of records) {
-        if (r.reverted) await DB.deleteHistoryRecord(r._id);
-      }
-      this._loadHistory();
-    } catch(e) { alert('Session delete failed: ' + e.message); }
+  historySessionUnrevert(sessId) {
+    return this._historySession(sessId, { title: 'Make every stock change in this group again?', yes: 'Make changes again', no: 'Leave reversed' },
+      'Not all changed', r => r.reverted ? DB.unrevertHistoryRecord(r._id) : null);
+  },
+  historySessionDelete(sessId) {
+    return this._historySession(sessId, { title: 'Delete every reversed entry in this group?', body: 'This cannot be undone.', yes: 'Delete entries', no: 'Keep entries', danger: true },
+      'Not all deleted', r => r.reverted ? DB.deleteHistoryRecord(r._id) : null);
   },
 
   // ══════════════════════════════════════════
@@ -4944,27 +4934,27 @@ const Manager = {
             <div><div class="settings-row-label">Theme</div><div class="settings-row-sub">Colours and logo for this device — applies to every page opened on it</div></div>
             <select id="s-theme">${THEMES.map(t => `<option value="${t.id}"${Theme.get() === t.id ? ' selected' : ''}>${esc(t.name)}</option>`).join('')}</select>
           </div>
-          <div class="settings-row">
+          <label class="settings-row">
             <div><div class="settings-row-label">Fractions as symbols</div><div class="settings-row-sub">Show 1 1/2" as 1½" — off keeps sizes large and easy to read on the iPads</div></div>
             <input type="checkbox" id="s-fraction-glyphs" ${s.fractionGlyphs ? 'checked' : ''} style="width:20px;height:20px">
-          </div>
+          </label>
         </div>
       </div>
       <div class="settings-section">
         <div class="settings-label">Search &amp; Sort</div>
         <div class="settings-card">
-          <div class="settings-row">
+          <label class="settings-row">
             <div><div class="settings-row-label">Numeric-aware sorting</div><div class="settings-row-sub">e.g. 8mm lists before 10mm; inch sizes slot in by their mm value (32mm sits between 1&quot; and 1 1/2&quot;)</div></div>
             <input type="checkbox" id="s-natural-sort" ${s.naturalSort!==false?'checked':''} style="width:20px;height:20px">
-          </div>
-          <div class="settings-row">
+          </label>
+          <label class="settings-row">
             <div><div class="settings-row-label">Unit-aware search</div><div class="settings-row-sub">"1 inch", "25.4mm", "1\"" etc. all find the same item</div></div>
             <input type="checkbox" id="s-unit-search" ${s.unitAwareSearch!==false?'checked':''} style="width:20px;height:20px">
-          </div>
-          <div class="settings-row">
+          </label>
+          <label class="settings-row">
             <div><div class="settings-row-label">Typo-tolerant search</div><div class="settings-row-sub">Finds close matches even with spelling mistakes</div></div>
             <input type="checkbox" id="s-fuzzy-search" ${s.fuzzySearch!==false?'checked':''} style="width:20px;height:20px">
-          </div>
+          </label>
         </div>
       </div>
       <div class="settings-section">
@@ -5083,11 +5073,11 @@ const Manager = {
     document.getElementById('btn-enable-notif')?.addEventListener('click', async () => {
       const result = await Notification.requestPermission();
       if (result === 'granted') this._populateSettings();
-      else alert('Notification permission was not granted. You may need to allow it in your browser\'s site settings.');
+      else Ask.tell('Notifications are blocked', 'Allow them for this site in the browser settings.');
     });
     document.getElementById('btn-test-notif')?.addEventListener('click', () => {
       try { new Notification('Test notification', { body: 'System notifications are working.', icon: './icons/icon-192.png' }); }
-      catch(e) { alert('Could not send notification: ' + e.message); }
+      catch(e) { console.error(e); Ask.tell('Not shown', 'This browser refused the notification.'); }
     });
     document.getElementById('btn-mgr-toggle-test').addEventListener('click', () => { FirebaseConfig.setTestMode(!FirebaseConfig.isTestMode()); location.reload(); });
     document.getElementById('btn-reset-template').addEventListener('click', () => {
