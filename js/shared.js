@@ -1,9 +1,9 @@
-// shared.js — v2026-11-27.1
+// shared.js — v2026-11-27.2
 
 // The build date plus that day's counter — "2026-10-06.2" is the second build
 // on 6 Oct 2026 (the production board's scheme). Set by tools/bump-version.py;
 // shown to people with a leading "v" (see verLabel).
-const APP_VERSION = '2026-11-27.1';
+const APP_VERSION = '2026-11-27.2';
 
 // Numeric version comparison, part by part. Returns true if `a` is strictly
 // newer than `b`. Reads both the dated form and the "v0.56"-style numbers used
@@ -1407,24 +1407,59 @@ const Boot = {
 function skeleton(n, cls) { return `<div class="skels ${cls || ''}" aria-hidden="true">${'<div class="skel"></div>'.repeat(n)}</div>`; }
 
 // Cards open with a short, soft change of height instead of a snap (about 150ms open,
-// 120ms closed; nothing under reduced motion). Only when someone taps: a list redrawn by
-// a live update opens its cards at once. The CSS is under "Cards opening" in style.css.
+// 120ms closed; nothing under reduced motion). The height is measured here and animated
+// by script, because Safari can't ease to a height of "auto". Only when someone taps: a
+// list redrawn by a live update opens its cards at once.
 const Fold = {
-  CLOSE_MS: 120,
-  _still() { return window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches; },
-  // A body that stays in the page and is shown with the class "open".
-  toggle(body, open) {
-    if (!body) return;
-    body.classList.add('fold');
-    body.classList.toggle('open', open);
+  OPEN_MS: 150, CLOSE_MS: 120, EASE: 'cubic-bezier(.23, 1, .32, 1)',
+  _still() {
+    return !Element.prototype.animate || !Element.prototype.getAnimations
+      || (window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches);
   },
-  // Parts a redraw is about to take away: let them close first, then redraw.
+  // Open, and not on its way shut.
+  isOpen(el) { return !!el && el.classList.contains('open') && !el.classList.contains('shutting'); },
+  _frames(el) {
+    const cs = getComputedStyle(el);
+    return [
+      { height: '0px', paddingTop: '0px', paddingBottom: '0px', opacity: 0 },
+      { height: cs.height, paddingTop: cs.paddingTop, paddingBottom: cs.paddingBottom, opacity: 1 },
+    ];
+  },
+  _mine(el) { return el.getAnimations().filter(a => a.id === 'fold'); },
+  // Content stays inside the card while it moves.
+  _tidy(el) { if (!this._mine(el).some(a => a.playState === 'running')) el.classList.remove('folding'); },
+  _run(el, frames, ms, fill) {
+    el.classList.add('folding');
+    const a = el.animate(frames, { duration: ms, easing: this.EASE, fill });
+    a.id = 'fold';
+    return a;
+  },
+  // Something just shown: grow it from nothing to its own height.
+  grow(el) {
+    if (!el || this._still()) return;
+    this._mine(el).forEach(a => a.cancel());   // a close under way gives in
+    const a = this._run(el, this._frames(el), this.OPEN_MS, 'none');
+    a.finished.then(() => this._tidy(el), () => this._tidy(el));
+  },
+  // Shrink to nothing, then `then` hides or redraws them.
   close(els, then) {
     els = els.filter(Boolean);
     if (!els.length || this._still()) return then();
-    if (els.some(el => el.classList.contains('folding'))) return;   // already closing
-    els.forEach(el => el.classList.add('folding'));
-    setTimeout(then, this.CLOSE_MS);
+    if (els.some(el => el.classList.contains('shutting'))) return;   // already closing
+    const runs = els.map(el => {
+      this._mine(el).forEach(a => a.cancel());
+      el.classList.add('shutting');
+      return this._run(el, this._frames(el).reverse(), this.CLOSE_MS, 'forwards');
+    });
+    Promise.all(runs.map(a => a.finished))
+      .then(() => then(), () => {})   // reopened before it shut: nothing to do
+      .finally(() => runs.forEach((a, i) => { els[i].classList.remove('shutting'); a.cancel(); this._tidy(els[i]); }));
+  },
+  // A body that stays in the page and is shown with the class "open".
+  toggle(body, open) {
+    if (!body) return;
+    if (open) { body.classList.add('open'); this.grow(body); }
+    else this.close([body], () => body.classList.remove('open'));
   },
 };
 

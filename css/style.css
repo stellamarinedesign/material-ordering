@@ -800,22 +800,14 @@ input:focus-visible, textarea:focus-visible, select:focus-visible { outline: non
 .qty-input:focus, .qty-row .qty-edit:focus, .stock-delta-input:focus, .stock-threshold-input:focus, .intake-partial-input:focus {
   border-color: var(--focus); box-shadow: inset 0 0 0 1px var(--focus); position: relative; z-index: 1;
 }
-/* Cards opening (Fold in js/shared.js): height eases open in about 150ms and closes in
-   about 120ms. A browser that can't animate to "auto" height just fades and snaps. */
-:root { interpolate-size: allow-keywords; --dur-open: 150ms; --dur-close: 120ms; }
-.fold, .fold-in, .folding {
-  overflow: clip; overflow-clip-margin: 4px;
-  transition: height var(--dur-close) var(--ease-out), padding-block var(--dur-close) var(--ease-out),
-              opacity var(--dur-close) var(--ease-out), display var(--dur-close) allow-discrete;
-}
-.fold.open, .fold-in { transition-duration: var(--dur-open); }
-.fold:not(.open), .folding.folding { height: 0; padding-block: 0; opacity: 0; transition-duration: var(--dur-close); }
-@starting-style { .fold.open, .fold-in.fold-in { height: 0; padding-block: 0; opacity: 0; } }
+/* Cards opening (Fold in js/shared.js): the script eases the height open in about 150ms
+   and shut in about 120ms. While it moves, the content stays inside the card. */
+.folding { overflow: hidden !important; }
 /* No colours fading one by one while the theme changes */
 .theme-switching, .theme-switching * { transition: none !important; }
 /* Reduced motion: nothing slides, fades or spins */
 @media (prefers-reduced-motion: reduce) {
-  :root { --dur-fast: 0ms; --dur: 0ms; --dur-panel: 0ms; --dur-open: 0ms; --dur-close: 0ms; }
+  :root { --dur-fast: 0ms; --dur: 0ms; --dur-panel: 0ms; }
   *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0ms !important; scroll-behavior: auto !important; }
   button:not(:disabled):active { transform: none; }
 }

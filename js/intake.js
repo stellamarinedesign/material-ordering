@@ -1,4 +1,4 @@
-// intake.js — v2026-11-27.1
+// intake.js — v2026-11-27.2
 // Shared intake rendering module used by warehouse.html and manager.html.
 
 const Intake = {
@@ -976,7 +976,11 @@ const Intake = {
         const body = card && card.querySelector(':scope > .intake-card-body');
         if (!callbacks.onRerender) return;
         if (body) Fold.close([body, card.querySelector(':scope > .intake-foot')], () => callbacks.onRerender(key));
-        else { this._foldIn = key; try { callbacks.onRerender(key); } finally { this._foldIn = null; } }
+        else {
+          this._foldIn = key;
+          try { callbacks.onRerender(key); } finally { this._foldIn = null; }
+          container.querySelectorAll('.fold-in').forEach(el => { el.classList.remove('fold-in'); Fold.grow(el); });
+        }
         return;
       }
 
