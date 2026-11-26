@@ -1,4 +1,4 @@
-// auth.js — v2026-11-26.6
+// auth.js — v2026-11-26.7
 //
 // Sign-in (Firebase email + password, compat SDK) and WHO IS WHAT, on every
 // page. The same model as the production board:
@@ -148,8 +148,11 @@ const Auth = {
     document.addEventListener('click', e => {
       const t = e.target;
       if (t.closest('[data-auth-signin]'))   { e.preventDefault(); this.openDialog(); }
-      if (t.closest('[data-auth-signout]'))  { e.preventDefault(); this.signOut(); }
-      if (t.closest('[data-auth-password]')) { e.preventDefault(); this.openPasswordDialog(); }
+      // Sign out and Change password on a floor iPad only while the admin lock is open
+      if (t.closest('[data-auth-signout]'))  { e.preventDefault(); if (this.adminOpen()) this.signOut(); }
+      if (t.closest('[data-auth-password]')) { e.preventDefault(); if (this.adminOpen()) this.openPasswordDialog(); }
+      if (t.closest('[data-auth-unlock]'))   { e.preventDefault(); this.openUnlockDialog(); }
+      if (t.closest('[data-auth-lock]'))     { e.preventDefault(); this.lockAdmin(); }
       if (t.closest('[data-auth-claim]'))    { e.preventDefault(); this.claim(t.closest('[data-auth-claim]')); }
     });
   },
@@ -255,6 +258,65 @@ const Auth = {
     await user.updatePassword(next);
   },
 
+  // ── Admin lock (the floor iPads) ──────────────────────────────────────
+  // The iPads share one login, so anyone could sign one out or change its password.
+  // There, the device name, Change password and Sign out wait behind the password the
+  // iPad was signed in with, which floor staff never type. Unlocked for 5 minutes, or
+  // until Settings closes. A deterrent, not security: the database rules are that.
+  ADMIN_MS: 5 * 60 * 1000,
+  _adminUntil: 0,
+  _adminTimer: null,
+  _floor() { return document.body.classList.contains('floor'); },
+  adminOpen() { return !this._floor() || Date.now() < this._adminUntil; },
+  lockAdmin() {
+    if (!this._adminUntil) return;
+    this._adminUntil = 0; clearTimeout(this._adminTimer);
+    this._refresh();
+  },
+  async unlockAdmin(password) {
+    const user = firebase.auth().currentUser;
+    if (!user || !user.email) throw new Error('Not signed in.');
+    await user.reauthenticateWithCredential(firebase.auth.EmailAuthProvider.credential(user.email, password));
+    this._adminUntil = Date.now() + this.ADMIN_MS;
+    clearTimeout(this._adminTimer);
+    this._adminTimer = setTimeout(() => this.lockAdmin(), this.ADMIN_MS);
+    this._refresh();
+  },
+  openUnlockDialog() {
+    if (!this.isSignedIn() || document.getElementById('unlock-card')) return;
+    let ow = document.getElementById('overlay-wrap');
+    if (!ow) { ow = document.createElement('div'); ow.id = 'overlay-wrap'; document.body.appendChild(ow); }
+    ow.innerHTML = `
+      <div class="success-overlay">
+        <form class="success-card auth-card" id="unlock-card" style="max-width:380px;text-align:left" novalidate>
+          <h3 style="text-align:center">Unlock admin</h3>
+          <p style="text-align:center;margin-bottom:14px">Password for ${esc(this.email())}.</p>
+          <div class="setup-field"><label for="unlock-pass">Password</label><input id="unlock-pass" type="password" autocomplete="current-password"></div>
+          <div class="auth-err" id="unlock-err" role="alert"></div>
+          <button type="submit" class="btn btn-primary" id="unlock-go" style="width:100%;margin-top:4px"><i class="ti ti-lock-open"></i> Unlock</button>
+          <button type="button" class="btn btn-outline" id="unlock-cancel" data-esc style="width:100%;margin-top:8px">Keep locked</button>
+        </form>
+      </div>`;
+    const $ = id => document.getElementById(id);
+    const err = msg => { $('unlock-err').textContent = msg || ''; };
+    $('unlock-card').addEventListener('submit', async e => {
+      e.preventDefault();
+      const pass = $('unlock-pass').value;
+      if (!pass) { refuseField($('unlock-pass')); return err('Type the password first.'); }
+      const back = busyBtn($('unlock-go'), 'Unlocking…'); err('');
+      try {
+        await this.unlockAdmin(pass);
+        ow.innerHTML = '';
+      } catch (e) {
+        back();
+        err(this._badCredential(e) ? 'The password is not right.' : this._friendly(e, 'unlock'));
+        refuseField($('unlock-pass'));
+      }
+    });
+    $('unlock-cancel').addEventListener('click', () => { ow.innerHTML = ''; });
+    $('unlock-pass').focus();
+  },
+
   // ── DOM slots ─────────────────────────────────────────────────────────
   // Pages drop `<span id="auth-pill"></span>` in their header actions and the
   // Settings panels render `Auth.settingsSection()`; both are refreshed here.
@@ -264,13 +326,17 @@ const Auth = {
     if (!this._user) {
       body = `<div><div class="settings-row-label">Not signed in</div></div>
          <button class="btn-sm btn-sm-save" data-auth-signin>Sign in</button>`;
+    } else if (!this.adminOpen()) {
+      body = `<i class="ti ti-lock admin-lock" aria-hidden="true"></i>
+         <div style="flex:1"><div class="settings-row-label">Admin</div><div class="settings-row-sub">Device name, password, sign out</div></div>
+         <button class="btn-sm" data-auth-unlock>Unlock</button>`;
     } else {
       // Role words and the Master chip for a master only — everyone else sees
       // their address; which page they get is the whole of their role.
       const master = this.isMaster(), role = this.role();
       const sub = master ? `${Access.ROLE_LABEL[role]}: ${Access.ROLE_WORDS[role]}` : (this._accessState === 'missing' ? 'No accounts list exists yet' : '');
       body = `<div><div class="settings-row-label">${esc(this._user.email || '')}${master ? ' <span class="master-chip">Master</span>' : ''}</div>${sub ? `<div class="settings-row-sub">${esc(sub)}</div>` : ''}</div>
-         <div class="settings-acts"><button class="btn-sm" data-auth-password>Change password</button><button class="btn-sm" data-auth-signout>Sign out</button></div>`;
+         <div class="settings-acts"><button class="btn-sm" data-auth-password>Change password</button><button class="btn-sm" data-auth-signout>Sign out</button>${this._floor() ? '<button class="btn-sm" data-auth-lock><i class="ti ti-lock"></i> Lock</button>' : ''}</div>`;
     }
     const setup = this._user && this._accessState === 'missing' ? `
           <div class="settings-row">
@@ -292,6 +358,10 @@ const Auth = {
     else if (this._accessState === 'ready' && !this.isListed()) this.denied();
     // Anything a master alone should see (the test-mode switch in Settings).
     document.querySelectorAll('[data-master-only]').forEach(el => { el.hidden = !this.isMaster(); });
+    // The admin lock: fields that change only when unlocked, and their read-only stand-ins.
+    const open = this.adminOpen();
+    document.querySelectorAll('[data-admin-only]').forEach(el => { el.hidden = !open; });
+    document.querySelectorAll('[data-admin-locked]').forEach(el => { el.hidden = open; });
     if (typeof Accounts !== 'undefined' && Accounts.refresh) Accounts.refresh();
   },
 
@@ -407,6 +477,7 @@ const Auth = {
     if (code === 'auth/network-request-failed') return 'No connection. Check the Wi-Fi, then try again.';
     if (code === 'auth/user-disabled') return 'This account has been switched off.';
     console.error('Auth:', e);
-    return where === 'password' ? 'Password not changed. Try again.' : where === 'account' ? 'Account not made. Try again.' : 'Not signed in. Try again.';
+    return where === 'password' ? 'Password not changed. Try again.' : where === 'account' ? 'Account not made. Try again.'
+      : where === 'unlock' ? 'Not unlocked. Try again.' : 'Not signed in. Try again.';
   },
 };

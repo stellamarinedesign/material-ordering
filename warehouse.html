@@ -6,14 +6,18 @@
   <script>/* Theme bootstrap — runs before first paint so a themed device never flashes the default look. Choice is per device; see Theme in js/shared.js */try{var t=localStorage.getItem("mo_theme");if(t&&t!=="stella")document.documentElement.setAttribute("data-theme",t);}catch(e){}</script>
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Warehouse">
   <title>Warehouse Intake</title>
   <link rel="icon" type="image/png" href="favicon.png">
+  <link rel="manifest" href="manifest-warehouse.json">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" media="print" onload="this.media='all'">
   <link rel="stylesheet" href="fonts/tabler-icons.min.css">
-  <link rel="stylesheet" href="css/style.css?v=2026-11-26.6">
-  <link rel="stylesheet" href="css/themes.css?v=2026-11-26.6">
+  <link rel="stylesheet" href="css/style.css?v=2026-11-26.7">
+  <link rel="stylesheet" href="css/themes.css?v=2026-11-26.7">
 </head>
 <body class="floor">
 <!-- Start-up cover: painted before any script; see Boot in js/shared.js -->
@@ -33,10 +37,10 @@
 <!-- APP CHECK: remove this line to disable App Check (also remove init block in firebase-sync.js) -->
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-check-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
-<script src="js/shared.js?v=2026-11-26.6"></script>
-<script src="js/firebase-sync.js?v=2026-11-26.6"></script>
-<script src="js/auth.js?v=2026-11-26.6"></script>
-<script src="js/intake.js?v=2026-11-26.6"></script>
+<script src="js/shared.js?v=2026-11-26.7"></script>
+<script src="js/firebase-sync.js?v=2026-11-26.7"></script>
+<script src="js/auth.js?v=2026-11-26.7"></script>
+<script src="js/intake.js?v=2026-11-26.7"></script>
 <script>
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.getRegistrations().then(rs => rs.forEach(r => r.unregister()));
@@ -127,7 +131,7 @@ const Warehouse = {
             <div class="intake-filter-bar" id="filter-materials">
               <button type="button" class="intake-filter-chip" data-filter="all" aria-pressed="false">All</button>
               <button type="button" class="intake-filter-chip active" data-filter="outstanding" aria-pressed="true"><i class="ti ti-clock"></i> Outstanding</button>
-              <button type="button" class="intake-filter-chip" data-filter="backorder" aria-pressed="false"><i class="ti ti-clock-pause"></i> Back Orders</button>
+              <button type="button" class="intake-filter-chip" data-filter="backorder" aria-pressed="false"><i class="ti ti-clock-pause"></i> Back orders</button>
               <button type="button" class="intake-filter-chip" data-filter="completed" aria-pressed="false"><i class="ti ti-circle-check"></i> Completed</button>
               <button type="button" class="intake-filter-chip" data-filter="cancelled" aria-pressed="false"><i class="ti ti-ban"></i> Cancelled</button>
             </div>
@@ -143,7 +147,7 @@ const Warehouse = {
             <div class="intake-filter-bar" id="filter-consumables">
               <button type="button" class="intake-filter-chip" data-filter="all" aria-pressed="false">All</button>
               <button type="button" class="intake-filter-chip active" data-filter="outstanding" aria-pressed="true"><i class="ti ti-clock"></i> Outstanding</button>
-              <button type="button" class="intake-filter-chip" data-filter="backorder" aria-pressed="false"><i class="ti ti-clock-pause"></i> Back Orders</button>
+              <button type="button" class="intake-filter-chip" data-filter="backorder" aria-pressed="false"><i class="ti ti-clock-pause"></i> Back orders</button>
               <button type="button" class="intake-filter-chip" data-filter="completed" aria-pressed="false"><i class="ti ti-circle-check"></i> Completed</button>
               <button type="button" class="intake-filter-chip" data-filter="cancelled" aria-pressed="false"><i class="ti ti-ban"></i> Cancelled</button>
             </div>
@@ -160,6 +164,16 @@ const Warehouse = {
             <div class="panel-title">Settings</div>
           </div>
           <div class="panel-scroll"><div class="panel-col" style="gap:20px">
+            <div class="settings-section">
+              <div class="settings-label">Device</div>
+              <div class="settings-card">
+                <div class="settings-row">
+                  <div><div class="settings-row-label">Device name</div></div>
+                  <input type="text" id="s-device-name" autocomplete="off" autocorrect="off" spellcheck="false" value="${esc(WarehouseDeviceName.get())}" style="max-width:220px" data-admin-only ${Auth.adminOpen() ? '' : 'hidden'}>
+                  <span class="settings-value" data-admin-locked ${Auth.adminOpen() ? 'hidden' : ''}>${esc(WarehouseDeviceName.get())}</span>
+                </div>
+              </div>
+            </div>
             ${Auth.settingsSection()}
             <div class="settings-section">
               <div class="settings-label">Appearance</div>
@@ -183,15 +197,6 @@ const Warehouse = {
                 </div>
               </div>
             </div>
-            <div class="settings-section">
-              <div class="settings-label">Device</div>
-              <div class="settings-card">
-                <div class="settings-row">
-                  <div><div class="settings-row-label">Device name</div></div>
-                  <input type="text" id="s-device-name" autocomplete="off" value="${esc(WarehouseDeviceName.get())}" style="max-width:220px">
-                </div>
-              </div>
-            </div>
           </div></div>
         </div>
 
@@ -212,7 +217,7 @@ const Warehouse = {
 
     // Settings button — opens settings panel (test mode toggle + reconnect option)
     document.getElementById('btn-setup').addEventListener('click', () => this.openPanel('wh-settings-panel'));
-    document.getElementById('btn-close-wh-settings').addEventListener('click', () => this.closePanel('wh-settings-panel'));
+    document.getElementById('btn-close-wh-settings').addEventListener('click', () => { this.closePanel('wh-settings-panel'); Auth.lockAdmin(); });
     // No Save button on this panel — the theme applies the moment it's picked
     document.getElementById('s-theme').addEventListener('change', e => Theme.set(e.target.value));
     document.getElementById('s-fraction-glyphs').addEventListener('change', e => { Settings.save({ fractionGlyphs: e.target.checked }); this.renderList('materials'); this.renderList('consumables'); });
@@ -226,6 +231,7 @@ const Warehouse = {
       if (!v) { dn.value = WarehouseDeviceName.get(); return; }
       WarehouseDeviceName.save(v); dn.defaultValue = v;
       const pill = document.querySelector('.header .role-pill'); if (pill) pill.textContent = v;
+      const shown = dn.nextElementSibling; if (shown) shown.textContent = v;
     });
     dn.addEventListener('keydown', e => { if (e.key === 'Enter') dn.blur(); });
 

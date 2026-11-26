@@ -16,8 +16,8 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" media="print" onload="this.media='all'">
   <link rel="stylesheet" href="fonts/tabler-icons.min.css">
-  <link rel="stylesheet" href="css/style.css?v=2026-11-26.6">
-  <link rel="stylesheet" href="css/themes.css?v=2026-11-26.6">
+  <link rel="stylesheet" href="css/style.css?v=2026-11-26.7">
+  <link rel="stylesheet" href="css/themes.css?v=2026-11-26.7">
   <style>
     /* Prominent header button — stocktakes are worker-run, no manager needed */
     .stocktake-btn {
@@ -27,7 +27,6 @@
       cursor:pointer; white-space:nowrap;
     }
     .stocktake-btn .ti { font-size:18px; }
-    .st-recorded { font-family:var(--mono); }
     /* Stocktake MODE — the whole page switches (persisted until exited), so the
        environment carries the signal: amber header, banner, tinted background,
        accent stripe on every card. Nothing here can create an order. */
@@ -75,9 +74,9 @@
 <!-- APP CHECK: remove this line to disable App Check (also remove init block in firebase-sync.js) -->
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-check-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
-<script src="js/shared.js?v=2026-11-26.6"></script>
-<script src="js/firebase-sync.js?v=2026-11-26.6"></script>
-<script src="js/auth.js?v=2026-11-26.6"></script>
+<script src="js/shared.js?v=2026-11-26.7"></script>
+<script src="js/firebase-sync.js?v=2026-11-26.7"></script>
+<script src="js/auth.js?v=2026-11-26.7"></script>
 <script>
 const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker global
   activeCat:  null,
@@ -176,14 +175,14 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
         <div id="update-banner-wrap"></div>
         ${FirebaseConfig.isTestMode() ? '<div class="test-mode-banner"><i class="ti ti-flask"></i> Test mode — connected to test database</div>' : ''}
 
-        <div class="st-mode-banner" id="st-mode-banner"><i class="ti ti-clipboard-list"></i> <span>STOCKTAKE MODE — counting stock, not ordering. Nothing here creates an order.</span><span class="st-progress" id="st-progress"></span></div>
+        <div class="st-mode-banner" id="st-mode-banner"><i class="ti ti-clipboard-list"></i> <span>Stocktake mode: counting stock, not ordering. Nothing here creates an order.</span><span class="st-progress" id="st-progress"></span></div>
 
         <div id="tabs-wrap"></div>
 
         <div class="search-bar">
           <div class="col"><div class="search-wrap">
             <i class="ti ti-search"></i>
-            <input type="search" id="search" placeholder="Search part code or description…" autocomplete="off">
+            <input type="search" autocorrect="off" autocapitalize="off" spellcheck="false" id="search" placeholder="Search part code or description…" autocomplete="off">
           </div></div>
         </div>
 
@@ -263,7 +262,7 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
     document.getElementById('btn-close-review').addEventListener('click', () => this.closePanel('review-panel'));
     document.getElementById('btn-submit')      .addEventListener('click', () => this.confirmSubmit());
     document.getElementById('btn-settings')      .addEventListener('click', () => { this._populateSettings(); this.openPanel('settings-panel'); });
-    document.getElementById('btn-close-settings').addEventListener('click', () => this.closePanel('settings-panel'));
+    document.getElementById('btn-close-settings').addEventListener('click', () => { this.closePanel('settings-panel'); Auth.lockAdmin(); });
     document.getElementById('btn-new-order')   .addEventListener('click', () => this.newOrder());
     document.getElementById('search')          .addEventListener('input', e => {
       if (searchScope(this, e.target.value.trim(), 'activeCat', 'activeSub')) this.renderTabs();
@@ -435,7 +434,7 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
       const p = document.getElementById('st-progress');
       if (p) p.textContent = this._matStockReady && filtered.length ? `${filtered.filter(m => isToday((stockMap.get(stockId(m)) || {}).updatedAt)).length} of ${filtered.length} counted today` : '';
     }
-    if(!filtered.length){list.innerHTML=note||`<div class="empty-state"><i class="ti ti-package-off"></i><p>No materials found.</p></div>`;return;}
+    if(!filtered.length){list.innerHTML=note||`<div class="empty-state"><i class="ti ti-package-off"></i><p>No materials in this category.</p></div>`;return;}
     const restoreFocus = captureInputFocus(); // live data re-renders mid-typing
     if (this._stocktakeMode) {
       list.innerHTML = note + filtered.map(m => this._stCard(m, stockMap)).join('');
@@ -542,7 +541,8 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
         <div class="settings-card">
           <div class="settings-row">
             <div><div class="settings-row-label">Device name</div><div class="settings-row-sub">${esc(verLabel(APP_VERSION))}</div></div>
-            <input type="text" id="s-device-name" autocomplete="off" value="${esc(DeviceName.get())}" style="max-width:220px">
+            <input type="text" id="s-device-name" autocomplete="off" autocorrect="off" spellcheck="false" value="${esc(DeviceName.get())}" style="max-width:220px" data-admin-only ${Auth.adminOpen() ? '' : 'hidden'}>
+            <span class="settings-value" data-admin-locked ${Auth.adminOpen() ? 'hidden' : ''}>${esc(DeviceName.get())}</span>
           </div>
         </div>
       </div>
@@ -561,7 +561,7 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
         </div>
       </div>
       <div class="settings-section">
-        <div class="settings-label">Search &amp; Sort</div>
+        <div class="settings-label">Search &amp; sort</div>
         <div class="settings-card">
           <label class="settings-row">
             <div><div class="settings-row-label">Numeric-aware sorting</div><div class="settings-row-sub">e.g. 8mm lists before 10mm; inch sizes slot in by their mm value (32mm sits between 1&quot; and 1 1/2&quot;)</div></div>
@@ -592,6 +592,7 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
       if (!v) { dn.value = DeviceName.get(); return; }
       DeviceName.save(v); dn.defaultValue = v;
       const chip = document.getElementById('device-chip'); if (chip) chip.textContent = v;
+      const shown = dn.nextElementSibling; if (shown) shown.textContent = v;
     });
     dn.addEventListener('keydown', e => { if (e.key === 'Enter') dn.blur(); });
     document.getElementById('s-theme').addEventListener('change', e => Theme.set(e.target.value));
@@ -642,15 +643,18 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
   confirmSubmit() {
     if(Order.isEmpty()){ toast('No items on this order yet', true); return; }
     const items=Order.items(this.materials);
-    const lines=items.map(i=>`${i.partCode}  ×${i.qty}  ${i.description}`).join('\n');
+    // The full read-back is on purpose: a fresh look at every line before it goes.
+    // Only the list scrolls; the question and the buttons stay where they are.
+    const lines=items.map(i=>`<div class="confirm-line">
+        <span class="confirm-qty">× ${esc(orderQtyDisplay(i, i.qty))}</span>
+        <span class="confirm-desc">${descHtml(i.description)}${i.partCode && !Data.isDummyCode(i.partCode) ? `<span class="confirm-code">${esc(i.partCode)}</span>` : ''}</span>
+      </div>`).join('');
     const ow=document.getElementById('overlay-wrap');
     ow.innerHTML=`
       <div class="overlay" id="submit-confirm">
-        <div class="sheet">
-          <div class="sheet-handle"></div>
+        <div class="sheet sheet-pinned">
           <h3>Submit order?</h3>
-          <pre style="font-size:12px;font-family:var(--mono);background:var(--bg);padding:10px;
-            border-radius:var(--radius);margin-bottom:12px;white-space:pre-wrap;line-height:1.6">${esc(lines)}</pre>
+          <div class="confirm-lines">${lines}</div>
           ${this._orderNote.trim() ? `<div class="order-note-preview"><i class="ti ti-message-2"></i> ${esc(this._orderNote.trim())}</div>` : ''}
           <p>The production manager will review and forward to purchasing.</p>
           <div class="inline-error" id="submit-error" role="alert" hidden style="margin-bottom:10px"></div>
@@ -718,8 +722,8 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
     const o = this._lastOrder || {}, what = `${o.ref || ''} · ${o.n} line${o.n !== 1 ? 's' : ''}`;
     const [cls, icon, title, text] =
       st === 'sent'   ? ['green', 'ti-circle-check', 'Order submitted', 'The production manager will review it.'] :
-      st === 'failed' ? ['red', 'ti-alert-triangle', 'Order not sent', 'The server refused it. It is saved on this device. Tap Retry.'] :
-                        ['amber', 'ti-cloud-upload', 'Order queued', offline ? 'It will send itself when this device is back online.' : 'The connection is slow. It will send itself.'];
+      st === 'failed' ? ['red', 'ti-alert-triangle', 'Order not submitted', 'The server refused it. It is saved on this device. Tap Retry.'] :
+                        ['amber', 'ti-cloud-upload', 'Order queued', offline ? 'It will submit itself when this device is back online.' : 'The connection is slow. It will submit itself.'];
     // A sent order needs nothing more: the screen goes back to ordering by itself.
     clearTimeout(this._successTimer);
     if (st === 'sent') this._successTimer = setTimeout(() => {
@@ -737,7 +741,7 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
   _announceSent(en) {
     if (Date.now() - (en.placedAt || 0) < 15000) return;   // the success screen is saying so
     if (this._lastOrderId === en.id && document.getElementById('success-panel')?.classList.contains('open')) return;
-    toast(`Order ${en.ref || ''} sent to the production manager.`);
+    toast(`Order ${en.ref || ''} has reached the production manager.`);
   },
 
   // ══════════════════════════════════════════

@@ -1,9 +1,9 @@
-// shared.js — v2026-11-26.6
+// shared.js — v2026-11-26.7
 
 // The build date plus that day's counter — "2026-10-06.2" is the second build
 // on 6 Oct 2026 (the production board's scheme). Set by tools/bump-version.py;
 // shown to people with a leading "v" (see verLabel).
-const APP_VERSION = '2026-11-26.6';
+const APP_VERSION = '2026-11-26.7';
 
 // Numeric version comparison, part by part. Returns true if `a` is strictly
 // newer than `b`. Reads both the dated form and the "v0.56"-style numbers used
@@ -624,7 +624,7 @@ function searchScope(app, q, cat, sub) {
 }
 function searchNote(found, q) {
   if (found.note) return `<div class="search-note">${esc(found.note)}</div>`;
-  if (!found.length && String(q || '').trim()) return `<div class="empty-state"><i class="ti ti-search-off"></i><p>Nothing found for “${esc(q.trim())}”.</p></div>`;
+  if (!found.length && String(q || '').trim()) return `<div class="empty-state"><i class="ti ti-search-off"></i><p>Nothing found for “${esc(q.trim())}”. Try fewer words, or check the spelling.</p></div>`;
   return '';
 }
 
@@ -765,7 +765,7 @@ const Outbox = {
   },
   _fail(id, e) {
     const en = this._get(id); if (!en) return;
-    en.failed = (e && e.code === 'permission-denied') ? 'refused by the server' : ((e && e.message) || 'not sent');
+    en.failed = (e && e.code === 'permission-denied') ? 'refused by the server' : whyFailed(e);   // never the database's own words
     this._save(); this._render();
   },
   // Re-send the kept copy under the same id (overwrites, never duplicates).
@@ -808,7 +808,7 @@ const Outbox = {
   pillHtml() {
     const n = this.count(); if (!n) return '';
     const failed = this.failedCount(), waiting = n - failed;
-    const label = [failed ? `${failed} not sent` : '', waiting ? `${waiting} waiting to send` : ''].filter(Boolean).join(' · ');
+    const label = [failed ? `${failed} not submitted` : '', waiting ? `${waiting} waiting to submit` : ''].filter(Boolean).join(' · ');
     return `<button class="outbox-pill${failed ? ' failed' : ''}" data-outbox><i class="ti ${failed ? 'ti-alert-triangle' : 'ti-cloud-upload'}"></i> ${label}</button>`;
   },
   // Each waiting order opens to its lines — what was asked for and how many
@@ -833,7 +833,7 @@ const Outbox = {
       return `<div class="outbox-item">
         <div class="outbox-top">
           <button class="outbox-head" data-outbox-toggle="${esc(e.id)}" aria-expanded="${open}" aria-controls="outbox-d-${esc(e.id)}">
-            <span class="outbox-head-text"><span class="outbox-ref">${esc(e.ref || e.id)}</span><span class="outbox-sub">placed ${esc(fmtTime(new Date(e.placedAt)))} · ${n} line${n === 1 ? '' : 's'}${e.failed ? ' · ' + esc(e.failed) : ''}</span></span>
+            <span class="outbox-head-text"><span class="outbox-ref">${esc(e.ref || e.id)}</span><span class="outbox-sub">submitted ${esc(fmtTime(new Date(e.placedAt)))} · ${n} line${n === 1 ? '' : 's'}${e.failed ? ' · ' + esc(e.failed) : ''}</span></span>
             <i class="ti ti-chevron-${open ? 'up' : 'down'}"></i>
           </button>
           ${e.failed ? `<button class="btn-sm outbox-retry" data-outbox-retry="${esc(e.id)}">Retry</button>` : ''}
@@ -842,7 +842,7 @@ const Outbox = {
       </div>`;
     }).join('');
     ow.innerHTML = `<div class="success-overlay"><div class="success-card" id="outbox-card" style="max-width:440px;text-align:left">
-        <h3 style="text-align:center">${this.failedCount() && this.failedCount() === this.count() ? 'Not sent' : 'Waiting to send'}</h3>
+        <h3 style="text-align:center">${this.failedCount() && this.failedCount() === this.count() ? 'Not submitted' : 'Waiting to submit'}</h3>
         <div class="outbox-list">${rows || '<div class="outbox-sub">Nothing waiting.</div>'}</div>
         <button class="btn btn-outline" id="outbox-close" data-esc style="width:100%;margin-top:14px">Close</button>
       </div></div>`;
@@ -1406,6 +1406,28 @@ const Boot = {
 // Blank rows the size of what is coming, until the first data arrives.
 function skeleton(n, cls) { return `<div class="skels ${cls || ''}" aria-hidden="true">${'<div class="skel"></div>'.repeat(n)}</div>`; }
 
+// Cards open with a short, soft change of height instead of a snap (about 150ms open,
+// 120ms closed; nothing under reduced motion). Only when someone taps: a list redrawn by
+// a live update opens its cards at once. The CSS is under "Cards opening" in style.css.
+const Fold = {
+  CLOSE_MS: 120,
+  _still() { return window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches; },
+  // A body that stays in the page and is shown with the class "open".
+  toggle(body, open) {
+    if (!body) return;
+    body.classList.add('fold');
+    body.classList.toggle('open', open);
+  },
+  // Parts a redraw is about to take away: let them close first, then redraw.
+  close(els, then) {
+    els = els.filter(Boolean);
+    if (!els.length || this._still()) return then();
+    if (els.some(el => el.classList.contains('folding'))) return;   // already closing
+    els.forEach(el => el.classList.add('folding'));
+    setTimeout(then, this.CLOSE_MS);
+  },
+};
+
 // Live lists that have stopped. Firestore doesn't restart one that has failed, so without
 // this the page goes on showing old rows under "Live".
 const Lost = {
@@ -1443,7 +1465,7 @@ const Live = {
       dot.classList.remove('disconnected', 'update-available', 'connecting');
       if (connected === null)  { dot.classList.add('connecting');       lbl.textContent = 'Connecting…'; }
       else if (!connected)     { dot.classList.add('disconnected');     lbl.textContent = 'Offline: showing saved data'; }
-      else if (outdated)       { dot.classList.add('update-available'); lbl.textContent = 'Update Available'; }
+      else if (outdated)       { dot.classList.add('update-available'); lbl.textContent = 'Update ready'; }
       else                     { lbl.textContent = 'Live'; }
       let re = document.getElementById('live-reload');
       if (connected === false && !re) {
@@ -1456,11 +1478,11 @@ const Live = {
     if (wrap) {
       wrap.innerHTML = outdated ? `<div class="update-banner">
           <i class="ti ti-refresh"></i>
-          <span>A newer version (${esc(verLabel(latestVersion))}) is available — you're on ${esc(verLabel(APP_VERSION))}.</span>
-          <button id="btn-refresh-update">Refresh</button>
+          <span title="${esc(verLabel(APP_VERSION))} → ${esc(verLabel(latestVersion))}">An update is ready.</span>
+          <button id="btn-refresh-update">Update now</button>
         </div>` : '';
       document.getElementById('btn-refresh-update')?.addEventListener('click', async () => {
-        if (this.unsaved() && !await Ask.confirm({ title: 'Refresh now?', body: 'What is typed in the open window will be cleared.', yes: 'Refresh', no: 'Not now' })) return;
+        if (this.unsaved() && !await Ask.confirm({ title: 'Update now?', body: 'What is typed in the open window will be cleared.', yes: 'Update now', no: 'Not now' })) return;
         AutoUpdate.reloadFresh(latestVersion);
       });
     }

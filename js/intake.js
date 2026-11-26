@@ -1,4 +1,4 @@
-// intake.js — v2026-11-26.6
+// intake.js — v2026-11-26.7
 // Shared intake rendering module used by warehouse.html and manager.html.
 
 const Intake = {
@@ -53,9 +53,9 @@ const Intake = {
   statusBadge(status) {
     const cfg = {
       pending:     { icon: 'ti-clock',         label: 'Pending',      col: 'var(--text3)',       bg: 'var(--bg2)'       },
-      in_progress: { icon: 'ti-loader-2',       label: 'In Progress',  col: 'var(--amber-text)',  bg: 'var(--amber-bg)'  },
+      in_progress: { icon: 'ti-loader-2',       label: 'In progress',  col: 'var(--amber-text)',  bg: 'var(--amber-bg)'  },
       received:    { icon: 'ti-circle-check',   label: 'Received',     col: 'var(--green-text)',  bg: 'var(--green-bg)'  },
-      backorder:   { icon: 'ti-clock-pause',    label: 'Back Order',   col: 'var(--blue-text)',   bg: 'var(--blue-bg)'   },
+      backorder:   { icon: 'ti-clock-pause',    label: 'Back order',    col: 'var(--blue-text)',   bg: 'var(--blue-bg)'   },
       completed:   { icon: 'ti-circle-check',   label: 'Completed',    col: 'var(--text2)',       bg: 'var(--bg2)'       },
       cancelled:   { icon: 'ti-ban',            label: 'Cancelled',    col: 'var(--text3)',       bg: 'var(--bg2)'       },
     };
@@ -246,7 +246,7 @@ const Intake = {
     if (saved) {
       const bo = group.entries.some(({ order, item }) => this.outstandingOf(order, item, merged) > 0);
       const where = bo ? 'backorder' : 'completed';
-      toast(confirm ? `${group.category} delivery confirmed. It's in ${bo ? 'Back Orders' : 'Completed'}.` : `${group.category}: progress saved.`, false,
+      toast(confirm ? `${group.category} delivery confirmed. It's in ${bo ? 'Back orders' : 'Completed'}.` : `${group.category}: progress saved.`, false,
         confirm && host.show ? { label: 'Show', run: () => host.show(group, where) } : null);
     }
   },
@@ -577,7 +577,7 @@ const Intake = {
 
     const status = this.computeCategoryStatusEntries(entries);
     const badgeStatus = isCancelledCard ? 'cancelled' : status;
-    const suffix = isDerived ? ' — Back Order' : '';
+    const suffix = isDerived ? ' — back order' : '';
     const hasDraft   = !readOnly && this.draftChanges(entries, draftForCard);
     const prog       = this._progress(entries, draftForCard);
     const progText   = !readOnly && !this.TAB_RESOLVED.has(status) && prog.ticked > 0 ? ` &middot; ${prog.ticked} of ${prog.n} ticked` : '';
@@ -633,7 +633,7 @@ const Intake = {
             <div class="intake-card-meta">${esc(metaTs)}${deviceLabel ? ' &middot; ' + esc(deviceLabel) : ''} &middot; ${uniqueItemCount} item${uniqueItemCount !== 1 ? 's' : ''}${progText}</div>
           </div>
           <div class="intake-card-right">
-            ${readOnly && showRestore ? `<button class="intake-restore-btn" data-restore="${esc(groupKey)}" title="Restore to active tracking"><i class="ti ti-arrow-back-up"></i> Restore</button>` : ''}
+            ${readOnly && showRestore ? `<button class="intake-restore-btn" data-restore="${esc(groupKey)}" title="Reopen this delivery"><i class="ti ti-arrow-back-up"></i> Reopen</button>` : ''}
             ${saving && !isOpen ? `<span class="intake-saving"><i class="ti ti-loader-2"></i> ${esc(saving)}</span>` : ''}
             ${hasDraft && !saving ? `<span class="intake-unsaved-tag"><i class="ti ti-pencil"></i> Unsaved</span>` : ''}
             ${followUpTag}
@@ -643,7 +643,7 @@ const Intake = {
           </div>
         </div>
         ${failed && !isOpen ? `<div class="inline-error intake-failed" role="alert">${esc(failed)}</div>` : ''}
-        ${isOpen ? `<div class="intake-card-body">
+        ${isOpen ? `<div class="intake-card-body${this._foldIn === cardKey ? ' fold-in' : ''}">
           ${this._renderMergedEntries(entries, { draftForCard, readOnly })}
         </div>
         ${this._cardFoot(cardKey, entries, draftForCard, { readOnly, hasDraft, canConfirm, saving, failed, resolved: this.TAB_RESOLVED.has(status) })}` : ''}
@@ -677,7 +677,7 @@ const Intake = {
       : canConfirm
         ? `<button class="intake-confirm-btn" data-confirm="${esc(cardKey)}"><i class="ti ti-check"></i> Confirm delivery</button>`
         : `<button class="intake-save-btn" data-save="${esc(cardKey)}"><i class="ti ti-device-floppy"></i> Save progress</button>`;
-    return `<div class="intake-foot">
+    return `<div class="intake-foot${this._foldIn === cardKey ? ' fold-in' : ''}">
         ${failed ? `<div class="inline-error" role="alert">${esc(failed)}</div>` : ''}
         <div class="intake-foot-row">
           <span class="intake-foot-text">${why}</span>
@@ -702,7 +702,7 @@ const Intake = {
   renderCard(order, type, openOrderIds) {
     const status    = this.computeStatus(order);
     const isOpen    = openOrderIds && openOrderIds.has(order._id);
-    const suffix    = status === 'backorder' ? ' — Back Order' : '';
+    const suffix    = status === 'backorder' ? ' — back order' : '';
     const isMat     = !order.type || order.type === 'materials';
     const ts        = order.submittedAt && order.submittedAt.toDate
       ? order.submittedAt.toDate().toLocaleDateString('en-AU', { day:'2-digit', month:'short', year:'numeric' })
@@ -822,7 +822,7 @@ const Intake = {
         ${status === 'partial' ? `
         <div class="intake-partial-row">
           <label>Received:</label>
-          <input class="intake-partial-input" type="number" min="0" step="1"
+          <input class="intake-partial-input" type="number" min="0" step="1" inputmode="numeric"
             value="${qtyRecv != null ? qtyRecv : ''}" placeholder="qty"
             data-partial-item="${esc(String(item.id))}" data-partial-order="${esc(order._id)}">
           <span class="intake-of-label">of ${esc(orderQtyDisplay(item, item.qty))}</span>
@@ -831,7 +831,7 @@ const Intake = {
         ${showOutstanding ? `
         <div class="intake-partial-row intake-outstanding-row">
           <label>Still to come:</label>
-          <input class="intake-partial-input" type="number" min="0" step="1"
+          <input class="intake-partial-input" type="number" min="0" step="1" inputmode="numeric"
             value="${outstanding || ''}" placeholder="0"
             data-outstanding-item="${esc(String(item.id))}" data-outstanding-order="${esc(order._id)}">
           <span class="intake-of-label">of ${esc(orderQtyDisplay(item, item.qty))}</span>
@@ -907,8 +907,12 @@ const Intake = {
       e.preventDefault();
       const key = hdr.dataset.toggleOrder;
       hdr.click();
-      const again = [...container.querySelectorAll('[data-toggle-order]')].find(h => h.dataset.toggleOrder === key);
-      if (again) again.focus();
+      // The card is drawn again (at once when opening, after the close when closing)
+      const refocus = () => {
+        const again = [...container.querySelectorAll('[data-toggle-order]')].find(h => h.dataset.toggleOrder === key);
+        if (again && document.activeElement !== again) again.focus();
+      };
+      refocus(); setTimeout(refocus, Fold.CLOSE_MS + 30);
     });
     container.addEventListener('click', e => {
       // Confirm button.
@@ -968,7 +972,11 @@ const Intake = {
       // Card header toggle
       const hdr = e.target.closest('[data-toggle-order]');
       if (hdr && !e.target.closest('[data-action]')) {
-        if (callbacks.onRerender) callbacks.onRerender(hdr.dataset.toggleOrder);
+        const key = hdr.dataset.toggleOrder, card = hdr.closest('.intake-card');
+        const body = card && card.querySelector(':scope > .intake-card-body');
+        if (!callbacks.onRerender) return;
+        if (body) Fold.close([body, card.querySelector(':scope > .intake-foot')], () => callbacks.onRerender(key));
+        else { this._foldIn = key; try { callbacks.onRerender(key); } finally { this._foldIn = null; } }
         return;
       }
 

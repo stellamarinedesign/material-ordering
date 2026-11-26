@@ -1,4 +1,4 @@
-// catalogue.js — v2026-11-26.6
+// catalogue.js — v2026-11-26.7
 //
 // Manager page only: the materials catalogue (Settings → Materials catalogue).
 // The list every page orders from lives in the database (meta/catalogMaterials,
@@ -154,7 +154,8 @@ const Catalogue = {
   // ══════════════════════════════════════════
   parseRows(sheets, fileName) {
     const norm = v => String(v == null ? '' : v).trim();
-    const find = (hdr, names) => { for (const n of names) { const i = hdr.indexOf(n); if (i >= 0) return i; } return -1; };
+    const key = v => v.replace(/[^a-z0-9]+/g, '');   // "Inventory ID.", "inventory_id" and "InventoryID" are one caption
+    const find = (hdr, names) => { const h = hdr.map(key); for (const n of names) { const i = h.indexOf(key(n)); if (i >= 0) return i; } return -1; };
     const read = sheet => {
       for (let r = 0; r < Math.min(10, sheet.rows.length); r++) {
         const hdr = (sheet.rows[r] || []).map(c => norm(c).toLowerCase());
@@ -276,12 +277,12 @@ const Catalogue = {
     let nextId = this._nextId(cur);
     const adding = form.id == null;
     const it = adding ? { id: nextId++ } : items.find(i => i.id === form.id);
-    if (!it) throw new Error('That material is no longer in the catalogue.');
+    if (!it) throw Object.assign(new Error('That material is no longer in the catalogue.'), { plain: true });
     const code = String(form.code || '').trim() || `SCM${it.id}`;
     if (items.some(i => i.id !== it.id && i.code && i.code.toUpperCase() === code.toUpperCase()))
-      throw new Error(`${code} is already in the catalogue.`);
+      throw Object.assign(new Error(`${code} is already in the catalogue.`), { plain: true });
     const shown = String(form.shown || '').trim();
-    if (!shown) throw new Error('Give the material a description.');
+    if (!shown) throw Object.assign(new Error('Give the material a description.'), { plain: true });
     const listed = this._real(code) && !!form.listDesc;
     const next = this._mk({
       id: it.id, code, listed, retired: it.retired,
@@ -432,10 +433,10 @@ const Catalogue = {
       const live = items.filter(i => !i.retired);
       const n = { all: live.length, edited: live.filter(i => i.desc).length, nocode: live.filter(i => !this._real(i.code)).length, retired: items.length - live.length };
       const chip = (k, label) => (k === 'all' || n[k]) ? `<button type="button" class="intake-filter-chip${this.filter === k ? ' active' : ''}" data-cat-filter="${k}" aria-pressed="${this.filter === k}">${label} · ${n[k]}</button>` : '';
-      extra = `<div class="search-wrap"><i class="ti ti-search"></i><input id="cat-search" type="search" placeholder="Search the catalogue" autocomplete="off" value="${esc(this.query)}"></div>
+      extra = `<div class="search-wrap"><i class="ti ti-search"></i><input id="cat-search" type="search" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="Search the catalogue" autocomplete="off" value="${esc(this.query)}"></div>
         <div class="intake-filter-bar">${chip('all', 'In use')}${chip('edited', 'Own wording')}${chip('nocode', 'No part code')}${chip('retired', 'Retired')}</div>`;
     } else if (this.tab === 'add') {
-      extra = `<div class="search-wrap" style="margin-bottom:10px"><i class="ti ti-search"></i><input id="cat-add-search" type="search" placeholder="Search the part list by code or description" autocomplete="off" value="${esc(this.addQuery)}"></div>`;
+      extra = `<div class="search-wrap" style="margin-bottom:10px"><i class="ti ti-search"></i><input id="cat-add-search" type="search" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="Search the part list by code or description" autocomplete="off" value="${esc(this.addQuery)}"></div>`;
     }
     el.innerHTML = `<div class="cat-tabs"><div class="tabs-inner">${tab('materials', 'Materials', 'ti-list')}${tab('import', 'Import part list', 'ti-file-import')}${tab('add', 'Add a material', 'ti-plus')}</div></div>${extra}`;
   },
@@ -479,7 +480,7 @@ const Catalogue = {
     const found = Data.filter(rows.map(i => ({ ...this._shape(i), _it: i })), null, null, this.query).map(s => s._it);
     const top = `<div class="cat-topline"><span>${found.length} material${found.length === 1 ? '' : 's'}</span>
       <button class="btn-sm" data-cat-act="backup"><i class="ti ti-file-download"></i> Download backup (CSV)</button></div>`;
-    if (!found.length) return top + `<div class="empty-state"><i class="ti ti-package-off"></i><p>No materials found.</p></div>`;
+    if (!found.length) return top + `<div class="empty-state"><i class="ti ti-package-off"></i><p>${this.query.trim() ? `No materials match “${esc(this.query.trim())}”.` : 'No materials under this filter.'}</p></div>`;
     return top + found.map(i => this._rowHtml(i)).join('');
   },
   _rowHtml(i) {
@@ -510,9 +511,10 @@ const Catalogue = {
     if (!this.addQuery.trim())
       return byHand + `<div class="settings-row-sub" style="margin-top:10px">Or search above to pick it from the part list — ${this.erp.parts.length} parts${this.erp.erpDate ? `, list dated ${esc(this.erp.erpDate)}` : ''}. Picking a part brings its code and wording with it.</div>`;
     const inCat = new Map(this.doc.items.filter(i => i.code).map(i => [i.code.toUpperCase(), i]));
-    const found = Data.filter(this._erpShaped, null, null, this.addQuery).slice(0, 60);
-    if (!found.length) return byHand + `<div class="empty-state"><i class="ti ti-search-off"></i><p>Nothing on the part list matches.</p></div>`;
-    return found.map(s => {
+    const all = Data.filter(this._erpShaped, null, null, this.addQuery), found = all.slice(0, 60);
+    if (!found.length) return byHand + `<div class="empty-state"><i class="ti ti-search-off"></i><p>Nothing on the part list matches. Check the code, or add it by hand.</p></div>`;
+    const more = all.length > found.length ? `<div class="search-note">Showing ${found.length} of ${all.length}. Type more to narrow it.</div>` : '';
+    return more + found.map(s => {
       const p = s._p, have = inCat.get(String(p.c).toUpperCase());
       return `<div class="stocktake-row cat-row${have ? ' retired' : ''}" ${have ? `data-cat-edit="${have.id}"` : `data-cat-add="${esc(p.c)}"`}>
         <div class="stocktake-row-info">
@@ -544,7 +546,7 @@ const Catalogue = {
       <div class="success-overlay">
         <div class="success-card cat-form" style="max-width:480px;text-align:left">
           <h3>${it ? 'Edit material' : 'Add a material'}</h3>
-          <div class="setup-field"><label>Part code</label><input id="cf-code" type="text" autocapitalize="characters" spellcheck="false" autocomplete="off" placeholder="Leave empty if it has no code yet" value="${esc(code)}"></div>
+          <div class="setup-field"><label>Part code</label><input id="cf-code" type="text" autocapitalize="characters" autocorrect="off" spellcheck="false" autocomplete="off" placeholder="Leave empty if it has no code yet" value="${esc(code)}"></div>
           <div class="cat-form-list" id="cf-list"></div>
           <div class="setup-field"><label>Description shown to the workshop</label><input id="cf-desc" type="text" autocomplete="off" value="${esc(shown)}"></div>
           <div class="cat-form-picks">
@@ -554,7 +556,7 @@ const Catalogue = {
           </div>
           <div class="auth-err" id="cf-err"></div>
           <button class="btn btn-primary" id="cf-save" style="width:100%"><i class="ti ti-check"></i> ${it ? 'Save changes' : 'Add to the catalogue'}</button>
-          ${it ? `<button class="btn btn-outline" id="cf-retire" style="width:100%;margin-top:8px">${it.retired ? '<i class="ti ti-arrow-back-up"></i> Restore — show it for ordering again' : '<i class="ti ti-eye-off"></i> Retire — hide it from ordering'}</button>` : ''}
+          ${it ? `<button class="btn btn-outline" id="cf-retire" style="width:100%;margin-top:8px">${it.retired ? '<i class="ti ti-arrow-back-up"></i> Bring back — show it for ordering again' : '<i class="ti ti-eye-off"></i> Retire — hide it from ordering'}</button>` : ''}
           <button class="btn btn-outline" id="cf-cancel" data-esc style="width:100%;margin-top:8px">${it ? 'Close without saving' : 'Close without adding'}</button>
         </div>
       </div>`;
@@ -642,7 +644,7 @@ const Catalogue = {
     } catch (e) {
       console.error('[Catalogue] not saved', e);
       back();
-      err(`Not saved: ${whyFailed(e)}. Try again.`);
+      err(e && e.plain ? e.message : `Not saved: ${whyFailed(e)}. Try again.`);
     }
   },
   async _setRetired(it, retired) {
@@ -652,8 +654,8 @@ const Catalogue = {
         return { ...cur, items: cur.items.map(i => i.id === it.id ? this._mk({ ...i, retired }) : i) };
       }, { by: this._by() });
       document.getElementById('overlay-wrap').innerHTML = '';
-      this._toast(retired ? 'Retired — hidden from ordering and stocktake' : 'Restored');
-    } catch (e) { this._fail(e, retired ? 'Not retired' : 'Not restored'); }
+      this._toast(retired ? 'Retired — hidden from ordering and stocktake' : 'Back in ordering and stocktake');
+    } catch (e) { this._fail(e, retired ? 'Not retired' : 'Not brought back'); }
   },
 
   // ── IMPORT tab ────────────────────────────────────────────────────────

@@ -9,14 +9,15 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="Consumables">
-  <title>Consumables Checkout</title>
+  <title>Consumables</title>
   <link rel="icon" type="image/png" href="favicon.png">
+  <link rel="manifest" href="manifest-consumables.json">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" media="print" onload="this.media='all'">
   <link rel="stylesheet" href="fonts/tabler-icons.min.css">
-  <link rel="stylesheet" href="css/style.css?v=2026-11-26.6">
-  <link rel="stylesheet" href="css/themes.css?v=2026-11-26.6">
+  <link rel="stylesheet" href="css/style.css?v=2026-11-26.7">
+  <link rel="stylesheet" href="css/themes.css?v=2026-11-26.7">
   <style>
     .cons-stock-badge {
       font-size: 11px; font-family: var(--mono); padding: 2px 8px;
@@ -113,7 +114,7 @@
       position: fixed; left: 50%; bottom: 92px; transform: translateX(-50%); z-index: 210;
       width: min(560px, calc(100vw - 32px)); display: flex; align-items: center; gap: 14px;
       background: var(--toast-warn-bg); color: #fff; padding: 12px 12px 12px 18px;
-      border-radius: var(--radius-lg); box-shadow: 0 2px 6px rgba(0,0,0,0.25), 0 10px 28px rgba(0,0,0,0.35);
+      border-radius: var(--radius-lg); box-shadow: var(--shadow-toast);
     }
     #scan-problem .ti { font-size: 24px; flex-shrink: 0; }
     .scan-problem-lines { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; font-size: 15px; font-weight: 600; line-height: 1.35; text-wrap: pretty; }
@@ -129,7 +130,7 @@
 <div id="boot">
   <div class="header"><div class="col"><div class="header-inner">
     <span class="header-logo"></span>
-    <div class="header-left"><div class="header-title">Consumables Checkout</div><div class="header-ref"><span class="live-dot connecting"></span>Connecting…</div></div>
+    <div class="header-left"><div class="header-title">Consumables</div><div class="header-ref"><span class="live-dot connecting"></span>Connecting…</div></div>
   </div></div></div>
   <div class="boot-tabs"></div>
   <div class="col boot-rows"><div class="skel"></div><div class="skel"></div><div class="skel"></div><div class="skel"></div><div class="skel"></div><div class="skel"></div><div class="skel"></div><div class="skel"></div></div>
@@ -142,9 +143,9 @@
 <!-- APP CHECK: remove this line to disable App Check (also remove init block in firebase-sync.js) -->
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-check-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
-<script src="js/shared.js?v=2026-11-26.6"></script>
-<script src="js/firebase-sync.js?v=2026-11-26.6"></script>
-<script src="js/auth.js?v=2026-11-26.6"></script>
+<script src="js/shared.js?v=2026-11-26.7"></script>
+<script src="js/firebase-sync.js?v=2026-11-26.7"></script>
+<script src="js/auth.js?v=2026-11-26.7"></script>
 <script>
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.getRegistrations().then(rs => rs.forEach(r => r.unregister()));
@@ -217,7 +218,7 @@ const ConsApp = {
           <div class="col"><div class="header-inner">
             <span class="header-logo"></span>
             <div class="header-left">
-              <div class="header-title">Consumables Checkout</div>
+              <div class="header-title">Consumables</div>
               <div class="header-ref"><span class="live-dot connecting" id="live-dot"></span><span id="live-label">Connecting…</span><span class="hdr-extra"> &nbsp;·&nbsp; <span id="app-version" style="font-family:var(--mono)"></span></span></div>
             </div>
             <div class="header-actions">
@@ -240,7 +241,7 @@ const ConsApp = {
         <!-- SEARCH -->
         <div class="search-bar"><div class="col"><div class="search-wrap">
           <i class="ti ti-search"></i>
-          <input type="search" id="cons-search" placeholder="Search consumables…" autocomplete="off">
+          <input type="search" autocorrect="off" autocapitalize="off" spellcheck="false" id="cons-search" placeholder="Search consumables…" autocomplete="off">
         </div></div></div>
 
         <!-- LIST -->
@@ -252,7 +253,7 @@ const ConsApp = {
         <div class="action-bar"><div class="action-bar-inner split">
           <button class="btn-text" id="btn-cons-clear-main" hidden>Clear selection</button>
           <button class="btn btn-primary" id="btn-cons-review">
-            <i class="ti ti-clipboard-check"></i>Review &amp; Sign Out Items
+            <i class="ti ti-clipboard-check"></i>Review and sign out
             <span class="sidebar-count zero" id="cons-badge" style="margin-left:4px">0</span>
           </button>
         </div></div>
@@ -320,7 +321,7 @@ const ConsApp = {
       this._changed();
     });
     document.getElementById('btn-settings')      .addEventListener('click', () => { this._populateSettings(); this.openPanel('settings-panel'); });
-    document.getElementById('btn-close-settings').addEventListener('click', () => this.closePanel('settings-panel'));
+    document.getElementById('btn-close-settings').addEventListener('click', () => { this.closePanel('settings-panel'); Auth.lockAdmin(); });
 
     this._activeCat = null; this._activeSub = null;
     this._cats = []; this._subs = [];
@@ -538,7 +539,7 @@ const ConsApp = {
           <h3>New barcode</h3>
           <p style="margin-bottom:8px">Which item is this? It'll be remembered for next time.<br>
             <span style="font-family:var(--mono);font-size:12px">${esc(code)}</span></p>
-          <input class="checkout-name-input" type="search" id="scan-link-search" placeholder="Search items…" autocomplete="off" style="margin-bottom:8px">
+          <input class="checkout-name-input" type="search" autocorrect="off" autocapitalize="off" spellcheck="false" id="scan-link-search" placeholder="Search items…" autocomplete="off" style="margin-bottom:8px">
           <div class="scan-link-list" id="scan-link-list">${rows}</div>
           <button class="btn btn-outline" id="btn-scan-link-cancel" data-esc style="width:100%;margin-top:10px">Not now</button>
         </div>
@@ -626,7 +627,7 @@ const ConsApp = {
     }
     if (!this._stockReady) { list.innerHTML = skeleton(8, 'tiles'); return; }
     if (!filtered.length) {
-      list.innerHTML = note || `<div class="empty-state"><i class="ti ti-package-off"></i><p>No consumables in stock.</p></div>`;
+      list.innerHTML = note || `<div class="empty-state"><i class="ti ti-package-off"></i><p>Nothing in stock in this category.</p></div>`;
       return;
     }
 
@@ -696,7 +697,8 @@ const ConsApp = {
         <div class="settings-card">
           <div class="settings-row">
             <div><div class="settings-row-label">Device name</div></div>
-            <input type="text" id="s-device-name" autocomplete="off" value="${esc(ConsumablesDeviceName.get())}" style="max-width:220px">
+            <input type="text" id="s-device-name" autocomplete="off" autocorrect="off" spellcheck="false" value="${esc(ConsumablesDeviceName.get())}" style="max-width:220px" data-admin-only ${Auth.adminOpen() ? '' : 'hidden'}>
+            <span class="settings-value" data-admin-locked ${Auth.adminOpen() ? 'hidden' : ''}>${esc(ConsumablesDeviceName.get())}</span>
           </div>
         </div>
       </div>
@@ -715,7 +717,7 @@ const ConsApp = {
         </div>
       </div>
       <div class="settings-section">
-        <div class="settings-label">Search &amp; Sort</div>
+        <div class="settings-label">Search &amp; sort</div>
         <div class="settings-card">
           <label class="settings-row">
             <div><div class="settings-row-label">Numeric-aware sorting</div><div class="settings-row-sub">e.g. 8mm lists before 10mm; inch sizes slot in by their mm value (32mm sits between 1&quot; and 1 1/2&quot;)</div></div>
@@ -756,6 +758,7 @@ const ConsApp = {
       if (!v) { dn.value = ConsumablesDeviceName.get(); return; }
       ConsumablesDeviceName.save(v); dn.defaultValue = v;
       const chip = document.querySelector('.device-chip'); if (chip) chip.innerHTML = `<i class="ti ti-device-ipad" style="font-size:12px"></i> ${esc(v)}`;
+      const shown = dn.nextElementSibling; if (shown) shown.textContent = v;
     });
     dn.addEventListener('keydown', e => { if (e.key === 'Enter') dn.blur(); });
     document.getElementById('s-theme').addEventListener('change', e => Theme.set(e.target.value));
@@ -824,7 +827,7 @@ const ConsApp = {
         <div class="success-card signout-card">
           <div class="success-icon blue"><i class="ti ti-user"></i></div>
           <h3>Sign out items</h3>
-          <input class="checkout-name-input" type="text" id="overlay-tradesman-name" placeholder="Your name" autocomplete="off" style="margin:10px 0 6px">
+          <input class="checkout-name-input" type="text" id="overlay-tradesman-name" placeholder="Your name" autocomplete="off" autocorrect="off" autocapitalize="words" spellcheck="false" style="margin:10px 0 6px">
           ${this._recentNames().length ? `<div class="recent-names" id="recent-names">
             ${this._recentNames().map(n => `<button class="recent-name-chip" data-name="${esc(n)}">${esc(n)}</button>`).join('')}
           </div>` : ''}

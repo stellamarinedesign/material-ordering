@@ -91,7 +91,11 @@
   --dur:         200ms;   /* messages, small things arriving */
   --dur-panel:   260ms;   /* panels and sheets */
   --ease-out:    cubic-bezier(.23, 1, .32, 1);
-  --font:        'IBM Plex Sans', sans-serif;
+  /* Floating layers only (dialogs, sheets, the toast): soft shadows at three distances */
+  --shadow-float: 0 1px 2px rgba(0,0,0,.18), 0 8px 24px rgba(0,0,0,.22), 0 24px 56px rgba(0,0,0,.18);
+  --shadow-sheet: 0 -1px 2px rgba(0,0,0,.14), 0 -8px 24px rgba(0,0,0,.2), 0 -20px 48px rgba(0,0,0,.16);
+  --shadow-toast: 0 1px 2px rgba(0,0,0,.2), 0 4px 12px rgba(0,0,0,.2), 0 12px 28px rgba(0,0,0,.16);
+  --font:       'IBM Plex Sans', sans-serif;
   --mono:        'IBM Plex Mono', monospace;
 }
 
@@ -103,8 +107,11 @@ html, body {
   -webkit-font-smoothing: antialiased;
   touch-action: manipulation;
   overscroll-behavior: none;
+  font-variant-numeric: tabular-nums;   /* counts, dates and codes line up and don't jiggle */
 }
-input, button, textarea, select { font-family: var(--font); touch-action: manipulation; }
+input, button, textarea, select { font-family: var(--font); font-variant-numeric: tabular-nums; touch-action: manipulation; }
+h1, h2, h3, .panel-title, .header-title { text-wrap: balance; }
+p { text-wrap: pretty; }
 button { cursor: pointer; }
 .sr-only { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0,0,0,0); }
 
@@ -147,7 +154,7 @@ button { cursor: pointer; }
   padding: 13px 0 11px;
 }
 .header.manager-hdr { background: var(--header-mgr); }
-.header-left { display: flex; flex-direction: column; gap: 2px; }
+.header-left { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }   /* the title sits by the logo */
 /* Brand logo slot: invisible (0 width, no image) unless the active theme sets
    --logo/--logo-w/--logo-gap — a CSS background so nothing downloads otherwise */
 .header-logo {
@@ -258,7 +265,7 @@ button { cursor: pointer; }
   border-radius: var(--radius-lg); padding: 11px 12px;
   display: flex; align-items: center; gap: 10px; transition: border-color var(--dur-fast);
 }
-.mat-card.in-order { border-color: var(--select-line); border-width: 1.5px; }
+.mat-card.in-order { border-color: var(--select-line); box-shadow: 0 0 0 .5px var(--select-line); }   /* a ring, so nothing inside moves */
 .mat-card.untracked-item { opacity: 0.55; }
 .mat-icon { width: 38px; height: 38px; border-radius: var(--radius); display: flex; align-items: center; justify-content: center; font-size: 18px; flex-shrink: 0; }
 .mat-info { flex: 1; min-width: 0; }
@@ -329,6 +336,7 @@ button { cursor: pointer; }
 .order-summary-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 12px; }
 .order-summary-row { display: flex; justify-content: space-between; font-size: 13px; color: var(--text2); padding: 2px 0; }
 .order-summary-row.total { font-size: 14px; font-weight: 600; color: var(--text); border-top: 1px solid var(--border); margin-top: 6px; padding-top: 8px; font-family: var(--mono); }
+.order-summary-row.total:first-child { border-top: none; margin-top: 0; padding-top: 2px; }   /* no rule above the only row */
 
 /* ═══════════════════════════════════════
    ACTION BAR
@@ -387,6 +395,9 @@ button { cursor: pointer; }
   border-radius: var(--radius); padding: 7px 10px; min-height: 36px; font-size: 13px; color: var(--text); outline: none; min-width: 0;
 }
 .acct-role, .acct-add input { min-height: 36px; }
+.settings-value { margin-left: auto; font-size: 14px; color: var(--text2); text-align: right; min-width: 0; overflow-wrap: anywhere; }
+.settings-value[hidden], .settings-row input[hidden] { display: none; }
+.admin-lock { font-size: 20px; color: var(--text3); flex-shrink: 0; }
 .settings-row input:focus { border-color: var(--focus); }
 .btn-sm {
   display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-height: 36px; min-width: 36px; flex-shrink: 0;
@@ -402,10 +413,19 @@ button { cursor: pointer; }
 .overlay.show { opacity: 1; pointer-events: all; }
 .sheet { background: var(--surface); border-radius: 16px 16px 0 0; padding: 20px 20px 40px; width: 100%; max-width: 600px; transform: translateY(100%); transition: transform var(--dur-panel) var(--ease-out); max-height: 80dvh; overflow-y: auto; -webkit-overflow-scrolling: touch; }
 .overlay.show .sheet { transform: translateY(0); }
-.sheet-handle { width: 36px; height: 4px; background: var(--border2); border-radius: 2px; margin: 0 auto 16px; }
 .sheet h3 { font-size: 16px; font-weight: 600; margin-bottom: 6px; }
 .sheet p  { font-size: 13px; color: var(--text2); line-height: 1.5; margin-bottom: 18px; }
 .sheet-btns { display: flex; flex-direction: column; gap: 8px; }
+/* A sheet whose list scrolls inside it, with the question and buttons held still */
+.sheet.sheet-pinned { display: flex; flex-direction: column; overflow: hidden; }
+.sheet-pinned > * { flex-shrink: 0; }
+.sheet-pinned > .confirm-lines { flex: 0 1 auto; min-height: 72px; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+.confirm-lines { background: var(--bg); border-radius: var(--radius); padding: 4px 12px; margin-bottom: 12px; }
+.confirm-line { display: flex; align-items: baseline; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--border); }
+.confirm-line:last-child { border-bottom: none; }
+.confirm-qty { flex: 0 0 auto; min-width: 84px; font-family: var(--mono); font-size: 14px; font-weight: 600; color: var(--text); white-space: nowrap; }
+.confirm-desc { flex: 1; min-width: 0; font-size: 14px; color: var(--text); line-height: 1.35; text-wrap: pretty; }
+.confirm-code { display: block; margin-top: 2px; font-family: var(--mono); font-size: 12px; color: var(--text3); }
 
 /* ═══════════════════════════════════════
    SUCCESS
@@ -490,13 +510,13 @@ button { cursor: pointer; }
 .mobile-tabs { display: none; background: var(--surface); border-bottom: 1px solid var(--border); flex-shrink: 0; }
 
 .sidebar-section { padding: 10px; border-bottom: 1px solid var(--border); }
-.sidebar-title { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text3); font-family: var(--mono); margin-bottom: 4px; padding: 0 4px; }
-.sidebar-btn { width: 100%; min-height: 36px; text-align: left; padding: 7px 10px; border-radius: var(--radius); border: none; background: none; font-size: 13px; color: var(--text2); display: flex; align-items: center; gap: 8px; }
+.sidebar-title { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text3); font-family: var(--mono); margin-bottom: 4px; padding: 0 4px; }
+.sidebar-btn { width: 100%; min-height: 36px; text-align: left; padding: 7px 10px; border-radius: var(--radius); border: none; background: none; font-size: 14px; color: var(--text2); display: flex; align-items: center; gap: 8px; }
 .sidebar-btn:hover  { background: var(--bg); }
 /* The chosen item: blue, and a bar on its edge so it never rests on colour alone */
 .sidebar-btn.active { background: var(--select-bg); color: var(--select-text); font-weight: 600; box-shadow: inset 3px 0 0 var(--select-line); }
 .sidebar-count {
-  margin-left: auto; min-width: 18px; text-align: center; font-size: 10px; font-family: var(--mono); font-variant-numeric: tabular-nums;
+  margin-left: auto; min-width: 20px; text-align: center; font-size: 11px; font-family: var(--mono); font-variant-numeric: tabular-nums;
   background: var(--count-bg); color: var(--count-text); padding: 1px 6px; border-radius: 20px;
 }
 .sidebar-count.act { background: var(--count-act); color: #fff; }   /* something to do */
@@ -504,6 +524,8 @@ button { cursor: pointer; }
 .sidebar-count.zero { display: none; }
 /* A count beside a tab keeps its room at zero, so the tab never changes width */
 .main-tab .sidebar-count.zero { display: inline-block; visibility: hidden; }
+/* A count inside a button keeps its room at zero, so the label never moves when it shows */
+.btn > .sidebar-count.zero { display: inline-block; visibility: hidden; }
 
 /* ═══════════════════════════════════════
    ORDER CARDS
@@ -588,11 +610,11 @@ button { cursor: pointer; }
 .live-dot.update-available { background: var(--amber-text); }
 .update-banner {
   background: var(--amber-bg); border-bottom: 1px solid var(--amber-text);
-  padding: 8px 14px; font-size: 12px; color: var(--amber-text);
+  padding: 8px 14px; font-size: 14px; color: var(--amber-text);
   display: flex; align-items: center; gap: 8px; flex-shrink: 0; flex-wrap: wrap;
 }
 .update-banner button {
-  min-height: 36px; font-size: 12px; font-weight: 600; color: var(--amber-text); background: none; margin-left: auto;
+  min-height: 36px; font-size: 14px; font-weight: 600; color: var(--amber-text); background: none; margin-left: auto;
   border: 1px solid var(--amber-text); border-radius: var(--radius); padding: 0 14px; cursor: pointer;
 }
 @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
@@ -679,12 +701,17 @@ button { cursor: pointer; }
 .stock-threshold-input::-webkit-inner-spin-button,
 .stock-threshold-input::-webkit-outer-spin-button { -webkit-appearance: none; }
 .low-stock-banner {
-  background: var(--amber-bg); border-bottom: 1px solid var(--amber-text);
-  padding: 8px 14px; font-size: 12px; color: var(--amber-text);
-  display: flex; align-items: center; gap: 8px; flex-shrink: 0; flex-wrap: wrap;
+  background: var(--amber-bg); border: none; border-bottom: 1px solid var(--amber-text);
+  padding-block: 8px; min-height: 40px; width: 100%; font: inherit; font-size: 13px; color: var(--amber-text); text-align: left;
+  display: flex; align-items: center; gap: 8px; flex-shrink: 0; flex-wrap: wrap; cursor: pointer;
 }
+button.low-stock-banner:not(:disabled):active { transform: none; background: color-mix(in srgb, var(--amber-text) 14%, var(--amber-bg)); }
+.low-stock-go { margin-left: auto; display: inline-flex; align-items: center; gap: 2px; font-weight: 600; }
+/* A card that moved after a change: marked once, the mark fading out */
+.stock-card.moved { animation: card-moved 1s ease-out; }
+@keyframes card-moved { 0%, 30% { border-color: var(--select-line); box-shadow: 0 0 0 2px var(--select-line); } 100% { box-shadow: 0 0 0 0 transparent; } }
 .stock-section-header {
-  font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em;
+  font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em;
   color: var(--text3); font-family: var(--mono); padding: 10px 12px 4px;
 }
 .stock-action-buttons {
@@ -760,11 +787,22 @@ input:focus-visible, textarea:focus-visible, select:focus-visible { outline: non
 .qty-input:focus, .qty-row .qty-edit:focus, .stock-delta-input:focus, .stock-threshold-input:focus, .intake-partial-input:focus {
   border-color: var(--focus); box-shadow: inset 0 0 0 1px var(--focus); position: relative; z-index: 1;
 }
+/* Cards opening (Fold in js/shared.js): height eases open in about 150ms and closes in
+   about 120ms. A browser that can't animate to "auto" height just fades and snaps. */
+:root { interpolate-size: allow-keywords; --dur-open: 150ms; --dur-close: 120ms; }
+.fold, .fold-in, .folding {
+  overflow: clip; overflow-clip-margin: 4px;
+  transition: height var(--dur-close) var(--ease-out), padding-block var(--dur-close) var(--ease-out),
+              opacity var(--dur-close) var(--ease-out), display var(--dur-close) allow-discrete;
+}
+.fold.open, .fold-in { transition-duration: var(--dur-open); }
+.fold:not(.open), .folding.folding { height: 0; padding-block: 0; opacity: 0; transition-duration: var(--dur-close); }
+@starting-style { .fold.open, .fold-in.fold-in { height: 0; padding-block: 0; opacity: 0; } }
 /* No colours fading one by one while the theme changes */
 .theme-switching, .theme-switching * { transition: none !important; }
 /* Reduced motion: nothing slides, fades or spins */
 @media (prefers-reduced-motion: reduce) {
-  :root { --dur-fast: 0ms; --dur: 0ms; --dur-panel: 0ms; }
+  :root { --dur-fast: 0ms; --dur: 0ms; --dur-panel: 0ms; --dur-open: 0ms; --dur-close: 0ms; }
   *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0ms !important; scroll-behavior: auto !important; }
   button:not(:disabled):active { transform: none; }
 }
@@ -786,8 +824,9 @@ input:focus-visible, textarea:focus-visible, select:focus-visible { outline: non
 /* Floating cards stand off the page in both themes */
 .success-overlay .success-card, #auth-gate .success-card, #auth-block .success-card {
   border: 1px solid var(--border);
-  box-shadow: 0 1px 2px rgba(0,0,0,.18), 0 8px 24px rgba(0,0,0,.22), 0 24px 56px rgba(0,0,0,.18);
+  box-shadow: var(--shadow-float);
 }
+.sheet { box-shadow: var(--shadow-sheet); }
 /* What has run out reads first, and isn't the quietest row */
 .stock-card.zero { opacity: 1; border-color: var(--red); }
 .stock-qty-badge.zero { background: var(--red-bg); color: var(--red-text); }
@@ -906,7 +945,7 @@ input:focus-visible, textarea:focus-visible, select:focus-visible { outline: non
   display: flex; align-items: center; gap: 8px; max-width: 88vw;
   background: var(--toast-bg); color: #fff; padding: 11px 16px;
   border-radius: var(--radius-lg); font-size: 14px; font-weight: 600;
-  box-shadow: 0 6px 20px rgba(0,0,0,0.3); z-index: 200;
+  box-shadow: var(--shadow-toast); z-index: 200;
   opacity: 0; pointer-events: none; transition: opacity var(--dur) var(--ease-out), transform var(--dur) var(--ease-out);
 }
 .scan-toast.show { opacity: 1; transform: translate(-50%, 0); }
@@ -1351,8 +1390,7 @@ input.field-bad, textarea.field-bad { border-color: var(--red-text) !important; 
 .floor .panel-header { padding: 4px 16px; min-height: 56px; }
 .floor .panel-title { font-size: 16px; }
 .floor .header-inner { padding: 8px 0; gap: 8px; }
-.floor .header-left { flex: 1; min-width: 0; }
-.floor .device-chip:empty, .floor .role-pill:empty, .floor .header-actions > span:empty { display: none; }
+.device-chip:empty, .role-pill:empty, .header-actions > span:empty { display: none; }
 .floor .tab { min-height: 48px; padding: 0 18px; font-size: 14px; }
 .floor .main-tab { min-height: 48px; padding: 0 20px; font-size: 14px; }
 .floor .search-wrap input { height: 48px; font-size: 16px; padding-left: 40px; }

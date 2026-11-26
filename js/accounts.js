@@ -1,4 +1,4 @@
-// accounts.js — v2026-11-26.6
+// accounts.js — v2026-11-26.7
 //
 // Manager page only: the Accounts section of Settings, for a MASTER and for
 // nobody else — absent otherwise, not greyed. Every listed address with its
@@ -98,8 +98,7 @@ const Accounts = {
   },
   _when(iso) {
     const d = new Date(iso); if (isNaN(d)) return '';
-    const p = n => String(n).padStart(2, '0');
-    return `${p(d.getDate())}/${p(d.getMonth() + 1)} ${p(d.getHours())}:${p(d.getMinutes())}`;
+    return fmtTime(d);
   },
   async _loadActivity() {
     this._activity = [];
