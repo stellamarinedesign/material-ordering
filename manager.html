@@ -12,8 +12,8 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" media="print" onload="this.media='all'">
   <link rel="stylesheet" href="fonts/tabler-icons.min.css">
-  <link rel="stylesheet" href="css/style.css?v=2026-11-27.2">
-  <link rel="stylesheet" href="css/themes.css?v=2026-11-27.2">
+  <link rel="stylesheet" href="css/style.css?v=2026-11-27.3">
+  <link rel="stylesheet" href="css/themes.css?v=2026-11-27.3">
 </head>
 <body>
 <!-- Start-up cover: painted before any script; see Boot in js/shared.js -->
@@ -33,12 +33,12 @@
 <!-- APP CHECK: remove this line to disable App Check (also remove init block in firebase-sync.js) -->
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-check-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
-<script src="js/shared.js?v=2026-11-27.2"></script>
-<script src="js/firebase-sync.js?v=2026-11-27.2"></script>
-<script src="js/auth.js?v=2026-11-27.2"></script>
-<script src="js/intake.js?v=2026-11-27.2"></script>
-<script src="js/catalogue.js?v=2026-11-27.2"></script>
-<script src="js/accounts.js?v=2026-11-27.2"></script>
+<script src="js/shared.js?v=2026-11-27.3"></script>
+<script src="js/firebase-sync.js?v=2026-11-27.3"></script>
+<script src="js/auth.js?v=2026-11-27.3"></script>
+<script src="js/intake.js?v=2026-11-27.3"></script>
+<script src="js/catalogue.js?v=2026-11-27.3"></script>
+<script src="js/accounts.js?v=2026-11-27.3"></script>
 <!-- Vendored xlsx-js-style (SheetJS fork with cell styling) — stocktake Excel exports -->
 <script src="js/xlsx-style.min.js"></script>
 <!-- Vendored ExcelJS — used only for the consumables export, which embeds drawn
@@ -4785,10 +4785,17 @@ const Manager = {
       return;
     }
     const nameFilter = (document.getElementById('history-person-search')?.value || '').toLowerCase().trim();
-    const itemFilter = (document.getElementById('history-item-search')?.value || '').toLowerCase().trim();
-    let records = this._historyRecords;
+    const itemFilter = (document.getElementById('history-item-search')?.value || '').trim();
+    let records = this._historyRecords, note = '';
     if (nameFilter) records = records.filter(r => (r.by||'').toLowerCase().includes(nameFilter));
-    if (itemFilter) records = records.filter(r => (r.itemName||'').toLowerCase().includes(itemFilter));
+    // The same search as every other list (typos, sizes, codes); the newest stay first.
+    if (itemFilter) {
+      const found = Data.filter(records.map(r => ({ description: r.itemName || '', partCode: r.partCode || '', category: '', subcategory: '', r })),
+        null, null, itemFilter, { naturalSort: false });
+      const hit = new Set(found.map(x => x.r));
+      records = records.filter(r => hit.has(r));
+      if (found.note) note = `<div class="search-note">${esc(found.note)}</div>`;
+    }
 
     const moreBtn = this._historyHasMore
       ? `<div style="padding:12px;text-align:center"><button class="btn-sm" data-hist-more="1">Load older entries</button></div>`
@@ -4844,7 +4851,7 @@ const Manager = {
       </div>`;
     }).join('');
 
-    list.innerHTML = rows + moreBtn;
+    list.innerHTML = note + rows + moreBtn;
     // Re-apply open session state
     for (const sessId of this._openHistorySessions) {
       document.getElementById(`hist-sess-${sessId}`)?.classList.add('open');
