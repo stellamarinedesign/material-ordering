@@ -1,9 +1,9 @@
-// shared.js — v2026-11-26.7
+// shared.js — v2026-11-27.1
 
 // The build date plus that day's counter — "2026-10-06.2" is the second build
 // on 6 Oct 2026 (the production board's scheme). Set by tools/bump-version.py;
 // shown to people with a leading "v" (see verLabel).
-const APP_VERSION = '2026-11-26.7';
+const APP_VERSION = '2026-11-27.1';
 
 // Numeric version comparison, part by part. Returns true if `a` is strictly
 // newer than `b`. Reads both the dated form and the "v0.56"-style numbers used
@@ -833,7 +833,7 @@ const Outbox = {
       return `<div class="outbox-item">
         <div class="outbox-top">
           <button class="outbox-head" data-outbox-toggle="${esc(e.id)}" aria-expanded="${open}" aria-controls="outbox-d-${esc(e.id)}">
-            <span class="outbox-head-text"><span class="outbox-ref">${esc(e.ref || e.id)}</span><span class="outbox-sub">submitted ${esc(fmtTime(new Date(e.placedAt)))} · ${n} line${n === 1 ? '' : 's'}${e.failed ? ' · ' + esc(e.failed) : ''}</span></span>
+            <span class="outbox-head-text"><span class="outbox-ref">${esc(e.ref || e.id)}</span><span class="outbox-sub">${esc(fmtTime(new Date(e.placedAt)))} ·${n} line${n === 1 ? '' : 's'}${e.failed ? ' · ' + esc(e.failed) : ''}</span></span>
             <i class="ti ti-chevron-${open ? 'up' : 'down'}"></i>
           </button>
           ${e.failed ? `<button class="btn-sm outbox-retry" data-outbox-retry="${esc(e.id)}">Retry</button>` : ''}

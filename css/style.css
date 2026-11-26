@@ -650,6 +650,19 @@ button { cursor: pointer; }
 .empty-queue i, .empty-state i { font-size: 40px; color: var(--border2); }
 .empty-queue p, .empty-state p { font-size: 14px; line-height: 1.5; }
 
+/* Pending view with nothing left: a quiet success. The tick draws once (manager.html). */
+.queue-clear .clear-tick { margin: 0; }
+.queue-clear p { font-size: 16px; font-weight: 600; color: var(--text); }
+.clear-tick svg { width: 30px; height: 30px; fill: none; stroke: currentColor; stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round; }
+.queue-clear[data-state="wait"] .clear-tick { visibility: hidden; }
+.queue-clear[data-state="play"] .clear-tick { animation: tick-in 220ms var(--ease-out) both; }
+.queue-clear[data-state="play"] .clear-tick path { stroke-dasharray: 1 2; animation: tick-draw 280ms var(--ease-out) 140ms both; }
+@keyframes tick-in   { from { opacity: 0; transform: scale(.85); } }
+@keyframes tick-draw { from { stroke-dashoffset: 1.05; } to { stroke-dashoffset: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .queue-clear[data-state="play"] .clear-tick, .queue-clear[data-state="play"] .clear-tick path { animation: none; }
+}
+
 /* ═══════════════════════════════════════
    STOCK MANAGEMENT
    ═══════════════════════════════════════ */

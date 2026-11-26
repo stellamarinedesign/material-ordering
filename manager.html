@@ -12,8 +12,8 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" media="print" onload="this.media='all'">
   <link rel="stylesheet" href="fonts/tabler-icons.min.css">
-  <link rel="stylesheet" href="css/style.css?v=2026-11-26.7">
-  <link rel="stylesheet" href="css/themes.css?v=2026-11-26.7">
+  <link rel="stylesheet" href="css/style.css?v=2026-11-27.1">
+  <link rel="stylesheet" href="css/themes.css?v=2026-11-27.1">
 </head>
 <body>
 <!-- Start-up cover: painted before any script; see Boot in js/shared.js -->
@@ -33,12 +33,12 @@
 <!-- APP CHECK: remove this line to disable App Check (also remove init block in firebase-sync.js) -->
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-check-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
-<script src="js/shared.js?v=2026-11-26.7"></script>
-<script src="js/firebase-sync.js?v=2026-11-26.7"></script>
-<script src="js/auth.js?v=2026-11-26.7"></script>
-<script src="js/intake.js?v=2026-11-26.7"></script>
-<script src="js/catalogue.js?v=2026-11-26.7"></script>
-<script src="js/accounts.js?v=2026-11-26.7"></script>
+<script src="js/shared.js?v=2026-11-27.1"></script>
+<script src="js/firebase-sync.js?v=2026-11-27.1"></script>
+<script src="js/auth.js?v=2026-11-27.1"></script>
+<script src="js/intake.js?v=2026-11-27.1"></script>
+<script src="js/catalogue.js?v=2026-11-27.1"></script>
+<script src="js/accounts.js?v=2026-11-27.1"></script>
 <!-- Vendored xlsx-js-style (SheetJS fork with cell styling) — stocktake Excel exports -->
 <script src="js/xlsx-style.min.js"></script>
 <!-- Vendored ExcelJS — used only for the consumables export, which embeds drawn
@@ -1360,7 +1360,7 @@ const Manager = {
     try {
       await Promise.all(orderIds.map(id => DB.setDeliveryCancelled(id, groupKey, false)));
     } catch (e) {
-      tellFailed('Delivery not restored', e);
+      tellFailed('Delivery not reopened', e);
     }
   },
 
@@ -1478,7 +1478,7 @@ const Manager = {
     const n = groups.length, many = n !== 1;
     if (!await Ask.confirm({
       title: many ? `Cancel ${n} deliveries?` : `Cancel the ${groups[0].category} delivery?`,
-      body: `${many ? 'They move' : 'It moves'} to Cancelled, and can be restored from there.${nStocked ? ' What was added to stock stays in stock.' : ''}`,
+      body: `${many ? 'They move' : 'It moves'} to Cancelled, and can be reopened from there.${nStocked ? ' What was added to stock stays in stock.' : ''}`,
       yes: many ? 'Cancel deliveries' : 'Cancel delivery', no: many ? 'Keep deliveries' : 'Keep delivery', danger: true,
     })) return;
     const results = await Promise.allSettled(groups.map(g =>
@@ -1993,6 +1993,7 @@ const Manager = {
     if (this.unsubscribe) this.unsubscribe();
     this.unsubscribe = DB.listenOrders((orders, fromCache) => {
       this.orders = orders;
+      this._ordersFromCache = !!fromCache;
       if (!fromCache || orders.length) this._ordersReady = true;
       this._tidyStaged();
       this._settleOwed();
@@ -2072,6 +2073,19 @@ const Manager = {
     });
   },
 
+  // Nothing left to send. The tick draws once, when the queue empties in front of the
+  // manager; opened empty, it is simply there. Behind the email question it waits, so it
+  // draws as the question closes. A redraw never restarts or cuts a tick already drawing.
+  _renderQueueClear(wrap) {
+    const state = !this._queueHadPending ? 'still' : this._emailOpen ? 'wait' : 'play';
+    const cur = wrap.querySelector(':scope > .queue-clear');
+    if (cur && state !== 'play' && (state === 'wait' || cur.dataset.state !== 'wait')) return;
+    if (state === 'play') this._queueHadPending = false;
+    wrap.innerHTML = `<div class="empty-queue queue-clear" data-state="${state}">
+      <div class="success-icon green clear-tick"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 12.5l4 4 8-9" pathLength="1"/></svg></div>
+      <p>No more pending orders.</p></div>`;
+  },
+
   renderQueue() {
     const wrap = document.getElementById('order-queue'); if (!wrap) return;
     if (!this._ordersReady) { wrap.innerHTML = skeleton(5, 'tall'); return; }
@@ -2097,11 +2111,13 @@ const Manager = {
     for (const id of this._openCards) { if (!id.startsWith('pdg-') && !listIds.has(id)) this._openCards.delete(id); }
 
     if (!list.length) {
-      const msgs = { pending:['ti-clock','No pending orders.'], sent:['ti-mail-check','No emailed orders yet.'], rejected:['ti-ban','No rejected orders.'], all:['ti-inbox','No orders yet.'] };
+      if (this.activeView === 'pending') { this._renderQueueClear(wrap); return; }
+      const msgs = { sent:['ti-mail-check','No emailed orders yet.'], rejected:['ti-ban','No rejected orders.'], all:['ti-inbox','No orders yet.'] };
       const [ic, msg] = msgs[this.activeView] || msgs.all;
       wrap.innerHTML = `<div class="empty-queue"><i class="ti ${ic}"></i><p>${msg}</p></div>`;
       return;
     }
+    if (this.activeView === 'pending' && !this._ordersFromCache) this._queueHadPending = true;
 
     // Combined section
     const pendingOrders = this._materialsOrders().filter(o => this._orderHasPendingItems(o));
@@ -2511,7 +2527,7 @@ const Manager = {
   // Undo for rejectItem — restoring is safe (the line just goes back to pending and
   // reappears in the combined list), so no question.
   async unrejectItem(orderId, partCode) {
-    try { await DB.unrejectItem(orderId, partCode); } catch (e) { tellFailed('Not restored', e); }
+    try { await DB.unrejectItem(orderId, partCode); } catch (e) { tellFailed('Not put back', e); }
   },
 
   // ── PUTTING AN EMAIL BACK ────────────────────────────────────────────
@@ -2899,7 +2915,7 @@ const Manager = {
   async restoreOrder(orderId) {
     const o = this.orders.find(x => x._id === orderId);
     try { await DB.restoreOrder(orderId); this._toast(`${(o && o.ref) || 'Order'} is back in the queue`); }
-    catch(e) { tellFailed('Not restored', e); }
+    catch(e) { tellFailed('Not put back', e); }
   },
 
   // ══════════════════════════════════════════
@@ -3007,6 +3023,7 @@ const Manager = {
       const now = read();
       this._emailOpen = now && now.draft ? now : null;
       this._showEmailQuestion();
+      this.renderQueue();
     });
   },
 
@@ -3372,6 +3389,8 @@ const Manager = {
   _renderNoReview() {
     const wrap = document.getElementById('no-review-contents'); if (!wrap) return;
     const items = this.noItems();
+    const bar = document.querySelector('#no-review-panel .action-bar');   // nothing to send, so no send buttons
+    if (bar) bar.style.display = items.length ? '' : 'none';
     if (!items.length) { wrap.innerHTML = `<div class="empty-state"><i class="ti ti-clipboard"></i><p>No items on this order yet.</p></div>`; return; }
     wrap.innerHTML = items.map(i => {
       const showCode = i.partCode && !Data.isDummyCode(i.partCode);
@@ -3543,6 +3562,8 @@ const Manager = {
   _renderCoReview() {
     const wrap = document.getElementById('co-review-contents'); if (!wrap) return;
     const items = this.coItems();
+    const bar = document.querySelector('#co-review-panel .action-bar');   // nothing to send, so no send buttons
+    if (bar) bar.style.display = items.length ? '' : 'none';
     if (!items.length) { wrap.innerHTML = `<div class="empty-state"><i class="ti ti-clipboard"></i><p>No items on this order yet.</p></div>`; return; }
     wrap.innerHTML = items.map(i => {
       const showCode = i.partCode && !Data.isDummyCode(i.partCode);

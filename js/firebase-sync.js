@@ -1,4 +1,4 @@
-// firebase-sync.js — v2026-11-26.7
+// firebase-sync.js — v2026-11-27.1
 let _db = null, _configured = false, _config = null, _second = null;
 
 // Signed-in email for stamping writes (null when the device isn't signed in —
