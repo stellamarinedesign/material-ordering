@@ -1,4 +1,4 @@
-// intake.js — v2026-11-26.4
+// intake.js — v2026-11-26.5
 // Shared intake rendering module used by warehouse.html and manager.html.
 
 const Intake = {
@@ -243,6 +243,12 @@ const Intake = {
     }
     // On a full Confirm of a consumables delivery, offer to add what was received to stock.
     if (saved && confirm) await this.offerStock(host, group, merged);
+    if (saved) {
+      const bo = group.entries.some(({ order, item }) => this.outstandingOf(order, item, merged) > 0);
+      const where = bo ? 'backorder' : 'completed';
+      toast(confirm ? `${group.category} delivery confirmed. It's in ${bo ? 'Back Orders' : 'Completed'}.` : `${group.category}: progress saved.`, false,
+        confirm && host.show ? { label: 'Show', run: () => host.show(group, where) } : null);
+    }
   },
 
   // "Add to stock" / "Update stock" on a resolved delivery card — the received
@@ -573,6 +579,8 @@ const Intake = {
     const badgeStatus = isCancelledCard ? 'cancelled' : status;
     const suffix = isDerived ? ' — Back Order' : '';
     const hasDraft   = !readOnly && this.draftChanges(entries, draftForCard);
+    const prog       = this._progress(entries, draftForCard);
+    const progText   = !readOnly && !this.TAB_RESOLVED.has(status) && prog.ticked > 0 ? ` &middot; ${prog.ticked} of ${prog.n} ticked` : '';
     const canConfirm = hasDraft && this.canConfirmEntries(entries, draftForCard);
     const saving     = readOnly ? '' : (this._saving.get(groupKey) || '');
     const failed     = readOnly ? '' : (this._failed.get(groupKey) || '');
@@ -619,10 +627,10 @@ const Intake = {
 
     return `
       <div class="intake-card${isOpen ? ' open' : ''}" id="intake-card-${esc(safeId)}">
-        <div class="intake-card-hdr" data-toggle-order="${esc(cardKey)}">
+        <div class="intake-card-hdr" data-toggle-order="${esc(cardKey)}" role="button" tabindex="0" aria-expanded="${isOpen ? 'true' : 'false'}">
           <div class="intake-card-title">
             <div class="intake-card-ref">${esc(category)}${esc(suffix)}</div>
-            <div class="intake-card-meta">${esc(metaTs)}${deviceLabel ? ' &middot; ' + esc(deviceLabel) : ''} &middot; ${uniqueItemCount} item${uniqueItemCount !== 1 ? 's' : ''}</div>
+            <div class="intake-card-meta">${esc(metaTs)}${deviceLabel ? ' &middot; ' + esc(deviceLabel) : ''} &middot; ${uniqueItemCount} item${uniqueItemCount !== 1 ? 's' : ''}${progText}</div>
           </div>
           <div class="intake-card-right">
             ${readOnly && showRestore ? `<button class="intake-restore-btn" data-restore="${esc(groupKey)}" title="Restore to active tracking"><i class="ti ti-arrow-back-up"></i> Restore</button>` : ''}
@@ -644,8 +652,8 @@ const Intake = {
 
   // The foot of an open card: how far along it is, and the one thing to press, where the
   // last line ends. It stays in view while the lines scroll.
-  _cardFoot(cardKey, entries, draftForCard, { readOnly, hasDraft, canConfirm, saving, failed, resolved }) {
-    if (readOnly || (resolved && !hasDraft && !saving && !failed)) return '';
+  // Lines ticked off (a Partial counts once it has a quantity), with staged ticks.
+  _progress(entries, draftForCard) {
     const merged = this.mergeDraftEntries(entries, draftForCard), rows = new Map();
     for (const e of entries) { const k = this.mergeKey(e.item); if (!rows.has(k)) rows.set(k, e); }
     let ticked = 0, noQty = 0;
@@ -655,7 +663,12 @@ const Intake = {
       if (it.status === 'partial' && !it.qtyReceived) { noQty++; continue; }
       ticked++;
     }
-    const n = rows.size, left = n - ticked - noQty;
+    return { ticked, noQty, n: rows.size };
+  },
+  _cardFoot(cardKey, entries, draftForCard, { readOnly, hasDraft, canConfirm, saving, failed, resolved }) {
+    if (readOnly || (resolved && !hasDraft && !saving && !failed)) return '';
+    const { ticked, noQty, n } = this._progress(entries, draftForCard);
+    const left = n - ticked - noQty;
     const why = canConfirm || !hasDraft ? `${ticked} of ${n} ticked`
       : left ? `${left} line${left !== 1 ? 's' : ''} left to tick` : 'Enter how many arrived';
     const main = saving
@@ -668,7 +681,7 @@ const Intake = {
         ${failed ? `<div class="inline-error" role="alert">${esc(failed)}</div>` : ''}
         <div class="intake-foot-row">
           <span class="intake-foot-text">${why}</span>
-          ${hasDraft && !saving ? `<button class="intake-discard-btn" data-discard="${esc(cardKey)}">Discard</button>` : ''}
+          ${hasDraft && !saving ? `<button class="intake-discard-btn" data-discard="${esc(cardKey)}">Discard changes</button>` : ''}
           ${main}
         </div>
       </div>`;
@@ -777,32 +790,32 @@ const Intake = {
     return `
       <div class="intake-item" data-item="${esc(String(item.id))}" data-order="${esc(order._id)}">
         <div class="intake-item-main">
-          <div class="intake-item-info" data-notes-toggle="${esc(String(item.id))}" data-notes-order="${esc(order._id)}">
+          <div class="intake-item-info">
             <div class="intake-item-name">${descHtml(item.description)}</div>
             ${showCode ? `<div class="intake-item-code">${esc(item.partCode)}</div>` : ''}
             ${orderLabel ? `<div class="intake-item-order-label">${esc(orderLabel)}</div>` : ''}
             <div class="intake-item-ordered">Ordered: <strong>${esc(orderQtyDisplay(item, item.qty))}</strong></div>
           </div>
           <div class="intake-item-btns">
-            <button class="intake-btn intake-ok${status === 'ok' ? ' active' : ''}"
-              data-action="ok" data-item="${esc(String(item.id))}" data-order="${esc(order._id)}" title="Received OK">
+            <button class="intake-btn intake-ok${status === 'ok' ? ' active' : ''}" aria-pressed="${status === 'ok'}"
+              data-action="ok" data-item="${esc(String(item.id))}" data-order="${esc(order._id)}">
               <i class="ti ti-check"></i><span>OK</span>
             </button>
-            <button class="intake-btn intake-partial${status === 'partial' ? ' active' : ''}"
-              data-action="partial" data-item="${esc(String(item.id))}" data-order="${esc(order._id)}" title="Partial quantity received">
+            <button class="intake-btn intake-partial${status === 'partial' ? ' active' : ''}" aria-pressed="${status === 'partial'}"
+              data-action="partial" data-item="${esc(String(item.id))}" data-order="${esc(order._id)}">
               <i class="ti ti-adjustments-horizontal"></i><span>Partial</span>
             </button>
-            <button class="intake-btn intake-missing${status === 'missing' ? ' active' : ''}"
-              data-action="missing" data-item="${esc(String(item.id))}" data-order="${esc(order._id)}" title="Not received">
+            <button class="intake-btn intake-missing${status === 'missing' ? ' active' : ''}" aria-pressed="${status === 'missing'}"
+              data-action="missing" data-item="${esc(String(item.id))}" data-order="${esc(order._id)}">
               <i class="ti ti-x"></i><span>Missing</span>
             </button>
-            <button class="intake-btn intake-backorder${status === 'backorder' ? ' active' : ''}"
-              data-action="backorder" data-item="${esc(String(item.id))}" data-order="${esc(order._id)}" title="Back order">
-              <i class="ti ti-clock-pause"></i><span>B/O</span>
+            <button class="intake-btn intake-backorder${status === 'backorder' ? ' active' : ''}" aria-pressed="${status === 'backorder'}"
+              data-action="backorder" data-item="${esc(String(item.id))}" data-order="${esc(order._id)}">
+              <i class="ti ti-clock-pause"></i><span>Back order</span>
             </button>
-            <button class="intake-btn intake-notes-btn${notes ? ' has-note' : ''}${notesOpen ? ' note-open' : ''}"
-              data-action="notes" data-item="${esc(String(item.id))}" data-order="${esc(order._id)}" title="Add note">
-              <i class="ti ti-message-circle"></i>
+            <button class="intake-btn intake-notes-btn${notes ? ' has-note' : ''}${notesOpen ? ' note-open' : ''}" aria-expanded="${notesOpen}"
+              data-action="notes" data-item="${esc(String(item.id))}" data-order="${esc(order._id)}">
+              <i class="ti ti-message-circle"></i><span>Note</span>
             </button>
           </div>
         </div>
@@ -813,6 +826,7 @@ const Intake = {
             value="${qtyRecv != null ? qtyRecv : ''}" placeholder="qty"
             data-partial-item="${esc(String(item.id))}" data-partial-order="${esc(order._id)}">
           <span class="intake-of-label">of ${esc(orderQtyDisplay(item, item.qty))}</span>
+          ${qtyRecv > (item.qty || 0) ? `<span class="intake-over" role="alert"><i class="ti ti-alert-triangle"></i> More than the ${item.qty} ordered</span>` : ''}
         </div>` : ''}
         ${showOutstanding ? `
         <div class="intake-partial-row intake-outstanding-row">
@@ -879,20 +893,40 @@ const Intake = {
   //   onNoteChange(orderId, itemId, text), onRerender(cardKey), onConfirm(cardKey),
   //   onSave(cardKey), onDiscard(cardKey), onRestore(groupKey) }
   attachListeners(container, callbacks) {
-    let _noteTimer = null;
+    let _noteTimer = null, _noteEl = null;
+    // A note still waiting to be taken goes in now (a tap on Confirm may not leave the field).
+    const flushNote = () => {
+      if (!_noteTimer) return;
+      clearTimeout(_noteTimer); _noteTimer = null;
+      const ta = _noteEl;
+      if (ta && callbacks.onNoteChange) callbacks.onNoteChange(ta.dataset.notesOrder, ta.dataset.notesItem, ta.value);
+    };
+    container.addEventListener('keydown', e => {
+      const hdr = (e.key === 'Enter' || e.key === ' ') && e.target.matches && e.target.matches('[data-toggle-order]') ? e.target : null;
+      if (!hdr) return;
+      e.preventDefault();
+      const key = hdr.dataset.toggleOrder;
+      hdr.click();
+      const again = [...container.querySelectorAll('[data-toggle-order]')].find(h => h.dataset.toggleOrder === key);
+      if (again) again.focus();
+    });
     container.addEventListener('click', e => {
       // Confirm button.
       const confirmBtn = e.target.closest('[data-confirm]');
       if (confirmBtn) {
         if (confirmBtn.disabled) return;
-        if (callbacks.onConfirm) callbacks.onConfirm(confirmBtn.dataset.confirm);
+        const key = confirmBtn.dataset.confirm;
+        flushNote();
+        if (callbacks.onConfirm) callbacks.onConfirm(key);
         return;
       }
 
       // Save button — partial progress save, in Confirm's place until every line is ticked.
       const saveBtn = e.target.closest('[data-save]');
       if (saveBtn) {
-        if (callbacks.onSave) callbacks.onSave(saveBtn.dataset.save);
+        const key = saveBtn.dataset.save;
+        flushNote();
+        if (callbacks.onSave) callbacks.onSave(key);
         return;
       }
 
@@ -933,16 +967,8 @@ const Intake = {
 
       // Card header toggle
       const hdr = e.target.closest('[data-toggle-order]');
-      if (hdr && !e.target.closest('[data-action]') && !e.target.closest('[data-notes-toggle]')) {
+      if (hdr && !e.target.closest('[data-action]')) {
         if (callbacks.onRerender) callbacks.onRerender(hdr.dataset.toggleOrder);
-        return;
-      }
-
-      // Clicking the item info text area opens/closes notes
-      const infoEl = e.target.closest('[data-notes-toggle]');
-      if (infoEl && !e.target.closest('[data-action]')) {
-        this._toggleNotes(infoEl.dataset.notesOrder, infoEl.dataset.notesToggle);
-        if (callbacks.onRerender) callbacks.onRerender(infoEl.dataset.notesOrder);
         return;
       }
 
@@ -972,7 +998,7 @@ const Intake = {
       // Leaving a note takes it at once: a Confirm straight after typing must include it.
       const ta = e.target.closest('[data-notes-item]');
       if (ta && callbacks.onNoteChange) {
-        clearTimeout(_noteTimer);
+        clearTimeout(_noteTimer); _noteTimer = null;
         callbacks.onNoteChange(ta.dataset.notesOrder, ta.dataset.notesItem, ta.value);
       }
     });
@@ -980,8 +1006,9 @@ const Intake = {
     container.addEventListener('input', e => {
       const ta = e.target.closest('[data-notes-item]');
       if (ta && callbacks.onNoteChange) {
-        clearTimeout(_noteTimer);
+        clearTimeout(_noteTimer); _noteEl = ta;
         _noteTimer = setTimeout(() => {
+          _noteTimer = null;
           callbacks.onNoteChange(ta.dataset.notesOrder, ta.dataset.notesItem, ta.value);
         }, 800);
       }

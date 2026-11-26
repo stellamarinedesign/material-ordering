@@ -1,9 +1,9 @@
-// shared.js — v2026-11-26.4
+// shared.js — v2026-11-26.5
 
 // The build date plus that day's counter — "2026-10-06.2" is the second build
 // on 6 Oct 2026 (the production board's scheme). Set by tools/bump-version.py;
 // shown to people with a leading "v" (see verLabel).
-const APP_VERSION = '2026-11-26.4';
+const APP_VERSION = '2026-11-26.5';
 
 // Numeric version comparison, part by part. Returns true if `a` is strictly
 // newer than `b`. Reads both the dated form and the "v0.56"-style numbers used
@@ -20,20 +20,6 @@ function isVersionNewer(a, b) {
   return false; // equal
 }
 function verLabel(v) { return 'v' + String(v || '').replace(/^v/i, ''); }
-
-const DEFAULT_MATERIALS = [
-  { id:1,  category:'Stainless Steel', subcategory:'Box Section', partCode:'SL0300', description:'100 x 50 x 3mm x 6m Box Section 316 S/S', qtyType:'Length' },
-  { id:2,  category:'Stainless Steel', subcategory:'Box Section', partCode:'SL0301', description:'50 x 50 x 3mm x 6m Box Section 316 S/S',  qtyType:'Length' },
-  { id:3,  category:'Stainless Steel', subcategory:'Round Bar',   partCode:'SL0400', description:'20mm Diameter x 6m Round Bar 316 S/S',     qtyType:'Length' },
-  { id:4,  category:'Stainless Steel', subcategory:'Angle Bar',   partCode:'SL0500', description:'50 x 50 x 5mm x 6m Angle Bar 316 S/S',    qtyType:'Length' },
-  { id:5,  category:'Stainless Steel', subcategory:'Channel',     partCode:'SL0600', description:'100 x 50 x 5mm x 6m Channel 316 S/S',     qtyType:'Length' },
-  { id:6,  category:'Stainless Steel', subcategory:'Plate',       partCode:'SL0700', description:'3mm x 1500 x 3000mm Plate 316 S/S',        qtyType:'Sheet'  },
-  { id:7,  category:'Aluminium',       subcategory:'Box Section', partCode:'AL0300', description:'100 x 50 x 3mm x 6m Box Section 6061-T6',  qtyType:'Length' },
-  { id:8,  category:'Aluminium',       subcategory:'Round Bar',   partCode:'AL0400', description:'20mm Diameter x 6m Round Bar 6061-T6',      qtyType:'Length' },
-  { id:9,  category:'Aluminium',       subcategory:'Angle Bar',   partCode:'AL0500', description:'50 x 50 x 5mm x 6m Angle Bar 6061-T6',     qtyType:'Length' },
-  { id:10, category:'Aluminium',       subcategory:'Channel',     partCode:'AL0600', description:'100 x 50 x 5mm x 6m Channel 6061-T6',      qtyType:'Length' },
-  { id:11, category:'Aluminium',       subcategory:'Plate',       partCode:'AL0700', description:'3mm x 1500 x 3000mm Plate 6061-T6',         qtyType:'Sheet'  },
-];
 
 const DEFAULT_SETTINGS = {
   supplierEmail:        '',     // set per PC under Settings → Email; nothing sends without it
@@ -396,8 +382,10 @@ const Data = {
       boxSize: 0, boxUnit: 'Box',
     }));
   },
+  failed: false,       // no list could be had at all (not even a saved one)
+  consFailed: false,
   _useCatalog(list) {
-    this._list = list; this._source = 'catalogue';
+    this._list = list; this._source = 'catalogue'; this.failed = false;
     try { localStorage.setItem('mo_cat_cache', JSON.stringify(list)); } catch {}
     return list;
   },
@@ -428,14 +416,15 @@ const Data = {
       const parsed = await this._fetchCsv(csvUrl);
       if (parsed.length) {
         if (this._source !== 'csv') return this._list;   // the catalogue arrived meanwhile
-        this._list = parsed;
+        this._list = parsed; this.failed = false;
         try { localStorage.setItem('mo_mat_cache', JSON.stringify(parsed)); } catch {}
         return parsed;
       }
       throw new Error('CSV parsed to 0 rows');
     } catch (e) { console.warn('[Materials] CSV load failed:', e.message); }
     try { const c = localStorage.getItem('mo_mat_cache'); if (c) { this._list = JSON.parse(c); return this._list; } } catch {}
-    this._list = [...DEFAULT_MATERIALS];
+    // Nothing to show: the page says so and offers Reload, rather than made-up materials.
+    this.failed = true; this._list = [];
     return this._list;
   },
   // The saved list first, the site's behind it: onChange(list) if it differs.
@@ -452,6 +441,7 @@ const Data = {
       return saved;
     }
     this._consumablesList = await fetched || [];
+    this.consFailed = !this._consumablesList.length;
     return this._consumablesList;
   },
   async _fetchCsv(url) {
@@ -464,7 +454,7 @@ const Data = {
       return this._parseCsv(text);
     } finally { clearTimeout(t); }
   },
-  get() { return this._list || [...DEFAULT_MATERIALS]; },
+  get() { return this._list || []; },
   // The CSVs are edited in Excel, which saves either UTF-8 (with a BOM, when
   // "CSV UTF-8" is chosen) or the Windows ANSI codepage (plain "CSV"). Decode
   // strictly as UTF-8 first — the BOM is consumed — and fall back to
@@ -662,14 +652,15 @@ const Strip = {
     if (typeof ResizeObserver === 'function') new ResizeObserver(fade).observe(el);
   },
   // A category row and, under a category, its types. A lone type is only a label.
-  draw(wrap, { cats, cat, subs, sub, catAttr = 'cat-idx', subAttr = 'sub-idx' }) {
+  // lead: { label, on } — a tab before All (the worker page's Recent), index -2.
+  draw(wrap, { cats, cat, subs, sub, catAttr = 'cat-idx', subAttr = 'sub-idx', lead }) {
     if (!wrap) return;
     const tab = (attr, i, label, on) => `<button class="tab ${on ? 'active' : ''}" data-${attr}="${i}">${esc(label)}</button>`;
     const row = cats.map((c, i) => tab(catAttr, i, c, cat === c)).join('');
     let subRow = '';
     if (cat && subs.length === 1) subRow = `<span class="tab active tab-label">${esc(subs[0])}</span>`;
     else if (cat && subs.length)  subRow = tab(subAttr, -1, 'All', !sub) + subs.map((s, i) => tab(subAttr, i, s, sub === s)).join('');
-    wrap.innerHTML = `<div class="tabs-bar"><div class="tabs-inner">${tab(catAttr, -1, 'All', !cat)}${row}</div></div>`
+    wrap.innerHTML = `<div class="tabs-bar"><div class="tabs-inner">${lead ? tab(catAttr, -2, lead.label, lead.on) : ''}${tab(catAttr, -1, 'All', !cat)}${row}</div></div>`
       + (subRow ? `<div class="tabs-bar sub-bar"><div class="tabs-inner">${subRow}</div></div>` : '');
     const [a, b] = wrap.querySelectorAll('.tabs-inner');
     this.watch(a, wrap.id);
@@ -729,11 +720,12 @@ const Kept = {
 // to send" count the header shows. Entries: { id, ref, payload, placedAt,
 // tries, lastTry, failed? }.
 const Outbox = {
-  _key: 'mo_outbox', _entries: [], _watchers: {}, _onChange: null, _resumed: false,
+  _key: 'mo_outbox', _entries: [], _watchers: {}, _onChange: null, _onSent: null, _resumed: false,
   MAX_AUTO_TRIES: 3,
 
-  start(key, onChange) {
-    this._key = key || this._key; this._onChange = onChange || null;
+  // onSent(entry): the server has an order this device was keeping.
+  start(key, onChange, onSent) {
+    this._key = key || this._key; this._onChange = onChange || null; this._onSent = onSent || null;
     try { this._entries = JSON.parse(localStorage.getItem(this._key) || '[]'); } catch { this._entries = []; }
     if (!Array.isArray(this._entries)) this._entries = [];
     window.addEventListener('online', () => this.retryFailed());
@@ -766,9 +758,10 @@ const Outbox = {
   },
   _get(id) { return this._entries.find(e => e.id === id); },
   _confirm(id) {
-    if (!this._get(id)) return;
+    const en = this._get(id); if (!en) return;
     this._entries = this._entries.filter(e => e.id !== id);
     this._unwatch(id); this._save(); this._render();
+    if (this._onSent) this._onSent(en);
   },
   _fail(id, e) {
     const en = this._get(id); if (!en) return;
@@ -851,7 +844,7 @@ const Outbox = {
     ow.innerHTML = `<div class="success-overlay"><div class="success-card" id="outbox-card" style="max-width:440px;text-align:left">
         <h3 style="text-align:center">${this.failedCount() && this.failedCount() === this.count() ? 'Not sent' : 'Waiting to send'}</h3>
         <div class="outbox-list">${rows || '<div class="outbox-sub">Nothing waiting.</div>'}</div>
-        <button class="btn btn-outline" id="outbox-close" style="width:100%;margin-top:14px">Close</button>
+        <button class="btn btn-outline" id="outbox-close" data-esc style="width:100%;margin-top:14px">Close</button>
       </div></div>`;
     document.getElementById('outbox-close').addEventListener('click', () => { ow.innerHTML = ''; });
     const list = ow.querySelector('.outbox-list'); if (list) list.scrollTop = top;
@@ -1449,7 +1442,7 @@ const Live = {
     if (dot && lbl) {
       dot.classList.remove('disconnected', 'update-available', 'connecting');
       if (connected === null)  { dot.classList.add('connecting');       lbl.textContent = 'Connecting…'; }
-      else if (!connected)     { dot.classList.add('disconnected');     lbl.textContent = 'Offline'; }
+      else if (!connected)     { dot.classList.add('disconnected');     lbl.textContent = 'Offline: showing saved data'; }
       else if (outdated)       { dot.classList.add('update-available'); lbl.textContent = 'Update Available'; }
       else                     { lbl.textContent = 'Live'; }
       let re = document.getElementById('live-reload');
@@ -1466,8 +1459,18 @@ const Live = {
           <span>A newer version (${esc(verLabel(latestVersion))}) is available — you're on ${esc(verLabel(APP_VERSION))}.</span>
           <button id="btn-refresh-update">Refresh</button>
         </div>` : '';
-      document.getElementById('btn-refresh-update')?.addEventListener('click', () => AutoUpdate.reloadFresh(latestVersion));
+      document.getElementById('btn-refresh-update')?.addEventListener('click', async () => {
+        if (this.unsaved() && !await Ask.confirm({ title: 'Refresh now?', body: 'What is typed in the open window will be cleared.', yes: 'Refresh', no: 'Not now' })) return;
+        AutoUpdate.reloadFresh(latestVersion);
+      });
     }
+  },
+  // Typing a reload would lose. Orders, counts, carts and delivery ticks come back by
+  // themselves (Kept, drafts), so only what is typed into an open window counts.
+  unsaved() {
+    return [...document.querySelectorAll('#overlay-wrap input, #overlay-wrap textarea, #ask-wrap input, #email-q input, .panel.open input, .panel.open textarea')]
+      .some(el => !/^(search|checkbox|radio|number|hidden|button|file)$/.test(el.type) && !el.hasAttribute('data-kept')
+        && el.value.trim() !== '' && el.value !== el.defaultValue);
   },
   // Only if the site answers: reloading without a network would leave a kiosk with nothing.
   async reload(btn) {
@@ -1484,6 +1487,21 @@ const Live = {
     Ask.tell('No connection', 'Check the Wi-Fi, then tap Reload.');
   },
 };
+
+// A routine "done": what happened, and it goes by itself after a few seconds or with a
+// tap anywhere. Nothing to decide, so nothing to press.
+function doneMessage(ow, { title, text, ms = 5000 }) {
+  if (!ow) return;
+  ow.innerHTML = `<div class="success-overlay done-msg"><div class="success-card" role="status">
+      <div class="success-icon green"><i class="ti ti-circle-check"></i></div>
+      <h3>${esc(title)}</h3>${text ? `<p>${esc(text)}</p>` : ''}
+      <button class="btn btn-outline" data-esc>Close</button>
+    </div></div>`;
+  const el = ow.firstElementChild;
+  const close = () => { clearTimeout(t); if (el.isConnected) ow.innerHTML = ''; };
+  const t = setTimeout(close, ms);
+  el.addEventListener('click', close);
+}
 
 // A count beside a tab or on a button: capped, and hidden (its room kept) at zero.
 function setCount(el, n) {
@@ -1558,6 +1576,34 @@ const Ask = {
     });
   },
 };
+// ── DIALOGS: Esc and Tab ──
+// The window on top keeps the keyboard: Tab goes round its own buttons and fields, and Esc
+// presses its way out (the button marked data-esc, or an open panel's Back). Ask answers Esc
+// itself; the sign-in has no way out.
+const Dialogs = {
+  top() {
+    const last = sel => { const a = document.querySelectorAll(sel); return a.length ? a[a.length - 1] : null; };
+    return last('#ask-wrap .success-card') || last('#overlay-wrap .success-card, #overlay-wrap .sheet')
+      || last('#auth-gate .success-card') || last('#email-q .success-card') || last('.panel.open');
+  },
+};
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Escape' && e.key !== 'Tab') return;
+  const box = Dialogs.top(); if (!box) return;
+  if (e.key === 'Escape') {
+    if (box.closest('#ask-wrap')) return;
+    const out = box.querySelector('[data-esc]:not(:disabled)')
+      || (box.classList.contains('panel') ? box.querySelector('.panel-header .back-btn') : null);
+    if (out) { e.preventDefault(); out.click(); }
+    return;
+  }
+  const f = [...box.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')]
+    .filter(el => !el.disabled && el.getClientRects().length);
+  if (!f.length) return;
+  const i = f.indexOf(document.activeElement);
+  if (e.shiftKey ? i <= 0 : (i < 0 || i === f.length - 1)) { e.preventDefault(); f[e.shiftKey ? f.length - 1 : 0].focus(); }
+});
+
 // A failure with nowhere of its own to sit. next: what to do about it.
 function tellFailed(title, e, next) {
   console.error(title, e);
@@ -1589,6 +1635,14 @@ function whyFailed(e) {
 // "Nothing was saved" can only be promised when the server answered: a dropped connection
 // may have lost the reply, not the write. (Trying again is safe either way.)
 function nothingDone(e, words) { return whyFailed(e) === 'the connection dropped' ? '' : ` ${words}`; }
+// A refused field: red until it is typed in again, shaken once, focused and selected.
+function refuseField(el) {
+  if (!el) return;
+  el.classList.add('field-bad'); el.setAttribute('aria-invalid', 'true');
+  el.classList.remove('shake'); void el.offsetWidth; el.classList.add('shake');
+  el.addEventListener('input', () => { el.classList.remove('field-bad'); el.removeAttribute('aria-invalid'); }, { once: true });
+  try { el.focus(); el.select(); } catch {}
+}
 // A failure stays on screen beside the button that failed. Empty clears it.
 function inlineError(id, msg) {
   const el = document.getElementById(id); if (!el) return;
@@ -1615,6 +1669,11 @@ function genRef() {
 // "delivery" — never displayed, so uniqueness matters more than readability.
 function genDeliveryId() {
   return `DLV-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,8)}`;
+}
+// A Firestore time (or a Date) that falls on today, on this device's clock.
+function isToday(ts) {
+  const d = ts && ts.toDate ? ts.toDate() : ts instanceof Date ? ts : null;
+  return !!d && d.toDateString() === new Date().toDateString();
 }
 function fmtTime(ts) {
   if (!ts) return '';

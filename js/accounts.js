@@ -1,4 +1,4 @@
-// accounts.js — v2026-11-26.4
+// accounts.js — v2026-11-26.5
 //
 // Manager page only: the Accounts section of Settings, for a MASTER and for
 // nobody else — absent otherwise, not greyed. Every listed address with its
@@ -170,7 +170,7 @@ const Accounts = {
       this._log(`${email}: Firebase user made.`);
     } catch (e) {
       const code = (e && e.code) || '';
-      this._fresh = code === 'auth/email-already-in-use' ? { email, exists: true } : { email, failed: Auth._friendly(e) };
+      this._fresh = code === 'auth/email-already-in-use' ? { email, exists: true } : { email, failed: Auth._friendly(e, 'account') };
     } finally {
       back();
       this.refresh();

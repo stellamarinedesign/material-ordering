@@ -12,8 +12,8 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" media="print" onload="this.media='all'">
   <link rel="stylesheet" href="fonts/tabler-icons.min.css">
-  <link rel="stylesheet" href="css/style.css?v=2026-11-26.4">
-  <link rel="stylesheet" href="css/themes.css?v=2026-11-26.4">
+  <link rel="stylesheet" href="css/style.css?v=2026-11-26.5">
+  <link rel="stylesheet" href="css/themes.css?v=2026-11-26.5">
 </head>
 <body class="floor">
 <!-- Start-up cover: painted before any script; see Boot in js/shared.js -->
@@ -33,10 +33,10 @@
 <!-- APP CHECK: remove this line to disable App Check (also remove init block in firebase-sync.js) -->
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-check-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
-<script src="js/shared.js?v=2026-11-26.4"></script>
-<script src="js/firebase-sync.js?v=2026-11-26.4"></script>
-<script src="js/auth.js?v=2026-11-26.4"></script>
-<script src="js/intake.js?v=2026-11-26.4"></script>
+<script src="js/shared.js?v=2026-11-26.5"></script>
+<script src="js/firebase-sync.js?v=2026-11-26.5"></script>
+<script src="js/auth.js?v=2026-11-26.5"></script>
+<script src="js/intake.js?v=2026-11-26.5"></script>
 <script>
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.getRegistrations().then(rs => rs.forEach(r => r.unregister()));
@@ -125,11 +125,11 @@ const Warehouse = {
         <div id="view-materials" style="flex:1;display:flex;flex-direction:column;overflow:hidden;min-height:0">
           <div class="col" style="padding-top:10px;padding-bottom:0;flex-shrink:0">
             <div class="intake-filter-bar" id="filter-materials">
-              <div class="intake-filter-chip" data-filter="all">All</div>
-              <div class="intake-filter-chip active" data-filter="outstanding"><i class="ti ti-clock"></i> Outstanding</div>
-              <div class="intake-filter-chip" data-filter="backorder"><i class="ti ti-clock-pause"></i> Back Orders</div>
-              <div class="intake-filter-chip" data-filter="completed"><i class="ti ti-circle-check"></i> Completed</div>
-              <div class="intake-filter-chip" data-filter="cancelled"><i class="ti ti-ban"></i> Cancelled</div>
+              <button type="button" class="intake-filter-chip" data-filter="all" aria-pressed="false">All</button>
+              <button type="button" class="intake-filter-chip active" data-filter="outstanding" aria-pressed="true"><i class="ti ti-clock"></i> Outstanding</button>
+              <button type="button" class="intake-filter-chip" data-filter="backorder" aria-pressed="false"><i class="ti ti-clock-pause"></i> Back Orders</button>
+              <button type="button" class="intake-filter-chip" data-filter="completed" aria-pressed="false"><i class="ti ti-circle-check"></i> Completed</button>
+              <button type="button" class="intake-filter-chip" data-filter="cancelled" aria-pressed="false"><i class="ti ti-ban"></i> Cancelled</button>
             </div>
           </div>
           <div class="intake-scroll app-scroll">
@@ -141,11 +141,11 @@ const Warehouse = {
         <div id="view-consumables" style="display:none;flex:1;flex-direction:column;overflow:hidden;min-height:0">
           <div class="col" style="padding-top:10px;padding-bottom:0;flex-shrink:0">
             <div class="intake-filter-bar" id="filter-consumables">
-              <div class="intake-filter-chip" data-filter="all">All</div>
-              <div class="intake-filter-chip active" data-filter="outstanding"><i class="ti ti-clock"></i> Outstanding</div>
-              <div class="intake-filter-chip" data-filter="backorder"><i class="ti ti-clock-pause"></i> Back Orders</div>
-              <div class="intake-filter-chip" data-filter="completed"><i class="ti ti-circle-check"></i> Completed</div>
-              <div class="intake-filter-chip" data-filter="cancelled"><i class="ti ti-ban"></i> Cancelled</div>
+              <button type="button" class="intake-filter-chip" data-filter="all" aria-pressed="false">All</button>
+              <button type="button" class="intake-filter-chip active" data-filter="outstanding" aria-pressed="true"><i class="ti ti-clock"></i> Outstanding</button>
+              <button type="button" class="intake-filter-chip" data-filter="backorder" aria-pressed="false"><i class="ti ti-clock-pause"></i> Back Orders</button>
+              <button type="button" class="intake-filter-chip" data-filter="completed" aria-pressed="false"><i class="ti ti-circle-check"></i> Completed</button>
+              <button type="button" class="intake-filter-chip" data-filter="cancelled" aria-pressed="false"><i class="ti ti-ban"></i> Cancelled</button>
             </div>
           </div>
           <div class="intake-scroll app-scroll">
@@ -205,18 +205,10 @@ const Warehouse = {
     document.getElementById('tab-consumables').addEventListener('click', () => this.setTab('consumables'));
 
     // Filter chips
-    document.getElementById('filter-materials').addEventListener('click', e => {
-      const chip = e.target.closest('[data-filter]'); if (!chip) return;
-      this._filters.materials = chip.dataset.filter;
-      document.querySelectorAll('#filter-materials .intake-filter-chip').forEach(c => c.classList.toggle('active', c === chip));
-      this.renderList('materials');
-    });
-    document.getElementById('filter-consumables').addEventListener('click', e => {
-      const chip = e.target.closest('[data-filter]'); if (!chip) return;
-      this._filters.consumables = chip.dataset.filter;
-      document.querySelectorAll('#filter-consumables .intake-filter-chip').forEach(c => c.classList.toggle('active', c === chip));
-      this.renderList('consumables');
-    });
+    for (const type of ['materials', 'consumables'])
+      document.getElementById(`filter-${type}`).addEventListener('click', e => {
+        const chip = e.target.closest('[data-filter]'); if (chip) this.setFilter(type, chip.dataset.filter);
+      });
 
     // Settings button — opens settings panel (test mode toggle + reconnect option)
     document.getElementById('btn-setup').addEventListener('click', () => this.openPanel('wh-settings-panel'));
@@ -228,7 +220,14 @@ const Warehouse = {
       FirebaseConfig.setTestMode(!FirebaseConfig.isTestMode());
       location.reload();
     });
-    document.getElementById('s-device-name').addEventListener('change', e => { const v = e.target.value.trim(); if (v) WarehouseDeviceName.save(v); else e.target.value = WarehouseDeviceName.get(); });
+    const dn = document.getElementById('s-device-name');
+    dn.addEventListener('change', () => {
+      const v = dn.value.trim();
+      if (!v) { dn.value = WarehouseDeviceName.get(); return; }
+      WarehouseDeviceName.save(v); dn.defaultValue = v;
+      const pill = document.querySelector('.header .role-pill'); if (pill) pill.textContent = v;
+    });
+    dn.addEventListener('keydown', e => { if (e.key === 'Enter') dn.blur(); });
 
     Strip.watch(document.getElementById('filter-materials'), 'wh-mat');
     Strip.watch(document.getElementById('filter-consumables'), 'wh-cons');
@@ -258,6 +257,15 @@ const Warehouse = {
 
   openPanel(id)  { document.getElementById(id)?.classList.add('open'); },
   closePanel(id) { document.getElementById(id)?.classList.remove('open'); },
+
+  setFilter(type, filter) {
+    this._filters[type] = filter;
+    document.querySelectorAll(`#filter-${type} .intake-filter-chip`).forEach(c => {
+      const on = c.dataset.filter === filter;
+      c.classList.toggle('active', on); c.setAttribute('aria-pressed', on);
+    });
+    this.renderList(type);
+  },
 
   setTab(tab) {
     this.activeTab = tab;
@@ -483,6 +491,15 @@ const Warehouse = {
       by:     () => WarehouseDeviceName.get() || 'Warehouse',
       find:   groupKey => this._findGroup(groupKey),
       redraw: group => this.renderList(!group.entries[0].order.type || group.entries[0].order.type === 'materials' ? 'materials' : 'consumables'),
+      // "Show" on the toast after a Confirm: the delivery, where it went, opened.
+      show: (group, filter) => {
+        const type = !group.entries[0].order.type || group.entries[0].order.type === 'materials' ? 'materials' : 'consumables';
+        this.setTab(type);
+        this._openOrders.add(filter === 'backorder' ? `${group.groupKey}|||bo` : group.groupKey);
+        this.setFilter(type, filter);
+        const safe = (filter === 'backorder' ? `${group.groupKey}|||bo` : group.groupKey).replace(/[^a-zA-Z0-9]/g, '_');
+        document.getElementById(`intake-card-${safe}`)?.scrollIntoView({ block: 'nearest' });
+      },
     };
   },
   onConfirm(cardKey)  { return Intake.saveCard(this._host(), cardKey, true); },

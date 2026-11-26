@@ -1,4 +1,4 @@
-// auth.js — v2026-11-26.4
+// auth.js — v2026-11-26.5
 //
 // Sign-in (Firebase email + password, compat SDK) and WHO IS WHAT, on every
 // page. The same model as the production board:
@@ -268,7 +268,7 @@ const Auth = {
       const master = this.isMaster(), role = this.role();
       const sub = master ? `${Access.ROLE_LABEL[role]}: ${Access.ROLE_WORDS[role]}` : (this._accessState === 'missing' ? 'No accounts list exists yet' : '');
       body = `<div><div class="settings-row-label">${esc(this._user.email || '')}${master ? ' <span class="master-chip">Master</span>' : ''}</div>${sub ? `<div class="settings-row-sub">${esc(sub)}</div>` : ''}</div>
-         <div class="settings-acts"><button class="btn-sm" data-auth-password>Password</button><button class="btn-sm" data-auth-signout>Sign out</button></div>`;
+         <div class="settings-acts"><button class="btn-sm" data-auth-password>Change password</button><button class="btn-sm" data-auth-signout>Sign out</button></div>`;
     }
     const setup = this._user && this._accessState === 'missing' ? `
           <div class="settings-row">
@@ -302,34 +302,43 @@ const Auth = {
     const dn = this.deviceName;
     Boot.gone();
     this._gate(`
-        <div class="success-card auth-card" id="auth-card" style="max-width:380px;text-align:left">
+        <form class="success-card auth-card" id="auth-card" style="max-width:380px;text-align:left" novalidate>
           <div class="auth-logo"></div>
           <h3 style="text-align:center">Sign in</h3>
           <p style="text-align:center;margin-bottom:14px">Use the account set up for this device.</p>
-          ${dn ? `<div class="setup-field"><label>Device name</label><input id="auth-device" type="text" autocomplete="off" value="${esc(dn.get())}"></div>` : ''}
-          <div class="setup-field"><label>Email</label><input id="auth-email" type="email" autocomplete="username" autocapitalize="none" spellcheck="false"></div>
-          <div class="setup-field"><label>Password</label><input id="auth-pass" type="password" autocomplete="current-password"></div>
-          <div class="auth-err" id="auth-err"></div>
-          <button class="btn btn-primary" id="auth-submit" style="width:100%;margin-top:4px"><i class="ti ti-login"></i> Sign in</button>
-        </div>`);
-    const err = msg => { document.getElementById('auth-err').textContent = msg || ''; };
+          ${dn ? `<div class="setup-field"><label for="auth-device">Device name</label><input id="auth-device" type="text" autocomplete="off" autocapitalize="words" value="${esc(dn.get())}"></div>` : ''}
+          <div class="setup-field"><label for="auth-email">Email</label><input id="auth-email" type="email" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false"></div>
+          <div class="setup-field"><label for="auth-pass">Password</label><input id="auth-pass" type="password" autocomplete="current-password"></div>
+          <div class="auth-err" id="auth-err" role="alert"></div>
+          <button type="submit" class="btn btn-primary" id="auth-submit" style="width:100%;margin-top:4px"><i class="ti ti-login"></i> Sign in</button>
+        </form>`);
+    const $ = id => document.getElementById(id);
+    const err = msg => { $('auth-err').textContent = msg || ''; };
     const submit = async () => {
-      const email  = document.getElementById('auth-email').value.trim();
-      const pass   = document.getElementById('auth-pass').value;
-      const device = dn ? document.getElementById('auth-device').value.trim() : '';
-      if (dn && !device) { err('Enter a device name.'); return; }
-      if (!email || !pass) { err('Enter the email and password.'); return; }
-      const back = busyBtn(document.getElementById('auth-submit'), 'Signing in…'); err('');
+      const email  = $('auth-email').value.trim();
+      const pass   = $('auth-pass').value;
+      const device = dn ? $('auth-device').value.trim() : '';
+      if (dn && !device) { err('Enter a device name.'); refuseField($('auth-device')); return; }
+      if (!email || !pass) { err('Enter the email and password.'); refuseField(email ? $('auth-pass') : $('auth-email')); return; }
+      const back = busyBtn($('auth-submit'), 'Signing in…'); err('');
       try {
         await this.signIn(email, pass);
         if (dn) dn.save(device);
         this._reload();
-      } catch (e) { err(this._friendly(e)); back(); }
+      } catch (e) {
+        err(this._friendly(e)); back();
+        if (e && e.code === 'auth/invalid-email') refuseField($('auth-email'));
+        else if (this._badCredential(e)) refuseField($('auth-pass'));
+      }
     };
-    document.getElementById('auth-submit').addEventListener('click', submit);
-    document.getElementById('auth-pass').addEventListener('keydown', e => { if (e.key === 'Enter') submit(); });
-    document.getElementById('auth-email').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('auth-pass').focus(); });
-    (dn && !dn.get() ? document.getElementById('auth-device') : document.getElementById('auth-email')).focus();
+    // Enter in a field goes on to the next empty one, then signs in.
+    $('auth-card').addEventListener('submit', e => {
+      e.preventDefault();
+      const at = document.activeElement, empty = [...$('auth-card').querySelectorAll('input')].find(i => !i.value.trim());
+      if (empty && at && at.tagName === 'INPUT' && at !== empty) { empty.focus(); return; }
+      submit();
+    });
+    (dn && !dn.get() ? $('auth-device') : $('auth-email')).focus();
   },
 
   // ── Change password dialog ────────────────────────────────────────────
@@ -347,25 +356,29 @@ const Auth = {
           <div class="setup-field"><label>Current password</label><input id="pw-current" type="password" autocomplete="current-password"></div>
           <div class="setup-field"><label>New password</label><input id="pw-new" type="password" autocomplete="new-password" placeholder="At least ${this.PASSWORD_MIN} characters"></div>
           <div class="setup-field"><label>New password, again</label><input id="pw-again" type="password" autocomplete="new-password"></div>
-          <div class="auth-err" id="pw-err"></div>
+          <div class="auth-err" id="pw-err" role="alert"></div>
           <button class="btn btn-primary" id="pw-save" style="width:100%;margin-top:4px"><i class="ti ti-key"></i> Change password</button>
-          <button class="btn btn-outline" id="pw-cancel" style="width:100%;margin-top:8px">Cancel</button>
+          <button class="btn btn-outline" id="pw-cancel" data-esc style="width:100%;margin-top:8px">Keep current password</button>
         </div>
       </div>`;
     const $ = id => document.getElementById(id);
     const err = msg => { $('pw-err').textContent = msg || ''; };
     const submit = async () => {
       const current = $('pw-current').value, next = $('pw-new').value, again = $('pw-again').value;
-      if (!current) return err('Type the current password first.');
-      if (next.length < this.PASSWORD_MIN) return err(`The new password needs at least ${this.PASSWORD_MIN} characters.`);
-      if (next !== again) return err('The two new passwords are not the same.');
-      if (next === current) return err('That is the current password.');
+      if (!current) { refuseField($('pw-current')); return err('Type the current password first.'); }
+      if (next.length < this.PASSWORD_MIN) { refuseField($('pw-new')); return err(`The new password needs at least ${this.PASSWORD_MIN} characters.`); }
+      if (next !== again) { refuseField($('pw-again')); return err('The two new passwords are not the same.'); }
+      if (next === current) { refuseField($('pw-new')); return err('That is the current password.'); }
       const back = busyBtn($('pw-save'), 'Changing…'); err('');
       try {
         await this.changePassword(current, next);
         ow.innerHTML = '';
         this._toast('Password changed. Use the new one from now on.');
-      } catch (e) { err(this._friendly(e)); back(); }
+      } catch (e) {
+        err(this._friendly(e, 'password')); back();
+        if (this._badCredential(e)) refuseField($('pw-current'));
+        else if (e && e.code === 'auth/weak-password') refuseField($('pw-new'));
+      }
     };
     $('pw-save').addEventListener('click', submit);
     for (const id of ['pw-current', 'pw-new', 'pw-again']) $(id).addEventListener('keydown', e => { if (e.key === 'Enter') submit(); });
@@ -376,18 +389,22 @@ const Auth = {
   _toast(msg) { toast(msg); },
 
   // Firebase's error codes are not sentences. Make them ones.
-  _friendly(e) {
+  _badCredential(e) {
+    return ['auth/user-not-found', 'auth/wrong-password', 'auth/invalid-credential', 'auth/invalid-login-credentials'].includes((e && e.code) || '');
+  },
+  // where: 'password' (changing it) or 'account' (making one); otherwise signing in.
+  _friendly(e, where) {
     const code = (e && e.code) || '';
     if (code === 'auth/invalid-email') return "That email address doesn't look right.";
-    if (['auth/user-not-found', 'auth/wrong-password', 'auth/invalid-credential', 'auth/invalid-login-credentials'].includes(code))
-      return 'Email or password is incorrect.';
-    if (code === 'auth/weak-password') return 'Firebase wants a stronger password — at least six characters.';
+    if (this._badCredential(e)) return where === 'password' ? 'The current password is not right.' : 'Email or password is incorrect.';
+    if (code === 'auth/weak-password') return `The password needs at least ${this.PASSWORD_MIN} characters.`;
     if (code === 'auth/email-already-in-use') return 'That address already has a Firebase user.';
     if (code === 'auth/operation-not-allowed') return 'Making accounts from the app is switched off in the Firebase console (Authentication → Settings → User actions → Enable create).';
     if (code === 'auth/requires-recent-login') return 'Sign out, sign in again, and then change it.';
-    if (code === 'auth/too-many-requests') return 'Too many attempts — wait a few minutes and try again.';
-    if (code === 'auth/network-request-failed') return 'No connection — check the wifi and try again.';
-    if (code === 'auth/user-disabled') return 'This account has been disabled.';
-    return (e && e.message) || 'Sign-in failed.';
+    if (code === 'auth/too-many-requests') return 'Too many attempts. Wait a few minutes, then try again.';
+    if (code === 'auth/network-request-failed') return 'No connection. Check the Wi-Fi, then try again.';
+    if (code === 'auth/user-disabled') return 'This account has been switched off.';
+    console.error('Auth:', e);
+    return where === 'password' ? 'Password not changed. Try again.' : where === 'account' ? 'Account not made. Try again.' : 'Not signed in. Try again.';
   },
 };

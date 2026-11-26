@@ -1,4 +1,4 @@
-// firebase-sync.js — v2026-11-26.4
+// firebase-sync.js — v2026-11-26.5
 let _db = null, _configured = false, _config = null, _second = null;
 
 // Signed-in email for stamping writes (null when the device isn't signed in —
@@ -682,7 +682,7 @@ const DB = {
   listenMaterialStock(callback) {
     if (!this.isReady()) return ()=>{};
     return _liveList('Recorded counts', () => _db.collection('material_stock'),
-      snap => snap.docs.map(d => ({ _id: d.id, ...d.data() })), callback);
+      snap => snap.docs.map(d => ({ _id: d.id, ...d.data({ serverTimestamps: 'estimate' }) })), callback);
   },
 
   // Records a stocktake — one item (progressive tick) or many (Review & submit).

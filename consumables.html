@@ -15,8 +15,8 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" media="print" onload="this.media='all'">
   <link rel="stylesheet" href="fonts/tabler-icons.min.css">
-  <link rel="stylesheet" href="css/style.css?v=2026-11-26.4">
-  <link rel="stylesheet" href="css/themes.css?v=2026-11-26.4">
+  <link rel="stylesheet" href="css/style.css?v=2026-11-26.5">
+  <link rel="stylesheet" href="css/themes.css?v=2026-11-26.5">
   <style>
     .cons-stock-badge {
       font-size: 11px; font-family: var(--mono); padding: 2px 8px;
@@ -46,6 +46,9 @@
     .cons-tile-img img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
     .cons-tile-icon { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 46px; }
     .cons-tile-badge { position: absolute; top: 6px; right: 6px; }
+    /* No photo yet: a short band in the category's colour instead of a square */
+    .cons-tile.no-photo .cons-tile-img { aspect-ratio: auto; height: 88px; }
+    .cons-tile.no-photo .cons-tile-icon { font-size: 34px; }
     /* Count bubble — how many of this you've picked, readable at a glance */
     .cons-tile-qty {
       position: absolute; top: 6px; left: 6px; min-width: 26px; height: 26px; padding: 0 7px;
@@ -139,9 +142,9 @@
 <!-- APP CHECK: remove this line to disable App Check (also remove init block in firebase-sync.js) -->
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-check-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
-<script src="js/shared.js?v=2026-11-26.4"></script>
-<script src="js/firebase-sync.js?v=2026-11-26.4"></script>
-<script src="js/auth.js?v=2026-11-26.4"></script>
+<script src="js/shared.js?v=2026-11-26.5"></script>
+<script src="js/firebase-sync.js?v=2026-11-26.5"></script>
+<script src="js/auth.js?v=2026-11-26.5"></script>
 <script>
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.getRegistrations().then(rs => rs.forEach(r => r.unregister()));
@@ -159,6 +162,7 @@ const ConsApp = {
   _stockReady: false,
   _checkoutBusy: false,  // in-flight guard — Enter key bypasses the disabled button
   _noImage: new Set(),   // stock keys whose photo 404'd this session — don't re-request
+  _photos: new Set(),    // stock keys that have a photo: images/consumables/photos.txt
   // Barcode setup mode (toggled in Settings): scans LINK barcodes to items instead of
   // signing anything out — for the manager walking through initial setup on this iPad
   // (the scanner is fixed here). Off = tradesman mode: unknown scans never prompt.
@@ -175,9 +179,22 @@ const ConsApp = {
     this.consumables = this._baseConsumables;
     this.renderShell();
     Boot.ready('page');
+    this._loadPhotos();
     this.startStockListening();
     this.startConnectionStatus();
     this.startVersionCheck();
+  },
+
+  // Only photos listed in photos.txt are asked for: a tile never makes a request that 404s.
+  async _loadPhotos() {
+    try {
+      const r = await fetch('images/consumables/photos.txt?nocache=' + Date.now());
+      if (!r.ok) return;
+      const keys = (await r.text()).split(/\r?\n/).map(l => l.trim().toLowerCase())
+        .filter(l => l && !l.startsWith('#')).map(l => l.replace(/\.jpe?g$/, ''));
+      this._photos = new Set(keys);
+      if (keys.length) this.renderList();
+    } catch {}
   },
 
   // Firebase itself could not be reached (no network at first load, the SDK
@@ -244,7 +261,7 @@ const ConsApp = {
           <div class="panel-header">
             <button class="back-btn" id="btn-close-settings"><i class="ti ti-chevron-left"></i>Back</button>
             <div class="panel-title">Settings</div>
-            <button class="btn-sm btn-sm-save" id="btn-save-settings">Save</button>
+            <div class="panel-spacer"></div>
           </div>
           <div class="panel-scroll"><div class="panel-col" style="gap:20px" id="settings-body"></div></div>
         </div>
@@ -274,7 +291,7 @@ const ConsApp = {
       zero: true,
       item: el => this.consumables.find(m => m.id == el.dataset.qid),
       get:  el => this.get(+el.dataset.qid),
-      set:  (el, qty) => this.set(+el.dataset.qid, qty),
+      set:  (el, qty) => { this.set(+el.dataset.qid, qty); this._limit(+el.dataset.qid, qty, el); },
       live: el => {
         const tile = el.closest('.cons-tile'), qty = this.get(+el.dataset.qid);
         if (tile) {
@@ -290,7 +307,7 @@ const ConsApp = {
     // <img> so the category icon beneath shows through. Error events don't bubble — capture.
     document.getElementById('cons-mat-list').addEventListener('error', e => {
       const img = e.target;
-      if (img.tagName === 'IMG' && img.dataset.sid) { this._noImage.add(img.dataset.sid); img.remove(); }
+      if (img.tagName === 'IMG' && img.dataset.sid) { this._noImage.add(img.dataset.sid); img.closest('.cons-tile')?.classList.add('no-photo'); img.remove(); }
     }, true);
     document.getElementById('cons-search').addEventListener('input', e => {
       if (searchScope(this, e.target.value.trim(), '_activeCat', '_activeSub')) this.renderTabs();
@@ -304,7 +321,6 @@ const ConsApp = {
     });
     document.getElementById('btn-settings')      .addEventListener('click', () => { this._populateSettings(); this.openPanel('settings-panel'); });
     document.getElementById('btn-close-settings').addEventListener('click', () => this.closePanel('settings-panel'));
-    document.getElementById('btn-save-settings') .addEventListener('click', () => this.saveSettings());
 
     this._activeCat = null; this._activeSub = null;
     this._cats = []; this._subs = [];
@@ -423,10 +439,20 @@ const ConsApp = {
     if (avail !== null) qty = Math.min(qty, avail);
     if (qty <= 0) delete this._items[id]; else this._items[id]=qty;
   },
-  adj(id,d)      { this.set(id, round2(this.get(id)+d)); this._changed(); },
+  // quiet: the caller says what happened itself (a scan).
+  adj(id,d,quiet) { const want = round2(this.get(id)+d); this.set(id, want); if (!quiet) this._limit(id, want); this._changed(); },
   // Secondary "take a box" action for boxed items — adds a whole box's worth of
   // individual units (clamped to available stock by set()). Individual +/− stays primary.
-  addBox(id)     { const m = this.consumables.find(x=>x.id==id); if (!hasBoxTracking(m)) return; this.set(id, this.get(id) + m.boxSize); this._changed(); },
+  addBox(id,quiet){ const m = this.consumables.find(x=>x.id==id); if (!hasBoxTracking(m)) return; const want = this.get(id) + m.boxSize; this.set(id, want); if (!quiet) this._limit(id, want); this._changed(); },
+  // Asked for more than there is: it was capped, and that is said.
+  _limit(id, want, field) {
+    if (this.get(id) >= want) return false;
+    const m = this.consumables.find(x => x.id == id), a = m ? this._availableQty(m) : null;
+    if (a === null) return false;
+    const msg = a > 0 ? `Only ${a} left` : 'None left';
+    if (field) QtyField._note(field, msg); else toast(msg, true);
+    return true;
+  },
 
   // ── BARCODE SCANNING ──────────────────────────────────────────────────
   // The scanner lives at the door, so people arrive holding the thing they're taking:
@@ -446,7 +472,7 @@ const ConsApp = {
     if (!m) { this._scanProblem('Barcode not set up. See the manager.', code); return; }
     const isBoxed = hasBoxTracking(m);
     const before  = this.get(m.id);
-    if (isBoxed) this.addBox(m.id); else this.adj(m.id, 1);
+    if (isBoxed) this.addBox(m.id, true); else this.adj(m.id, 1, true);
     const added = this.get(m.id) - before;
     if (added <= 0) {
       const avail = this._availableQty(m);
@@ -514,7 +540,7 @@ const ConsApp = {
             <span style="font-family:var(--mono);font-size:12px">${esc(code)}</span></p>
           <input class="checkout-name-input" type="search" id="scan-link-search" placeholder="Search items…" autocomplete="off" style="margin-bottom:8px">
           <div class="scan-link-list" id="scan-link-list">${rows}</div>
-          <button class="btn btn-outline" id="btn-scan-link-cancel" style="width:100%;margin-top:10px">Cancel</button>
+          <button class="btn btn-outline" id="btn-scan-link-cancel" data-esc style="width:100%;margin-top:10px">Not now</button>
         </div>
       </div>`;
     const search = document.getElementById('scan-link-search');
@@ -563,6 +589,7 @@ const ConsApp = {
   _updateBadge() {
     const b = document.getElementById('cons-badge'); if (!b) return;
     const n = this.count(); setCount(b, n);
+    document.getElementById('btn-cons-review')?.classList.toggle('is-idle', n === 0);
     const c = document.getElementById('btn-cons-clear-main'); if (c) c.hidden = n === 0;
     this._keep();
   },
@@ -593,6 +620,10 @@ const ConsApp = {
     if (!q.trim()) filtered = [...filtered]; // the list is shared; a search result is its own
     filtered.sort((a,b)=>(order[this._stockStatus(a)]??0)-(order[this._stockStatus(b)]??0)||descCompare(a.description,b.description));
 
+    if (!this.consumables.length && Data.consFailed) {
+      list.innerHTML = `<div class="empty-state"><i class="ti ti-wifi-off"></i><p>Can't load the consumables list. Check the Wi-Fi, then tap Reload.</p><button class="btn btn-primary" style="width:auto;margin-top:14px" onclick="Live.reload(this)">Reload</button></div>`;
+      return;
+    }
     if (!this._stockReady) { list.innerHTML = skeleton(8, 'tiles'); return; }
     if (!filtered.length) {
       list.innerHTML = note || `<div class="empty-state"><i class="ti ti-package-off"></i><p>No consumables in stock.</p></div>`;
@@ -619,8 +650,8 @@ const ConsApp = {
       // Photo if present (images/consumables/<key>.jpg); the category icon sits beneath
       // and shows through if the photo is missing. A failed photo is remembered for the
       // session (_noImage) so it isn't re-requested on every re-render.
-      const imgTag = this._noImage.has(sid) ? ''
-        : `<img src="images/consumables/${esc(sid)}.jpg" alt="" loading="lazy" data-sid="${esc(sid)}">`;
+      const hasPhoto = this._photos.has(sid) && !this._noImage.has(sid);
+      const imgTag = hasPhoto ? `<img src="images/consumables/${esc(sid)}.jpg" alt="" loading="lazy" data-sid="${esc(sid)}">` : '';
       // The whole tile is the tap target — tap adds one, so you can walk the shelf and
       // tap what you need. The stepper/box controls below opt out of that (they stop the
       // click), and the count bubble shows what's picked at a glance.
@@ -628,7 +659,7 @@ const ConsApp = {
       const bcCount = (this._stockFor(sid)?.barcodes || []).length;
       const bcBadge = this._barcodeSetup
         ? `<span class="cons-bc-flag ${bcCount ? 'has' : 'none'}"><i class="ti ti-barcode"></i>${bcCount ? ' ' + bcCount : ''}</span>` : '';
-      return `<div class="cons-tile ${inOrder?'in-order':''} ${isZero?'out-of-stock':''}" data-tile="${m.id}">
+      return `<div class="cons-tile ${inOrder?'in-order':''} ${isZero?'out-of-stock':''} ${hasPhoto?'':'no-photo'}" data-tile="${m.id}">
         <div class="cons-tile-img">
           ${catTile(m.category, 'cons-tile-icon')}
           ${imgTag}
@@ -719,24 +750,21 @@ const ConsApp = {
         </div>
       </div>`;
     document.getElementById('btn-toggle-bc-setup').addEventListener('click', () => this._toggleBarcodeSetup());
-    document.getElementById('s-device-name').addEventListener('change', e => { const v = e.target.value.trim(); if (v) { ConsumablesDeviceName.save(v); const chip = document.querySelector('.device-chip'); if (chip) chip.innerHTML = `<i class="ti ti-device-ipad" style="font-size:12px"></i> ${esc(v)}`; } else e.target.value = ConsumablesDeviceName.get(); });
+    const dn = document.getElementById('s-device-name');
+    dn.addEventListener('change', () => {
+      const v = dn.value.trim();
+      if (!v) { dn.value = ConsumablesDeviceName.get(); return; }
+      ConsumablesDeviceName.save(v); dn.defaultValue = v;
+      const chip = document.querySelector('.device-chip'); if (chip) chip.innerHTML = `<i class="ti ti-device-ipad" style="font-size:12px"></i> ${esc(v)}`;
+    });
+    dn.addEventListener('keydown', e => { if (e.key === 'Enter') dn.blur(); });
+    document.getElementById('s-theme').addEventListener('change', e => Theme.set(e.target.value));
+    for (const [id, key] of [['s-natural-sort', 'naturalSort'], ['s-fraction-glyphs', 'fractionGlyphs'], ['s-unit-search', 'unitAwareSearch'], ['s-fuzzy-search', 'fuzzySearch']])
+      document.getElementById(id).addEventListener('change', e => { Settings.save({ [key]: e.target.checked }); this.renderList(); });
     document.getElementById('btn-toggle-test-mode').addEventListener('click', () => {
       FirebaseConfig.setTestMode(!FirebaseConfig.isTestMode());
       location.reload();
     });
-  },
-
-  saveSettings() {
-    Theme.set(document.getElementById('s-theme')?.value ?? Theme.get());   // per-device, applied immediately
-    Settings.save({
-      naturalSort:     document.getElementById('s-natural-sort')?.checked ?? true,
-      fractionGlyphs:  document.getElementById('s-fraction-glyphs')?.checked ?? false,
-      unitAwareSearch: document.getElementById('s-unit-search')?.checked ?? true,
-      fuzzySearch:     document.getElementById('s-fuzzy-search')?.checked ?? true,
-    });
-    this.renderList();
-    const btn = document.getElementById('btn-save-settings');
-    if (btn) { btn.textContent = '✓ Saved'; setTimeout(() => btn.textContent = 'Save', 1500); }
   },
 
   // Recently-used sign-out names (device-local) — tap a chip instead of retyping.
@@ -804,11 +832,9 @@ const ConsApp = {
           <div id="signout-warning">${warning}</div>
           <div class="signout-item-list" id="signout-item-list">${itemRows}</div>
           <button class="btn btn-primary" id="btn-overlay-confirm" style="width:100%;margin-top:12px">
-            <i class="ti ti-check"></i> Confirm Item Sign Out
+            <i class="ti ti-check"></i> Confirm sign out
           </button>
-          <button class="btn btn-danger" id="btn-overlay-cancel" style="width:100%;margin-top:8px">
-            <i class="ti ti-x"></i> Cancel
-          </button>
+          <button class="btn btn-outline" id="btn-overlay-cancel" data-esc style="width:100%;margin-top:8px">Back to items</button>
         </div>
       </div>`;
 
@@ -834,7 +860,7 @@ const ConsApp = {
     QtyField.attach(document.getElementById('signout-item-list'), '[data-so-qid]', {
       item: el => this.consumables.find(m => m.id == el.dataset.soQid),
       get:  el => this.get(+el.dataset.soQid),
-      set:  (el, qty) => this.set(+el.dataset.soQid, qty),
+      set:  (el, qty) => { this.set(+el.dataset.soQid, qty); this._limit(+el.dataset.soQid, qty, el); },
       live: () => { this._updateBadge(); this.renderList(); },
     });
 
@@ -850,9 +876,22 @@ const ConsApp = {
     const list = document.getElementById('signout-item-list'); if (!list) return;
     if (!this.count()) { document.getElementById('overlay-wrap').innerHTML = ''; return; }
     const { rows, warning } = this._signOutParts();
+    const w = document.getElementById('signout-warning'); if (w) w.innerHTML = warning;
+    // The same lines as before: change them where they are, so nothing under a finger moves.
+    const items = this.items();
+    if (items.map(i => String(i.id)).join() === [...list.querySelectorAll('[data-so-qid]')].map(el => el.dataset.soQid).join()) {
+      for (const i of items) {
+        const inp = list.querySelector(`[data-so-qid="${i.id}"]`), row = inp.closest('.signout-item-row');
+        const avail = this._availableQty(i);
+        row.classList.toggle('over-limit', avail !== null && i.qty > avail);
+        if (inp !== document.activeElement) { inp.value = i.qty; inp.defaultValue = String(i.qty); }
+        if (avail !== null) inp.max = avail;
+        const u = row.querySelector('.signout-item-unit'); if (u) u.textContent = `${i.qtyType || ''}${avail !== null ? ` · ${avail} in stock` : ''}`;
+      }
+      return;
+    }
     const restoreFocus = captureInputFocus();
     list.innerHTML = rows;
-    const w = document.getElementById('signout-warning'); if (w) w.innerHTML = warning;
     restoreFocus();
   },
 
@@ -871,7 +910,7 @@ const ConsApp = {
     const items = this.items();
     if (!items.length) { document.getElementById('overlay-wrap').innerHTML=''; return; }
     if (this._connState.connected === false || navigator.onLine === false) {
-      inlineError('signout-error', 'Offline. Connect, then tap Confirm Item Sign Out.');
+      inlineError('signout-error', 'Offline. Connect, then tap Confirm sign out.');
       return;
     }
     for (const item of items) {
@@ -918,21 +957,12 @@ const ConsApp = {
         this._checkoutBusy = false;
         this._renderSignOutOverlay();      // what is left, with the name still in it
         document.getElementById('overlay-tradesman-name').value = tradesmanName;
-        inlineError('signout-error', `Not signed out. ${errors.join('. ')}. Tap Confirm Item Sign Out to try again.`);
+        inlineError('signout-error', `Not signed out. ${errors.join('. ')}. Tap Confirm sign out to try again.`);
         return;
       }
 
       this._saveRecentName(tradesmanName);
-      ow.innerHTML = `
-        <div class="success-overlay">
-          <div class="success-card">
-            <div class="success-icon green"><i class="ti ti-circle-check"></i></div>
-            <h3>Item sign out complete!</h3>
-            <p>Stock levels have been updated. Thank you, ${esc(tradesmanName)}.</p>
-            <button class="btn btn-primary" id="btn-done-checkout">Done</button>
-          </div>
-        </div>`;
-      document.getElementById('btn-done-checkout').addEventListener('click', () => { ow.innerHTML=''; });
+      doneMessage(ow, { title: 'Signed out', text: `${items.length} item${items.length !== 1 ? 's' : ''} signed out to ${tradesmanName}. Stock updated.` });
     } finally {
       this._checkoutBusy = false;
     }

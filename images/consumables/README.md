@@ -1,8 +1,9 @@
 # Consumables photos
 
-Drop a photo here for any consumable and it appears on the worker Consumables
-Checkout grid. No photo? The tile falls back to the category-coloured icon, so the
-grid always works — it just gets clearer as photos are added.
+Drop a photo here for any consumable, then add its file name to `photos.txt` (one
+per line), and it appears on the worker Consumables Checkout grid. Only photos listed
+in `photos.txt` are asked for. No photo? The tile shows a short band with the
+category-coloured icon instead, so the grid always works and stays compact.
 
 ## Naming
 

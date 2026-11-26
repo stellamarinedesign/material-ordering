@@ -1,0 +1,2 @@
+# Consumables that have a photo in this folder, one file name per line (see README.md).
+# The sign-out grid only asks for the photos listed here.
