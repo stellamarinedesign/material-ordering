@@ -12,8 +12,8 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" media="print" onload="this.media='all'">
   <link rel="stylesheet" href="fonts/tabler-icons.min.css">
-  <link rel="stylesheet" href="css/style.css?v=2026-11-26.5">
-  <link rel="stylesheet" href="css/themes.css?v=2026-11-26.5">
+  <link rel="stylesheet" href="css/style.css?v=2026-11-26.6">
+  <link rel="stylesheet" href="css/themes.css?v=2026-11-26.6">
 </head>
 <body>
 <!-- Start-up cover: painted before any script; see Boot in js/shared.js -->
@@ -33,12 +33,12 @@
 <!-- APP CHECK: remove this line to disable App Check (also remove init block in firebase-sync.js) -->
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-check-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
-<script src="js/shared.js?v=2026-11-26.5"></script>
-<script src="js/firebase-sync.js?v=2026-11-26.5"></script>
-<script src="js/auth.js?v=2026-11-26.5"></script>
-<script src="js/intake.js?v=2026-11-26.5"></script>
-<script src="js/catalogue.js?v=2026-11-26.5"></script>
-<script src="js/accounts.js?v=2026-11-26.5"></script>
+<script src="js/shared.js?v=2026-11-26.6"></script>
+<script src="js/firebase-sync.js?v=2026-11-26.6"></script>
+<script src="js/auth.js?v=2026-11-26.6"></script>
+<script src="js/intake.js?v=2026-11-26.6"></script>
+<script src="js/catalogue.js?v=2026-11-26.6"></script>
+<script src="js/accounts.js?v=2026-11-26.6"></script>
 <!-- Vendored xlsx-js-style (SheetJS fork with cell styling) — stocktake Excel exports -->
 <script src="js/xlsx-style.min.js"></script>
 <!-- Vendored ExcelJS — used only for the consumables export, which embeds drawn
@@ -88,7 +88,9 @@ const Manager = {
   // marks anything.
   _emailDraft: null,
   _emailOpen:  null,
-  _cartWaiting: { no: [], co: [] },   // kept cart lines whose item isn't in the list (yet)
+  _cartWaiting: { no: [], co: [], receive: [] },   // kept cart lines whose item isn't in the list (yet)
+  _receiveRef: '',                    // Receive Stock's reference, kept with its lines
+  _cartSent: { no: [], co: [] },      // categories already emailed from a cart that still has lines
   _noNote:    '',           // note to self/other managers, typed on the New Order confirmation
   _noteEditing: new Set(),  // queue cards with the note editor open
 
@@ -182,6 +184,7 @@ const Manager = {
     this._loadStaged();
     this.renderShell();
     this._loadCarts();
+    this._loadMst();
     this._loadOwed();
     this._loadEmailOpen();
     Boot.ready('page');
@@ -193,9 +196,6 @@ const Manager = {
     this.startCatalogueWatch();
     this.startConnectionStatus();
     this.startVersionCheck();
-    if ('Notification' in window && Notification.permission === 'default') {
-      Notification.requestPermission();
-    }
   },
 
   // ── LIVE STATUS DOT (3-state: Live / Update Available / Offline) ──
@@ -398,9 +398,9 @@ const Manager = {
         <!-- HISTORY VIEW -->
         <div id="view-history" style="display:none;flex:1;flex-direction:column;overflow:hidden;min-height:0">
           <div class="history-filter-bar" id="history-filter-bar">
-            <div class="history-filter-chip" id="history-clear-filter" style="display:none">
+            <button type="button" class="history-filter-chip" id="history-clear-filter" style="display:none" aria-label="Show every item">
               <i class="ti ti-x"></i><span id="history-filter-label">All items</span>
-            </div>
+            </button>
             <input type="search" id="history-item-search" placeholder="Filter by item…" autocomplete="off"
               style="width:150px;height:36px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);padding:0 10px;font-size:12px;color:var(--text);outline:none">
             <input type="search" id="history-person-search" placeholder="Filter by checkout name…" autocomplete="off"
@@ -416,11 +416,11 @@ const Manager = {
           <div class="col" style="padding-top:10px;padding-bottom:0;flex-shrink:0">
             <div style="display:flex;align-items:center;gap:8px">
               <div class="intake-filter-bar" id="intake-filter-mat" style="flex:1">
-                <div class="intake-filter-chip" data-filter="all">All</div>
-                <div class="intake-filter-chip active" data-filter="outstanding"><i class="ti ti-clock"></i> Outstanding</div>
-                <div class="intake-filter-chip" data-filter="backorder"><i class="ti ti-clock-pause"></i> Back Orders</div>
-                <div class="intake-filter-chip" data-filter="completed"><i class="ti ti-circle-check"></i> Completed</div>
-                <div class="intake-filter-chip" data-filter="cancelled"><i class="ti ti-ban"></i> Cancelled</div>
+                <button type="button" aria-pressed="false" class="intake-filter-chip" data-filter="all">All</button>
+                <button type="button" aria-pressed="true" class="intake-filter-chip active" data-filter="outstanding"><i class="ti ti-clock"></i> Outstanding</button>
+                <button type="button" aria-pressed="false" class="intake-filter-chip" data-filter="backorder"><i class="ti ti-clock-pause"></i> Back Orders</button>
+                <button type="button" aria-pressed="false" class="intake-filter-chip" data-filter="completed"><i class="ti ti-circle-check"></i> Completed</button>
+                <button type="button" aria-pressed="false" class="intake-filter-chip" data-filter="cancelled"><i class="ti ti-ban"></i> Cancelled</button>
               </div>
               <button class="btn-sm" id="btn-intake-edit-mat"><i class="ti ti-pencil"></i> Edit deliveries</button>
             </div>
@@ -436,7 +436,7 @@ const Manager = {
               <button class="btn btn-danger" id="btn-intake-cancel-mat" disabled><i class="ti ti-ban"></i> Cancel selected</button>
               <button class="btn btn-primary" id="btn-intake-combine-mat" disabled><i class="ti ti-git-merge"></i> Combine selected</button>
               <button class="btn btn-danger" id="btn-intake-delete-mat" disabled style="display:none"><i class="ti ti-trash"></i> Delete selected</button>
-              <button class="btn btn-outline" id="btn-intake-editdone-mat"><i class="ti ti-check"></i> Done</button>
+              <button class="btn btn-outline" id="btn-intake-editdone-mat"><i class="ti ti-check"></i> Finish editing</button>
             </div>
           </div>
         </div>
@@ -445,9 +445,9 @@ const Manager = {
         <div id="view-stocktake" style="display:none;flex:1;flex-direction:column;overflow:hidden;min-height:0">
           <div class="col" style="padding-top:10px;padding-bottom:0;flex-shrink:0">
             <div class="intake-filter-bar" id="stocktake-filter">
-              <div class="intake-filter-chip active" data-st-view="qty"><i class="ti ti-list-numbers"></i> Quantities</div>
-              <div class="intake-filter-chip" data-st-view="count"><i class="ti ti-clipboard-check"></i> Count</div>
-              <div class="intake-filter-chip" data-st-view="history"><i class="ti ti-history"></i> History</div>
+              <button type="button" aria-pressed="true" class="intake-filter-chip active" data-st-view="qty"><i class="ti ti-list-numbers"></i> Quantities</button>
+              <button type="button" aria-pressed="false" class="intake-filter-chip" data-st-view="count"><i class="ti ti-clipboard-check"></i> Count</button>
+              <button type="button" aria-pressed="false" class="intake-filter-chip" data-st-view="history"><i class="ti ti-history"></i> History</button>
             </div>
             <div id="stocktake-export-bar" style="display:flex;align-items:center;gap:12px;padding:8px 0 2px;flex-wrap:wrap">
               <button class="btn-sm btn-sm-save" id="btn-st-export"><i class="ti ti-file-spreadsheet"></i> Export stocktake</button>
@@ -482,11 +482,11 @@ const Manager = {
           <div class="col" style="padding-top:10px;padding-bottom:0;flex-shrink:0">
             <div style="display:flex;align-items:center;gap:8px">
               <div class="intake-filter-bar" id="intake-filter-cons" style="flex:1">
-                <div class="intake-filter-chip" data-filter="all">All</div>
-                <div class="intake-filter-chip active" data-filter="outstanding"><i class="ti ti-clock"></i> Outstanding</div>
-                <div class="intake-filter-chip" data-filter="backorder"><i class="ti ti-clock-pause"></i> Back Orders</div>
-                <div class="intake-filter-chip" data-filter="completed"><i class="ti ti-circle-check"></i> Completed</div>
-                <div class="intake-filter-chip" data-filter="cancelled"><i class="ti ti-ban"></i> Cancelled</div>
+                <button type="button" aria-pressed="false" class="intake-filter-chip" data-filter="all">All</button>
+                <button type="button" aria-pressed="true" class="intake-filter-chip active" data-filter="outstanding"><i class="ti ti-clock"></i> Outstanding</button>
+                <button type="button" aria-pressed="false" class="intake-filter-chip" data-filter="backorder"><i class="ti ti-clock-pause"></i> Back Orders</button>
+                <button type="button" aria-pressed="false" class="intake-filter-chip" data-filter="completed"><i class="ti ti-circle-check"></i> Completed</button>
+                <button type="button" aria-pressed="false" class="intake-filter-chip" data-filter="cancelled"><i class="ti ti-ban"></i> Cancelled</button>
               </div>
               <button class="btn-sm" id="btn-intake-edit-cons"><i class="ti ti-pencil"></i> Edit deliveries</button>
             </div>
@@ -502,7 +502,7 @@ const Manager = {
               <button class="btn btn-danger" id="btn-intake-cancel-cons" disabled><i class="ti ti-ban"></i> Cancel selected</button>
               <button class="btn btn-primary" id="btn-intake-combine-cons" disabled><i class="ti ti-git-merge"></i> Combine selected</button>
               <button class="btn btn-danger" id="btn-intake-delete-cons" disabled style="display:none"><i class="ti ti-trash"></i> Delete selected</button>
-              <button class="btn btn-outline" id="btn-intake-editdone-cons"><i class="ti ti-check"></i> Done</button>
+              <button class="btn btn-outline" id="btn-intake-editdone-cons"><i class="ti ti-check"></i> Finish editing</button>
             </div>
           </div>
         </div>
@@ -528,7 +528,7 @@ const Manager = {
         <div class="panel" id="no-review-panel">
           <div class="panel-header">
             <button class="back-btn" id="btn-close-no-review"><i class="ti ti-chevron-left"></i>Back</button>
-            <div class="panel-title">Order Confirmation</div>
+            <div class="panel-title">Review order</div>
             <div class="panel-spacer"></div>
           </div>
           <div class="panel-scroll"><div class="panel-col" id="no-review-contents"></div></div>
@@ -565,7 +565,7 @@ const Manager = {
         <div class="panel" id="co-review-panel">
           <div class="panel-header">
             <button class="back-btn" id="btn-close-co-review"><i class="ti ti-chevron-left"></i>Back</button>
-            <div class="panel-title">Order Confirmation</div>
+            <div class="panel-title">Review order</div>
             <div class="panel-spacer"></div>
           </div>
           <div class="panel-scroll"><div class="panel-col" id="co-review-contents"></div></div>
@@ -619,10 +619,10 @@ const Manager = {
               <button class="btn-sm" id="btn-bc-export-ghosts" style="display:none"><i class="ti ti-file-download"></i> Export new items (CSV)</button>
             </div>
             <div class="intake-filter-bar" id="barcodes-filter">
-              <div class="intake-filter-chip active" data-bc-filter="all">All</div>
-              <div class="intake-filter-chip" data-bc-filter="missing"><i class="ti ti-barcode-off"></i> No barcode yet</div>
-              <div class="intake-filter-chip" data-bc-filter="has"><i class="ti ti-barcode"></i> Barcoded</div>
-              <div class="intake-filter-chip" data-bc-filter="new"><i class="ti ti-sparkles"></i> New items</div>
+              <button type="button" aria-pressed="true" class="intake-filter-chip active" data-bc-filter="all">All</button>
+              <button type="button" aria-pressed="false" class="intake-filter-chip" data-bc-filter="missing"><i class="ti ti-barcode-off"></i> No barcode yet</button>
+              <button type="button" aria-pressed="false" class="intake-filter-chip" data-bc-filter="has"><i class="ti ti-barcode"></i> Barcoded</button>
+              <button type="button" aria-pressed="false" class="intake-filter-chip" data-bc-filter="new"><i class="ti ti-sparkles"></i> New items</button>
             </div>
           </div>
           <div class="app-scroll"><div class="col" id="barcodes-list" style="padding-top:10px"></div></div>
@@ -633,7 +633,7 @@ const Manager = {
           <div class="panel-header">
             <button class="back-btn" id="btn-close-settings"><i class="ti ti-chevron-left"></i>Back</button>
             <div class="panel-title">Settings</div>
-            <button class="btn-sm btn-sm-save" id="btn-save-settings">Save</button>
+            <div class="panel-spacer"></div>
           </div>
           <div class="panel-scroll"><div class="panel-col" style="gap:20px" id="settings-body"></div></div>
         </div>
@@ -655,12 +655,15 @@ const Manager = {
     // ── ALL LISTENERS ONCE ──
     document.getElementById('btn-settings')       .addEventListener('click', () => this.openPanel('settings-panel'));
     document.getElementById('sb-settings')        .addEventListener('click', () => this.openPanel('settings-panel'));
-    document.getElementById('btn-close-settings') .addEventListener('click', () => this.closePanel('settings-panel'));
-    document.getElementById('btn-save-settings')  .addEventListener('click', () => this.saveSettings());
+    document.getElementById('btn-close-settings') .addEventListener('click', () => { this.closePanel('settings-panel'); Accounts.forget(); });
     document.getElementById('btn-close-catalogue').addEventListener('click', () => Catalogue.close());
     Catalogue.mount(this);
     Accounts.mount();
-    document.getElementById('btn-close-email')    .addEventListener('click', () => this.closePanel('email-panel'));
+    document.getElementById('btn-close-email')    .addEventListener('click', () => {
+      const d = this._emailDraft;
+      this.closePanel('email-panel');
+      if (d && d.kind !== 'queue') this._backToCart(d.kind);
+    });
     document.getElementById('email-to')           .addEventListener('input', () => inlineError('email-error', ''));
     document.getElementById('btn-open-outlook')   .addEventListener('click', () => this.openInOutlook());
     document.getElementById('main-tab-queue')     .addEventListener('click', () => this.setMainTab('queue'));
@@ -677,7 +680,7 @@ const Manager = {
       this._stocktakeView = chip.dataset.stView;
       // Re-fetch sessions each time History is opened so fresh submissions appear.
       if (this._stocktakeView === 'history') this._stSessionsLoaded = false;
-      document.querySelectorAll('#stocktake-filter .intake-filter-chip').forEach(c => c.classList.toggle('active', c === chip));
+      pickChip(chip);
       this.renderStocktakeView();
     });
     document.getElementById('stocktake-search').addEventListener('input', e => { if (searchScope(this, e.target.value.trim(), '_stActiveCat', '_stActiveSub')) this.renderStocktakeTabs(); this._renderStActiveList(); });
@@ -721,13 +724,13 @@ const Manager = {
     document.getElementById('intake-filter-mat').addEventListener('click', e => {
       const chip = e.target.closest('[data-filter]'); if (!chip) return;
       this._intakeFilter.materials = chip.dataset.filter;
-      document.querySelectorAll('#intake-filter-mat .intake-filter-chip').forEach(c => c.classList.toggle('active', c === chip));
+      pickChip(chip);
       this.renderIntakeMat();
     });
     document.getElementById('intake-filter-cons').addEventListener('click', e => {
       const chip = e.target.closest('[data-filter]'); if (!chip) return;
       this._intakeFilter.consumables = chip.dataset.filter;
-      document.querySelectorAll('#intake-filter-cons .intake-filter-chip').forEach(c => c.classList.toggle('active', c === chip));
+      pickChip(chip);
       this.renderIntakeCons();
     });
 
@@ -742,9 +745,21 @@ const Manager = {
     document.getElementById('btn-intake-combine-cons').addEventListener('click', () => this.combineSelectedOrders('consumables'));
     document.getElementById('btn-intake-delete-mat').addEventListener('click',   () => this.deleteSelectedDeliveries('materials'));
     document.getElementById('btn-intake-delete-cons').addEventListener('click',  () => this.deleteSelectedDeliveries('consumables'));
+    document.getElementById('intake-edit-list-mat').addEventListener('click', e => {
+      const s = e.target.closest('[data-edit-scope]'); if (!s) return;
+      this._editModeFilter.materials = s.dataset.editScope === 'cancelled' ? 'cancelled' : null;
+      this._editSelected.materials.clear();
+      this.renderEditList('materials'); this._updateEditActionBar('materials');
+    });
     document.getElementById('intake-edit-list-mat').addEventListener('change', e => {
       const cb = e.target.closest('[data-edit-order]'); if (!cb) return;
       this.toggleEditSelect('materials', cb.dataset.editOrder);
+    });
+    document.getElementById('intake-edit-list-cons').addEventListener('click', e => {
+      const s = e.target.closest('[data-edit-scope]'); if (!s) return;
+      this._editModeFilter.consumables = s.dataset.editScope === 'cancelled' ? 'cancelled' : null;
+      this._editSelected.consumables.clear();
+      this.renderEditList('consumables'); this._updateEditActionBar('consumables');
     });
     document.getElementById('intake-edit-list-cons').addEventListener('change', e => {
       const cb = e.target.closest('[data-edit-order]'); if (!cb) return;
@@ -785,7 +800,7 @@ const Manager = {
     document.getElementById('btn-no-clear-main').addEventListener('click', async () => {
       const n = this.noCount();
       if (!await Ask.confirm({ title: 'Clear this order?', body: `${n} line${n !== 1 ? 's' : ''} will be taken off.`, yes: 'Clear order', no: 'Keep order', danger: true })) return;
-      this._no._items = {}; this._cartWaiting.no = []; this._noNote = ''; this.orderRef = genRef();
+      this._no._items = {}; this._cartWaiting.no = []; this._cartSent.no = []; this._noNote = ''; this.orderRef = genRef();
       this._updateNoBadge(); this.renderNoList(); this.closePanel('no-review-panel');
     });
 
@@ -811,7 +826,7 @@ const Manager = {
     document.getElementById('btn-co-clear-main').addEventListener('click', async () => {
       const n = this.coCount();
       if (!await Ask.confirm({ title: 'Clear this order?', body: `${n} line${n !== 1 ? 's' : ''} will be taken off.`, yes: 'Clear order', no: 'Keep order', danger: true })) return;
-      this._co._items = {}; this._cartWaiting.co = []; this._coOrderRef = null;
+      this._co._items = {}; this._cartWaiting.co = []; this._cartSent.co = []; this._coOrderRef = null;
       this._updateCoBadge(); this.renderCoList(); this.closePanel('co-review-panel');
     });
     document.getElementById('btn-close-co-review').addEventListener('click', () => this.closePanel('co-review-panel'));
@@ -848,10 +863,11 @@ const Manager = {
     this._cartFields('receive-mat-list', 'qid', () => this.consumables, 'receive');
     document.getElementById('receive-search').addEventListener('input', e => { if (searchScope(this, e.target.value.trim(), '_receiveActiveCat', '_receiveActiveSub')) this.renderReceiveTabs(); this.renderReceiveList(); });
     document.getElementById('btn-receive-submit').addEventListener('click', () => this.receiveSubmit());
+    document.getElementById('receive-reference').addEventListener('input', e => { this._receiveRef = e.target.value; this._keepCarts(); });
     document.getElementById('btn-receive-clear-main').addEventListener('click', async () => {
       const n = this.receiveCount();
       if (!await Ask.confirm({ title: 'Clear this list?', body: `${n} line${n !== 1 ? 's' : ''} will be taken off.`, yes: 'Clear list', no: 'Keep list', danger: true })) return;
-      this._receive._items = {};
+      this._receive._items = {}; this._cartWaiting.receive = []; this._receiveRef = '';
       document.getElementById('receive-reference').value = '';
       inlineError('receive-error', '');
       this._updateReceiveBadge(); this.renderReceiveList();
@@ -865,8 +881,6 @@ const Manager = {
     // Queue: single permanent delegated listener
     const queue = document.getElementById('order-queue');
     queue.addEventListener('click', e => {
-      const dec     = e.target.closest('[data-qdec]');
-      const inc     = e.target.closest('[data-qinc]');
       const catEmail= e.target.closest('[data-cat-email]');
       const del     = e.target.closest('[data-delete]');
       const combHdr = e.target.closest('[data-comb-cat]');
@@ -876,9 +890,7 @@ const Manager = {
       const resetItem  = e.target.closest('[data-reset-item]');
       const resetOrder = e.target.closest('[data-reset-order]');
       const queueSort  = e.target.closest('[data-queue-sort]');
-      if (queueSort)  { e.stopPropagation(); this._queueSortMode = this._queueSortMode === 'delivery' ? 'order' : 'delivery'; localStorage.setItem('mo_queue_sort', this._queueSortMode); this.renderQueue(); return; }
-      if (dec)        { e.stopPropagation(); this.stepQty(dec.dataset.qdec, +dec.dataset.idx, -1); return; }
-      if (inc)        { e.stopPropagation(); this.stepQty(inc.dataset.qinc, +inc.dataset.idx,  1); return; }
+      if (queueSort)  { e.stopPropagation(); this._queueSortMode = queueSort.dataset.queueSort; localStorage.setItem('mo_queue_sort', this._queueSortMode); this.renderQueue(); return; }
       if (catEmail)   { e.stopPropagation(); this.openCategoryEmail(catEmail.dataset.catEmail); return; }
       if (del)        { e.stopPropagation(); this.deleteOrder(del.dataset.delete); return; }
       const rejectOrd  = e.target.closest('[data-reject-order]');
@@ -910,17 +922,14 @@ const Manager = {
     });
     // Quantities here are on live orders, so they save when the field is left.
     const lineOf = el => {
-      const o = this.orders.find(x => x._id === (el.dataset.qchange || el.dataset.orderId));
-      return o && (el.dataset.qchange ? o.items[+el.dataset.idx]
-        : o.items.find(i => i.category === el.dataset.cqchange && i.partCode === el.dataset.partcode && !i.emailed));
+      const o = this.orders.find(x => x._id === el.dataset.orderId);
+      return o && o.items.find(i => i.category === el.dataset.cqchange && i.partCode === el.dataset.partcode && !i.emailed);
     };
-    QtyField.attach(queue, '[data-qchange], [data-cqchange]', {
+    QtyField.attach(queue, '[data-cqchange]', {
       later: true, zero: true,
       item: el => lineOf(el),
       get:  el => (lineOf(el) || {}).qty || 0,
-      set:  (el, qty) => el.dataset.qchange
-        ? this.editQty(el.dataset.qchange, +el.dataset.idx, qty)
-        : this.editCombinedSubQty(el.dataset.cqchange, el.dataset.orderId, el.dataset.partcode, qty),
+      set:  (el, qty) => this.editCombinedSubQty(el.dataset.cqchange, el.dataset.orderId, el.dataset.partcode, qty),
     });
     // Capture phase for combined +/- so they fire before the header toggle check
     queue.addEventListener('click', e => {
@@ -1009,7 +1018,7 @@ const Manager = {
     document.getElementById('barcodes-filter').addEventListener('click', e => {
       const chip = e.target.closest('[data-bc-filter]'); if (!chip) return;
       this._bcFilter = chip.dataset.bcFilter;
-      document.querySelectorAll('#barcodes-filter .intake-filter-chip').forEach(c => c.classList.toggle('active', c === chip));
+      pickChip(chip);
       this.renderBarcodesPanel();
     });
     document.getElementById('barcodes-list').addEventListener('click', e => {
@@ -1035,6 +1044,7 @@ const Manager = {
       const sessUnrev   = e.target.closest('[data-hist-session-unrevert]');
       const sessDelete  = e.target.closest('[data-hist-session-delete]');
       if (more)        { this._loadHistory(true); return; }
+      if (e.target.closest('[data-hist-retry]')) { this._loadHistory(); return; }
       if (sessRevert)  { e.stopPropagation(); this.historySessionRevert(sessRevert.dataset.histSessionRevert); return; }
       if (sessUnrev)   { e.stopPropagation(); this.historySessionUnrevert(sessUnrev.dataset.histSessionUnrevert); return; }
       if (sessDelete)  { e.stopPropagation(); this.historySessionDelete(sessDelete.dataset.histSessionDelete); return; }
@@ -1380,12 +1390,14 @@ const Manager = {
     const el = document.getElementById(`intake-edit-list-${id}`); if (!el) return;
     const isCancelledMode = this._editModeFilter[type] === 'cancelled';
     const groups = Intake.buildCategoryGroups(this.orders, type, isCancelledMode);
+    const opt = (v, label) => `<button type="button" class="${(v === 'cancelled') === isCancelledMode ? 'on' : ''}" data-edit-scope="${v}" aria-pressed="${(v === 'cancelled') === isCancelledMode}">${label}</button>`;
+    const head = `<div class="seg edit-scope" role="group" aria-label="Deliveries to edit">${opt('active', 'Active deliveries')}${opt('cancelled', 'Cancelled deliveries')}</div>`;
     if (!groups.length) {
       const noun = isCancelledMode ? 'cancelled' : '';
-      el.innerHTML = `<div class="empty-state"><i class="ti ti-inbox-off"></i><p>No ${noun ? noun + ' ' : ''}${type} deliveries${isCancelledMode ? ' to delete' : ' to edit'}.</p></div>`;
+      el.innerHTML = head + `<div class="empty-state"><i class="ti ti-inbox-off"></i><p>No ${noun ? noun + ' ' : ''}${type} deliveries${isCancelledMode ? ' to delete' : ' to edit'}.</p></div>`;
       return;
     }
-    el.innerHTML = groups.map(g => {
+    el.innerHTML = head + groups.map(g => {
       const distinctOrderIds = [...new Set(g.entries.map(e => e.order._id))];
       const submittedDates = g.entries
         .map(e => e.order.submittedAt && e.order.submittedAt.toDate ? e.order.submittedAt.toDate() : null)
@@ -1459,18 +1471,11 @@ const Manager = {
       body: `${many ? 'They move' : 'It moves'} to Cancelled, and can be restored from there.${nStocked ? ' What was added to stock stays in stock.' : ''}`,
       yes: many ? 'Cancel deliveries' : 'Cancel delivery', no: many ? 'Keep deliveries' : 'Keep delivery', danger: true,
     })) return;
-    try {
-      const ops = [];
-      for (const g of groups) {
-        const orderIds = [...new Set(g.entries.map(e => e.order._id))];
-        for (const id of orderIds) ops.push(DB.setDeliveryCancelled(id, g.groupKey, true));
-      }
-      await Promise.all(ops);
-      this._editSelected[type].clear();
-      this.toggleEditMode(type);
-    } catch (e) {
-      tellFailed('Not cancelled', e, 'Some may have been. Check the list, then try again.');
-    }
+    const results = await Promise.allSettled(groups.map(g =>
+      Promise.all([...new Set(g.entries.map(e => e.order._id))].map(id => DB.setDeliveryCancelled(id, g.groupKey, true)))));
+    if (this._batchFailed(type, groups, results, 'cancelled')) return;
+    this._editSelected[type].clear();
+    this.toggleEditMode(type);
   },
 
   async combineSelectedOrders(type) {
@@ -1504,22 +1509,28 @@ const Manager = {
       body: 'This cannot be undone.', rows: groups.map(g => [g.category, `${g.entries.length} line${g.entries.length !== 1 ? 's' : ''}`]),
       yes: many ? 'Delete deliveries' : 'Delete delivery', no: many ? 'Keep deliveries' : 'Keep delivery', danger: true,
     })) return;
-    try {
-      const ops = [];
-      for (const g of groups) {
-        const byOrder = new Map();
-        for (const { item, order } of g.entries) {
-          if (!byOrder.has(order._id)) byOrder.set(order._id, []);
-          byOrder.get(order._id).push(String(item.id));
-        }
-        for (const [orderId, itemIds] of byOrder) ops.push(DB.deleteDeliveryItems(orderId, itemIds, g.groupKey));
+    const results = await Promise.allSettled(groups.map(g => {
+      const byOrder = new Map();
+      for (const { item, order } of g.entries) {
+        if (!byOrder.has(order._id)) byOrder.set(order._id, []);
+        byOrder.get(order._id).push(String(item.id));
       }
-      await Promise.all(ops);
-      this._editSelected[type].clear();
-      this.toggleEditMode(type);
-    } catch (e) {
-      tellFailed('Not deleted', e, 'Some may have been. Check the list, then try again.');
-    }
+      return Promise.all([...byOrder].map(([orderId, itemIds]) => DB.deleteDeliveryItems(orderId, itemIds, g.groupKey)));
+    }));
+    if (this._batchFailed(type, groups, results, 'deleted')) return;
+    this._editSelected[type].clear();
+    this.toggleEditMode(type);
+  },
+
+  // Some of a batch failed: say which, and leave just those ticked to try again.
+  _batchFailed(type, groups, results, done) {
+    const failed = groups.filter((g, i) => results[i].status === 'rejected');
+    if (!failed.length) return false;
+    this._editSelected[type] = new Set(failed.map(g => g.groupKey));
+    this.renderEditList(type); this._updateEditActionBar(type);
+    const e = results.find(r => r.status === 'rejected').reason;
+    tellFailed(`${failed.length} of ${groups.length} not ${done}`, e, `Still ticked: ${failed.map(g => g.category).join(', ')}. Try again.`);
+    return true;
   },
 
   // ══════════════════════════════════════════
@@ -1665,8 +1676,21 @@ const Manager = {
   },
   _mstChanged() { this._updateMstBadge(); this.renderStocktakeCount(); },
   _updateMstBadge() {
+    this._keepMst();
     const b = document.getElementById('mst-badge'); if (!b) return;
     const n = this.mstCount(); setCount(b, n);
+  },
+  // Counts not recorded yet are kept on this PC through a reload, like the worker page's.
+  _keepMst() {
+    if (!this._mstLoaded) return;
+    const counts = Kept.lines(this.mstItems().map(i => ({ ...i, mode: i.stMode })));
+    if (counts.length) Kept.save('mst', { counts }); else Kept.drop('mst');
+  },
+  _loadMst() {
+    const v = Kept.load('mst', 14 * 86400000);
+    if (v) Kept.fill(v.counts, this.materials, (m, l) => { this._mstCart[m.id] = l.qty; if (l.mode && l.mode !== 'set') this._mstModes[m.id] = l.mode; });
+    this._mstLoaded = true;
+    this._updateMstBadge();
   },
 
   renderStocktakeCount() {
@@ -1781,7 +1805,7 @@ const Manager = {
         this._stSessions = await DB.fetchStocktakeSessions(100);
         this._stSessionsLoaded = true;
       } catch(e) {
-        el.innerHTML = `<div class="empty-state"><i class="ti ti-alert-circle"></i><p>Failed to load history: ${esc(e.message)}</p></div>`;
+        el.innerHTML = `<div class="empty-state"><i class="ti ti-alert-circle"></i><p>Stocktake history not loaded: ${esc(whyFailed(e))}. Open History again to retry.</p></div>`;
         this._stSessionsLoading = false;
         return;
       }
@@ -2119,8 +2143,8 @@ const Manager = {
                 <div class="combined-sub-row excluded">
                   <div class="combined-sub-device"><i class="ti ti-device-ipad" style="font-size:11px"></i><span>${esc(line.deviceName||line.orderRef||'Unknown')}</span><span style="margin-left:4px;font-size:10px">${line.submittedAt?fmtTime(line.submittedAt):''}</span><span style="font-size:10px;color:var(--text3);margin-left:4px">(excluded)</span></div>
                   <div class="excluded-acts">
-                    <button class="btn-sm" data-unexclude="${esc(cat)}" data-order-id="${esc(line.orderId)}" data-partcode="${esc(pGroup.partCode)}">Restore</button>
-                    <button class="btn-sm btn-sm-danger" data-reject-item="${esc(line.orderId)}" data-partcode="${esc(pGroup.partCode)}" title="Reject this line — it leaves the combined list but the rest of the order stays; restore it from the order card below"><i class="ti ti-ban"></i> Reject</button>
+                    <button class="btn-sm" data-unexclude="${esc(cat)}" data-order-id="${esc(line.orderId)}" data-partcode="${esc(pGroup.partCode)}">Include again</button>
+                    <button class="btn-sm btn-sm-danger" data-reject-item="${esc(line.orderId)}" data-partcode="${esc(pGroup.partCode)}"><i class="ti ti-ban"></i> Reject</button>
                   </div>
                 </div>`).join('')}`;
             }
@@ -2152,8 +2176,8 @@ const Manager = {
                 </div>
                 ${isExc
                   ? `<div class="excluded-acts">
-                      <button class="btn-sm" data-unexclude="${esc(cat)}" data-order-id="${esc(line.orderId)}" data-partcode="${esc(pGroup.partCode)}">Restore</button>
-                      <button class="btn-sm btn-sm-danger" data-reject-item="${esc(line.orderId)}" data-partcode="${esc(pGroup.partCode)}" title="Reject this line — it leaves the combined list but the rest of the order stays; restore it from the order card below"><i class="ti ti-ban"></i> Reject</button>
+                      <button class="btn-sm" data-unexclude="${esc(cat)}" data-order-id="${esc(line.orderId)}" data-partcode="${esc(pGroup.partCode)}">Include again</button>
+                      <button class="btn-sm btn-sm-danger" data-reject-item="${esc(line.orderId)}" data-partcode="${esc(pGroup.partCode)}"><i class="ti ti-ban"></i> Reject</button>
                     </div>`
                   : `<div class="qty-row" style="flex-shrink:0">
                       <button class="qty-btn" data-cqdec="${esc(cat)}" data-order-id="${esc(line.orderId)}" data-partcode="${esc(pGroup.partCode)}">−</button>
@@ -2163,9 +2187,7 @@ const Manager = {
                       <button class="qty-btn" data-cqinc="${esc(cat)}" data-order-id="${esc(line.orderId)}" data-partcode="${esc(pGroup.partCode)}">+</button>
                     </div>
                     <span style="font-size:11px;color:var(--text3);font-family:var(--mono);margin-left:4px;min-width:40px">${esc(pGroup.qtyType||'')}</span>
-                    <button class="btn-sm btn-sm-danger" data-comb-del="${esc(cat)}" data-order-id="${esc(line.orderId)}" data-partcode="${esc(pGroup.partCode)}" title="Exclude from email">
-                      <i class="ti ti-eye-off"></i>
-                    </button>`
+                    <button class="btn-sm" data-comb-del="${esc(cat)}" data-order-id="${esc(line.orderId)}" data-partcode="${esc(pGroup.partCode)}" ><i class="ti ti-eye-off"></i> Leave out</button>`
                 }
               </div>`;
             } else {
@@ -2197,9 +2219,7 @@ const Manager = {
                     <button class="qty-btn" data-cqinc="${esc(cat)}" data-order-id="${esc(line.orderId)}" data-partcode="${esc(pGroup.partCode)}">+</button>
                   </div>
                   <span style="font-size:11px;color:var(--text3);font-family:var(--mono);margin-left:4px;min-width:40px;flex-shrink:0">${esc(line.qtyType||'')}</span>
-                  <button class="btn-sm btn-sm-danger" data-comb-del="${esc(cat)}" data-order-id="${esc(line.orderId)}" data-partcode="${esc(pGroup.partCode)}" title="Exclude from email">
-                    <i class="ti ti-eye-off"></i>
-                  </button>
+                  <button class="btn-sm" data-comb-del="${esc(cat)}" data-order-id="${esc(line.orderId)}" data-partcode="${esc(pGroup.partCode)}" ><i class="ti ti-eye-off"></i> Leave out</button>
                 </div>`).join('');
               const excludedRowsHtml = excludedLines.map(line => `
                 <div class="combined-sub-row excluded">
@@ -2210,8 +2230,8 @@ const Manager = {
                     <span style="font-size:10px;color:var(--text3);margin-left:4px">(excluded)</span>
                   </div>
                   <div class="excluded-acts">
-                    <button class="btn-sm" data-unexclude="${esc(cat)}" data-order-id="${esc(line.orderId)}" data-partcode="${esc(pGroup.partCode)}">Restore</button>
-                    <button class="btn-sm btn-sm-danger" data-reject-item="${esc(line.orderId)}" data-partcode="${esc(pGroup.partCode)}" title="Reject this line — it leaves the combined list but the rest of the order stays; restore it from the order card below"><i class="ti ti-ban"></i> Reject</button>
+                    <button class="btn-sm" data-unexclude="${esc(cat)}" data-order-id="${esc(line.orderId)}" data-partcode="${esc(pGroup.partCode)}">Include again</button>
+                    <button class="btn-sm btn-sm-danger" data-reject-item="${esc(line.orderId)}" data-partcode="${esc(pGroup.partCode)}"><i class="ti ti-ban"></i> Reject</button>
                   </div>
                 </div>`).join('');
               return mainRow + subRows + excludedRowsHtml;
@@ -2219,7 +2239,7 @@ const Manager = {
           }).join('');
 
           return `<div style="border-bottom:2px solid var(--border)">
-            <div class="combined-header" data-comb-cat="${esc(cat)}">
+            <div class="combined-header" role="button" tabindex="0" data-comb-cat="${esc(cat)}">
               <div style="display:flex;align-items:center;gap:8px">
                 ${catTile(cat, 'sm')}
                 <span style="font-size:13px;font-weight:500">${esc(cat)}</span>
@@ -2227,7 +2247,7 @@ const Manager = {
               </div>
               <div style="display:flex;align-items:center;gap:8px">
                 <button class="btn-sm" data-cat-email="${esc(cat)}">
-                  <i class="ti ti-mail"></i> Email
+                  <i class="ti ti-mail"></i> Write email
                 </button>
                 <i class="ti ti-chevron-right chevron ${isOpen?'open':''}" id="comb-chev-${catKey}"></i>
               </div>
@@ -2249,16 +2269,17 @@ const Manager = {
     }
 
     if (this.activeView === 'pending') {
-      const sortMode = this._queueSortMode;
-      const sortBar = `<div style="display:flex;align-items:center;padding:6px 14px;gap:8px;background:var(--bg);border-bottom:1px solid var(--border)"><span style="font-size:11px;color:var(--text3)">Sort:</span><button data-queue-sort="1" class="btn-sm" style="font-size:11px;margin-left:4px"><i class="ti ti-${sortMode==='delivery'?'truck-delivery':'list'}"></i> ${sortMode==='delivery'?'By delivery':'By order'}</button></div>`;
+      // Lines put back from an earlier email can be shown together, by that email. The
+      // choice only appears when there are such lines.
+      const dGroups = this._buildPendingDeliveryGroups(list);
+      const sortMode = dGroups.length ? this._queueSortMode : 'order';
+      const opt = (v, label) => `<button type="button" class="${sortMode === v ? 'on' : ''}" data-queue-sort="${v}" aria-pressed="${sortMode === v}">${label}</button>`;
+      const sortBar = dGroups.length ? `<div class="queue-sort"><span>Sort</span><div class="seg" role="group" aria-label="Sort">${opt('order', 'By order')}${opt('delivery', 'By delivery')}</div></div>` : '';
       let deliveryGroupsHtml = '', inDeliveryGroup = null;
       if (sortMode === 'delivery') {
-        const dGroups = this._buildPendingDeliveryGroups(list);
-        if (dGroups.length) {
-          inDeliveryGroup = new Set();
-          for (const g of dGroups) for (const { order, item } of g.entries) inDeliveryGroup.add(`${order._id}:::${String(item.id)}`);
-          deliveryGroupsHtml = dGroups.map(g => this._pendingDeliveryGroupCard(g)).join('');
-        }
+        inDeliveryGroup = new Set();
+        for (const g of dGroups) for (const { order, item } of g.entries) inDeliveryGroup.add(`${order._id}:::${String(item.id)}`);
+        deliveryGroupsHtml = dGroups.map(g => this._pendingDeliveryGroupCard(g)).join('');
       }
       wrap.innerHTML = combinedHtml + sortBar + deliveryGroupsHtml + list.map(o => this._orderCard(o, inDeliveryGroup)).join('');
     } else {
@@ -2303,7 +2324,7 @@ const Manager = {
     const safeKey = `sent-${groupKey.replace(/[^a-zA-Z0-9]/g,'_')}`;
     const isOpen  = this._openCards.has(safeKey);
     return `<div class="order-card" id="card-${esc(safeKey)}">
-      <div class="order-card-header" data-card-id="${esc(safeKey)}">
+      <div class="order-card-header" role="button" tabindex="0" data-card-id="${esc(safeKey)}">
         <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%">
           <div>
             <div class="order-ref-text">${esc(category)}</div>
@@ -2641,20 +2662,10 @@ const Manager = {
                </button>`
             : item.emailed
               ? `<span class="emailed-badge"><i class="ti ti-mail-check"></i> Emailed</span>
-                 <button class="btn-sm" data-reset-item="${o._id}" data-category="${esc(item.category)}" data-partcode="${esc(item.partCode)}"
-                   aria-label="Put this line back to pending" title="Put this line back to pending">
-                   <i class="ti ti-arrow-back-up"></i>
-                 </button>`
+                 <button class="btn-sm" data-reset-item="${o._id}" data-category="${esc(item.category)}" data-partcode="${esc(item.partCode)}"><i class="ti ti-arrow-back-up"></i> Put back</button>`
               : isPending
-                ? `<div class="qty-row">
-                    <button class="qty-btn" data-qdec="${o._id}" data-idx="${idx}">−</button>
-                    <input class="qty-edit" ${QtyField.attrs(item)} value="${item.qty}"
-                      data-qchange="${o._id}" data-idx="${idx}" id="qinp-${o._id}-${idx}">
-                    <button class="qty-btn" data-qinc="${o._id}" data-idx="${idx}">+</button>
-                  </div>
-                  <button class="btn-sm btn-sm-danger line-reject" data-reject-item="${esc(o._id)}" data-partcode="${esc(item.partCode)}" aria-label="Reject this line" title="Reject this line">
-                    <i class="ti ti-ban"></i>
-                  </button>`
+                ? `<span class="order-line-qty">× ${item.qty}</span>
+                  <button class="btn-sm btn-sm-danger line-reject" data-reject-item="${esc(o._id)}" data-partcode="${esc(item.partCode)}"><i class="ti ti-ban"></i> Reject</button>`
                 : `<span class="order-line-qty">× ${item.qty}</span>`}
           <span style="font-size:11px;color:var(--text3);font-family:var(--mono);margin-left:6px">${esc(item.qtyType||'')}</span>
         </div>
@@ -2706,7 +2717,7 @@ const Manager = {
       </button>` : '';
 
     return `<div class="order-card" id="card-${o._id}">
-      <div class="order-card-header" data-card-id="${o._id}">
+      <div class="order-card-header" role="button" tabindex="0" data-card-id="${o._id}">
         <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%">
           <div>
             <div class="order-ref-text">${esc(o.ref||o._id)}</div>
@@ -2719,7 +2730,6 @@ const Manager = {
         </div>
       </div>
       <div class="order-card-body" id="body-${o._id}">
-        ${isPending ? '<div class="edit-note">Edit quantities before sending.</div>' : ''}
         ${this._orderNoteHtml(o, isPending)}
         ${allRows}
         <div class="order-card-actions">${catEmailBtns}</div>
@@ -2739,7 +2749,7 @@ const Manager = {
         <textarea class="order-note-input" id="onote-input-${esc(id)}" rows="3" placeholder="Anything the manager should know about this order">${esc(note)}</textarea>
         <div class="order-note-actions">
           <button class="btn-sm btn-sm-save" data-note-save="${esc(id)}">Save note</button>
-          <button class="btn-sm" data-note-cancel="${esc(id)}">Cancel</button>
+          <button class="btn-sm" data-note-cancel="${esc(id)}">Don't save</button>
         </div>
       </div>`;
     }
@@ -2816,11 +2826,7 @@ const Manager = {
             <div class="order-line-code">${esc(i.partCode)}</div>
           </div>
           <div class="order-line-right">
-            <div class="qty-row">
-              <button class="qty-btn" data-qdec="${order._id}" data-idx="${idx}">−</button>
-              <input class="qty-edit" ${QtyField.attrs(i)} value="${i.qty}" data-qchange="${order._id}" data-idx="${idx}" id="qinp-${order._id}-${idx}">
-              <button class="qty-btn" data-qinc="${order._id}" data-idx="${idx}">+</button>
-            </div>
+            <span class="order-line-qty">× ${i.qty}</span>
             <span style="font-size:11px;color:var(--text3);font-family:var(--mono);margin-left:6px">${esc(i.qtyType||'')}</span>
           </div>
         </div>`;
@@ -2837,11 +2843,7 @@ const Manager = {
           return `<div class="order-line">
             <div class="order-line-info"><div class="order-line-code">${esc(order.deviceName || order.ref || order._id)}</div></div>
             <div class="order-line-right">
-              <div class="qty-row">
-                <button class="qty-btn" data-qdec="${order._id}" data-idx="${idx}">−</button>
-                <input class="qty-edit" ${QtyField.attrs(i)} value="${i.qty}" data-qchange="${order._id}" data-idx="${idx}" id="qinp-${order._id}-${idx}">
-                <button class="qty-btn" data-qinc="${order._id}" data-idx="${idx}">+</button>
-              </div>
+              <span class="order-line-qty">× ${i.qty}</span>
               <span style="font-size:11px;color:var(--text3);font-family:var(--mono);margin-left:6px">${esc(i.qtyType||'')}</span>
             </div>
           </div>`;
@@ -2850,7 +2852,7 @@ const Manager = {
     }).join('');
 
     return `<div class="order-card pending-delivery-group" id="card-${safeKey}">
-      <div class="order-card-header" data-card-id="${safeKey}">
+      <div class="order-card-header" role="button" tabindex="0" data-card-id="${safeKey}">
         <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%">
           <div>
             <div class="order-ref-text">${esc(category)}</div>
@@ -2864,7 +2866,7 @@ const Manager = {
       </div>
       <div class="order-card-body${isOpen?' open':''}" id="body-${safeKey}">
         ${this._groupNotesHtml(entries)}
-        <div class="edit-note">Put back from an earlier email. Edit quantities before emailing again.</div>
+        <div class="edit-note">Put back from an earlier email.</div>
         ${itemRows}
       </div>
     </div>`;
@@ -2878,23 +2880,6 @@ const Manager = {
     body.classList.toggle('open', opening);
     chev?.classList.toggle('open', opening);
     if (opening) this._openCards.add(id); else this._openCards.delete(id);
-  },
-
-  async stepQty(orderId, idx, delta) {
-    const order = this.orders.find(o => o._id === orderId); if (!order) return;
-    const items = [...order.items];
-    const newQty = Math.max(0, round2((items[idx].qty||0) + delta));
-    items[idx] = { ...items[idx], qty: newQty };
-    const inp = document.getElementById(`qinp-${orderId}-${idx}`);
-    if (inp) { inp.value = newQty; inp.defaultValue = newQty; inp._before = newQty; }
-    try { await DB.updateItems(orderId, items); } catch(e) { tellFailed('Quantity not saved', e); this.renderQueue(); }
-  },
-
-  async editQty(orderId, idx, qty) {
-    const order = this.orders.find(o => o._id === orderId); if (!order) return;
-    const items = [...order.items];
-    items[idx] = { ...items[idx], qty };
-    try { await DB.updateItems(orderId, items); } catch(e) { tellFailed('Quantity not saved', e); this.renderQueue(); }
   },
 
   async deleteOrder(id) {
@@ -3180,15 +3165,22 @@ const Manager = {
       this.renderQueue();
       return;
     }
-    const cart = draft.kind === 'newOrder' ? this._no : this._co;
+    const cart = draft.kind === 'newOrder' ? this._no : this._co, which = draft.kind === 'newOrder' ? 'no' : 'co';
     for (const i of draft.order.items) delete cart._items[i.id];
+    this._cartSent[which] = [...new Set([...this._cartSent[which], ...Object.keys(draft.deliveryIds)])];
     if (draft.kind === 'newOrder') {
       this._updateNoBadge(); this.renderNoList();
-      if (this.noCount() === 0) { this._noNote = ''; this.orderRef = genRef(); this._keepCarts(); }
+      if (this.noCount() === 0) { this._noNote = ''; this.orderRef = genRef(); this._cartSent.no = []; this._keepCarts(); }
     } else {
       this._updateCoBadge(); this.renderCoList();
-      if (this.coCount() === 0) this._coOrderRef = null;
+      if (this.coCount() === 0) { this._coOrderRef = null; this._cartSent.co = []; }
     }
+  },
+  // "Mild Steel emailed · 2 more to email", above a cart's email buttons.
+  _cartProgress(which, left) {
+    const sent = this._cartSent[which];
+    if (!sent.length) return '';
+    return `<div class="email-progress"><i class="ti ti-circle-check"></i> ${esc(sent.join(', '))} emailed · ${left} more to email</div>`;
   },
 
   // The order an email from a cart will save: the lines in the email, nothing else. What
@@ -3252,6 +3244,7 @@ const Manager = {
       localStorage.setItem(this._cartsKey(), JSON.stringify({
         at: Date.now(), note: this._noNote,
         no: list(this.noItems(), this._cartWaiting.no), co: list(this.coItems(), this._cartWaiting.co),
+        rc: list(this.receiveItems(), this._cartWaiting.receive), rcRef: this._receiveRef,
       }));
     } catch {}
   },
@@ -3259,8 +3252,10 @@ const Manager = {
     try {
       const v = JSON.parse(localStorage.getItem(this._cartsKey()) || 'null');
       if (v && v.at > Date.now() - 14 * 86400000) {
-        this._cartWaiting = { no: v.no || [], co: v.co || [] };
+        this._cartWaiting = { no: v.no || [], co: v.co || [], receive: v.rc || [] };
         this._noNote = v.note || '';
+        this._receiveRef = v.rcRef || '';
+        const ref = document.getElementById('receive-reference'); if (ref) ref.value = this._receiveRef;
       }
     } catch {}
     this._cartsLoaded = true;
@@ -3269,7 +3264,7 @@ const Manager = {
   // Lines whose item is in the list go into the cart. The rest wait: items made on a
   // device only appear once the stock list has arrived.
   _fillCarts() {
-    for (const [cart, catalog] of [['no', this.materials], ['co', this.consumables]]) {
+    for (const [cart, catalog] of [['no', this.materials], ['co', this.consumables], ['receive', this.consumables]]) {
       const waiting = this._cartWaiting[cart]; if (!waiting.length) continue;
       this._cartWaiting[cart] = waiting.filter(l => {
         const m = catalog.find(x => stockId(x) === l.sid);
@@ -3277,7 +3272,9 @@ const Manager = {
         if (m && l.qty > 0) items[m.id] = round2((items[m.id] || 0) + l.qty);
         return !m;
       });
-      if (cart === 'no') { this._updateNoBadge(); this.renderNoList(); } else { this._updateCoBadge(); this.renderCoList(); }
+      if (cart === 'no') { this._updateNoBadge(); this.renderNoList(); }
+      else if (cart === 'co') { this._updateCoBadge(); this.renderCoList(); }
+      else { this._updateReceiveBadge(); this.renderReceiveList(); }
     }
   },
   // Puts one order line back in a cart. keep: leave it alone if it is there already;
@@ -3401,11 +3398,11 @@ const Manager = {
       </div>`+`
       <div class="order-note-card">
         <label class="order-note-label" for="no-order-note">Optional note</label>
-        <textarea class="order-note-input" id="no-order-note" rows="3">${esc(this._noNote)}</textarea>
+        <textarea class="order-note-input" id="no-order-note" rows="3" data-kept>${esc(this._noNote)}</textarea>
       </div>`;
     const cats = [...new Set(items.map(i => i.category))];
     const btns = document.getElementById('no-email-buttons'); if (!btns) return;
-    btns.innerHTML = cats.map(cat => `
+    btns.innerHTML = this._cartProgress('no', cats.length) + cats.map(cat => `
       <button class="btn ${cats.length === 1 ? 'btn-primary' : 'btn-outline'}" data-no-cat="${esc(cat)}" style="margin-bottom:6px">
         <i class="ti ti-mail"></i> Email — ${esc(cat)}
       </button>`).join('');
@@ -3437,8 +3434,9 @@ const Manager = {
       category: i.category, subcategory: i.subcategory,
       qtyType: i.qtyType || '', qty: i.qty,
     }));
+    const ref = this.orderRef;
     try {
-      const submittedId = await DB.submitOrder({ ref: this.orderRef, deviceName, items, note: this._noNote.trim() });
+      const submittedId = await DB.submitOrder({ ref, deviceName, items, note: this._noNote.trim() });
       this._myOrderIds.add(submittedId);
       if (this._seenOrderIds) this._seenOrderIds.add(submittedId);
       this._no._items = {};
@@ -3447,18 +3445,10 @@ const Manager = {
       this._updateNoBadge();
       this.renderNoList();
       this.closePanel('no-review-panel');
-      this.setMainTab('queue');
-      const ow = document.getElementById('overlay-wrap');
-      ow.innerHTML = `
-        <div class="success-overlay">
-          <div class="success-card">
-            <div class="success-icon green"><i class="ti ti-circle-check"></i></div>
-            <h3>Added to order queue!</h3>
-            <p>The order has been submitted to the pending queue and can be combined with other orders.</p>
-            <button class="btn btn-primary" id="btn-done-add">Done</button>
-          </div>
-        </div>`;
-      document.getElementById('btn-done-add').addEventListener('click', () => { ow.innerHTML = ''; });
+      this._cartSent.no = [];
+      this.setMainTab('queue'); this.setView('pending');
+      doneMessage(document.getElementById('overlay-wrap'), { title: 'Added to the order queue',
+        text: `${ref} · ${items.length} line${items.length !== 1 ? 's' : ''}. It's under Pending.` });
     } catch(e) {
       tellFailed('Not added to the queue', e, 'The order is still here. Click Add to order queue to try again.');
     } finally {
@@ -3582,7 +3572,7 @@ const Manager = {
     const emailAllBtn = cats.length > 1
       ? `<button class="btn btn-primary" data-co-email-all="1" style="margin-top:6px"><i class="ti ti-mail-forward"></i> Email all consumables</button>`
       : '';
-    btns.innerHTML = cats.map(cat => `
+    btns.innerHTML = this._cartProgress('co', cats.length) + cats.map(cat => `
       <button class="btn ${cats.length === 1 ? 'btn-primary' : 'btn-outline'}" data-co-cat="${esc(cat)}" style="margin-top:6px"><i class="ti ti-mail"></i> Email — ${esc(cat)}</button>`).join('') +
       emailAllBtn;
   },
@@ -3623,6 +3613,7 @@ const Manager = {
   },
   _receiveChanged() { this._updateReceiveBadge(); this.renderReceiveList(); },
   _updateReceiveBadge() {
+    this._keepCarts();
     const b = document.getElementById('receive-badge'); if (!b) return;
     const n = this.receiveCount(); setCount(b, n);
     const c = document.getElementById('btn-receive-clear-main'); if (c) c.hidden = n === 0;
@@ -3717,23 +3708,13 @@ const Manager = {
       this._updateReceiveBadge();
     }
 
-    this._receive._items = {};
+    this._receive._items = {}; this._cartWaiting.receive = []; this._receiveRef = '';
     document.getElementById('receive-reference').value = '';
     this._updateReceiveBadge();
     this.renderReceiveList();
     this.closePanel('receive-panel');
-
-    const ow = document.getElementById('overlay-wrap');
-    ow.innerHTML = `
-      <div class="success-overlay">
-        <div class="success-card">
-          <div class="success-icon green"><i class="ti ti-circle-check"></i></div>
-          <h3>Stock received!</h3>
-          <p>${items.length} item${items.length !== 1 ? 's' : ''} added to stock${reference ? ` under "${esc(reference)}"` : ''}.</p>
-          <button class="btn btn-primary" id="btn-done-receive">Done</button>
-        </div>
-      </div>`;
-    document.getElementById('btn-done-receive').addEventListener('click', () => { ow.innerHTML=''; });
+    doneMessage(document.getElementById('overlay-wrap'), { title: 'Stock received',
+      text: `${items.length} item${items.length !== 1 ? 's' : ''} added to stock${reference ? ` under “${reference}”` : ''}.` });
   },
 
   // ══════════════════════════════════════════
@@ -3947,8 +3928,8 @@ const Manager = {
             <span class="stock-action-label">Add stock</span>
             <input class="stock-delta-input" type="number" min="1" step="1" placeholder="${esc(m.boxUnit||'Box')}es" id="si-intake-box-${esc(sid)}">
             <span style="font-size:11px;color:var(--text3)">${esc(m.boxUnit||'Box')}(es)</span>
-            <button class="btn-sm" data-stock-intake-boxn="${esc(sid)}"><i class="ti ti-plus"></i> Intake</button>
-            <button class="btn-sm" data-stock-hist="${esc(sid)}" data-stock-name="${descHtml(m.description)}" style="margin-left:auto"><i class="ti ti-history"></i></button>
+            <button class="btn-sm" data-stock-intake-boxn="${esc(sid)}"><i class="ti ti-plus"></i> Add</button>
+            <button class="btn-sm" data-stock-hist="${esc(sid)}" data-stock-name="${descHtml(m.description)}" style="margin-left:auto"><i class="ti ti-history"></i> History</button>
           </div>
           <div class="stock-action-row">
             <span class="stock-action-label">Remove stock</span>
@@ -3967,15 +3948,15 @@ const Manager = {
             <span style="font-size:10px;color:var(--text3)">${esc(m.boxUnit||'Box')}(es) +</span>
             <input class="stock-delta-input" type="number" min="0" step="1" placeholder="loose" id="si-set-loose-${esc(sid)}" style="width:56px">
             <span style="font-size:10px;color:var(--text3)">loose</span>
-            <button class="btn-sm" data-stock-set-boxed="${esc(sid)}">Override</button>
+            <button class="btn-sm" data-stock-set-boxed="${esc(sid)}">Set stock</button>
           </div>`;
 
     const simpleIntakeRow = `
           <div class="stock-action-row">
             <span class="stock-action-label">Add stock</span>
             <input class="stock-delta-input" type="number" min="1" step="1" placeholder="Qty" id="si-intake-${esc(sid)}">
-            <button class="btn-sm" data-stock-intake="${esc(sid)}"><i class="ti ti-plus"></i> Intake</button>
-            <button class="btn-sm" data-stock-hist="${esc(sid)}" data-stock-name="${descHtml(m.description)}" style="margin-left:auto"><i class="ti ti-history"></i></button>
+            <button class="btn-sm" data-stock-intake="${esc(sid)}"><i class="ti ti-plus"></i> Add</button>
+            <button class="btn-sm" data-stock-hist="${esc(sid)}" data-stock-name="${descHtml(m.description)}" style="margin-left:auto"><i class="ti ti-history"></i> History</button>
           </div>
           <div class="stock-action-row">
             <span class="stock-action-label">Remove stock</span>
@@ -3985,7 +3966,7 @@ const Manager = {
           <div class="stock-action-row">
             <span class="stock-action-label">Set absolute</span>
             <input class="stock-delta-input" type="number" min="0" step="1" placeholder="Qty" id="si-set-${esc(sid)}">
-            <button class="btn-sm" data-stock-set="${esc(sid)}"><i class="ti ti-pencil"></i> Override</button>
+            <button class="btn-sm" data-stock-set="${esc(sid)}"><i class="ti ti-pencil"></i> Set stock</button>
           </div>`;
 
     const body = tracked ? `
@@ -3998,10 +3979,10 @@ const Manager = {
             <input class="stock-threshold-input" type="number" min="0" step="1" value="${rec?.warningQty||0}" id="si-warn-${esc(sid)}">
             <span class="stock-threshold-label" style="margin-left:8px">Reorder:</span>
             <input class="stock-threshold-input" type="number" min="0" step="1" value="${rec?.reorderQty||0}" id="si-reorder-${esc(sid)}">
-            <button class="btn-sm" data-stock-thresh="${esc(sid)}" style="margin-left:auto">Save</button>
+            <button class="btn-sm" data-stock-thresh="${esc(sid)}" style="margin-left:auto">Save levels</button>
           </div>
           <div class="stock-action-row" style="border-top:1px solid var(--border);padding-top:8px;margin-top:2px">
-            <button class="btn-sm btn-sm-danger" data-stock-disable="${esc(sid)}" style="margin-left:auto">Disable tracking</button>
+            <button class="btn-sm btn-sm-danger" data-stock-disable="${esc(sid)}" style="margin-left:auto">Stop tracking</button>
           </div>
         </div>
       </div>` : `
@@ -4010,13 +3991,13 @@ const Manager = {
           <div class="stock-action-row">
             <span style="font-size:12px;color:var(--text2);flex:1">Enable tracking to manage stock levels for this item.</span>
             <input class="stock-delta-input" type="number" min="0" step="1" placeholder="Initial qty" id="si-init-${esc(sid)}" style="width:80px">
-            <button class="btn-sm" data-stock-enable="${esc(sid)}"><i class="ti ti-check"></i> Enable</button>
+            <button class="btn-sm" data-stock-enable="${esc(sid)}"><i class="ti ti-check"></i> Start tracking</button>
           </div>
         </div>
       </div>`;
 
     return `<div class="stock-card${cardClass}" id="stock-card-${esc(sid)}">
-      <div class="stock-card-header" data-stock-hdr="${esc(sid)}">
+      <div class="stock-card-header" role="button" tabindex="0" data-stock-hdr="${esc(sid)}">
         ${catTile(m.category, 'stock-card-icon')}
         <div class="stock-card-info">
           <div class="stock-card-name">${descHtml(m.description)}${m._ghost ? ' <span class="ghost-chip"><i class="ti ti-sparkles" style="font-size:10px"></i> New — not in CSV yet</span>' : ''}</div>
@@ -4045,7 +4026,7 @@ const Manager = {
   async stockEnable(sid) {
     if (this._opBusy.has(`enable:${sid}`)) return;
     this._opBusy.add(`enable:${sid}`);
-    const back = this._stockBusy('enable', sid, 'Enabling…');
+    const back = this._stockBusy('enable', sid, 'Starting…');
     try {
       const initEl = document.getElementById(`si-init-${sid}`);
       const initQty = parseInt(initEl?.value || '0') || 0;
@@ -4192,11 +4173,12 @@ const Manager = {
     const reordEl  = document.getElementById(`si-reorder-${sid}`);
     const warnQty  = parseInt(warnEl?.value  || '0') || 0;
     const reordQty = parseInt(reordEl?.value || '0') || 0;
+    const back = this._stockBusy('thresh', sid, 'Saving…');
     try {
       await DB.updateThresholds(sid, reordQty, warnQty);
-      const btn = document.querySelector(`[data-stock-thresh="${sid}"]`);
-      if (btn) { btn.textContent = '✓ Saved'; setTimeout(() => btn.textContent = 'Save', 1500); }
+      toast(`Levels saved for ${this._stockName(sid)}`);
     } catch(e) { tellFailed('Levels not saved', e); }
+    finally { back(); }
   },
 
   stockOpenHistory(sid, itemName) {
@@ -4717,25 +4699,33 @@ const Manager = {
     }
   },
 
+  // A visit shows what was already loaded at once and brings the newest entries in front
+  // of it; the older pages stay. Only a first load (or a new item filter) starts empty.
   async _loadHistory(append) {
     if (this._historyLoading) return;
     this._historyLoading = true;
     const list = document.getElementById('history-list'); if (!list) { this._historyLoading=false; return; }
-    if (!append) {
-      this._historyRecords = [];
-      this._historyLastDoc = null;
-      list.innerHTML = `<div class="empty-state"><i class="ti ti-loader" style="animation:spin 1s linear infinite"></i><p>Loading…</p></div>`;
-    }
+    const fresh = !append && !this._historyRecords.length;
+    if (fresh) { this._historyLastDoc = null; list.innerHTML = skeleton(6); }
+    else if (!append) this.renderHistoryList();
+    const at = r => r.timestamp && r.timestamp.toMillis ? r.timestamp.toMillis() : +new Date(r.timestamp || 0);
     try {
       const { records, lastDoc, hasMore } = await DB.fetchHistory(
         this._historyFilter?.stockId || null, 50, append ? this._historyLastDoc : null
       );
-      if (append) this._historyRecords.push(...records);
-      else        this._historyRecords = records;
-      this._historyLastDoc = lastDoc;
-      this._historyHasMore = hasMore;
+      if (append || fresh) {
+        if (append) this._historyRecords.push(...records); else this._historyRecords = records;
+        this._historyLastDoc = lastDoc; this._historyHasMore = hasMore;
+      } else {
+        const ids = new Set(records.map(r => r._id)), edge = records.length ? at(records[records.length - 1]) : Infinity;
+        const older = this._historyRecords.filter(r => !ids.has(r._id) && at(r) < edge);
+        this._historyRecords = [...records, ...older];
+        if (!older.length) { this._historyLastDoc = lastDoc; this._historyHasMore = hasMore; }
+      }
       this.renderHistoryList();
     } catch(e) {
+      console.error('History not loaded:', e);
+      if (!fresh) { toast(`History not updated: ${whyFailed(e)}`, true); return; }
       // Filtering by item needs a composite Firestore index (stockId + timestamp).
       // Firestore's error message includes a console link that creates it — surface
       // that as a clickable link instead of a wall of error text.
@@ -4744,7 +4734,7 @@ const Manager = {
         ? `<div class="empty-state"><i class="ti ti-alert-circle"></i><p>This filter needs a one-time Firestore index.<br>
             <a href="${esc(idxUrl[0])}" target="_blank" rel="noopener" style="color:var(--link);text-decoration:underline">Create it in the Firebase console</a>,
             wait a minute for it to build, then try again.</p></div>`
-        : `<div class="empty-state"><i class="ti ti-alert-circle"></i><p>Failed to load history: ${esc(e.message)}</p></div>`;
+        : `<div class="empty-state"><i class="ti ti-alert-circle"></i><p>History not loaded: ${esc(whyFailed(e))}.</p><button class="btn btn-primary" style="width:auto" data-hist-retry>Try again</button></div>`;
     } finally { this._historyLoading = false; }
   },
 
@@ -4760,8 +4750,11 @@ const Manager = {
     if (nameFilter) records = records.filter(r => (r.by||'').toLowerCase().includes(nameFilter));
     if (itemFilter) records = records.filter(r => (r.itemName||'').toLowerCase().includes(itemFilter));
 
+    const moreBtn = this._historyHasMore
+      ? `<div style="padding:12px;text-align:center"><button class="btn-sm" data-hist-more="1">Load older entries</button></div>`
+      : '';
     if (!records.length) {
-      list.innerHTML = `<div class="empty-state"><i class="ti ti-history"></i><p>No matching history.</p></div>`;
+      list.innerHTML = `<div class="empty-state"><i class="ti ti-history"></i><p>No matching history in what is loaded.</p></div>${moreBtn}`;
       return;
     }
 
@@ -4792,7 +4785,7 @@ const Manager = {
       const allReverted = group.every(r => r.reverted);
       const isOpen  = this._openHistorySessions.has(sessId);
       return `<div class="history-session-group${allReverted?' reverted':''}">
-        <div class="history-row" data-hist-session="${esc(sessId)}" style="cursor:pointer">
+        <div class="history-row" role="button" tabindex="0" data-hist-session="${esc(sessId)}" style="cursor:pointer">
           <span class="history-action-pill ${action}">${action} · order</span>
           <span class="history-delta" style="color:var(--text2)">${group.length} item${group.length!==1?'s':''}</span>
           <div style="flex:1;min-width:0">
@@ -4800,9 +4793,9 @@ const Manager = {
             <div class="history-meta">${ts} · ${totalAbs} total units</div>
           </div>
           ${allReverted
-            ? `<button class="btn-sm" data-hist-session-unrevert="${esc(sessId)}">Unrevert all</button>
-               <button class="btn-sm btn-sm-danger" data-hist-session-delete="${esc(sessId)}">Delete</button>`
-            : `<button class="btn-sm btn-sm-danger" data-hist-session-revert="${esc(sessId)}">Revert all</button>`}
+            ? `<button class="btn-sm" data-hist-session-unrevert="${esc(sessId)}">Make all again</button>
+               <button class="btn-sm btn-sm-danger" data-hist-session-delete="${esc(sessId)}">Delete entries</button>`
+            : `<button class="btn-sm btn-sm-danger" data-hist-session-revert="${esc(sessId)}">Reverse all</button>`}
           <i class="ti ti-chevron-right chevron ${isOpen?'open':''}" style="margin-right:2px"></i>
         </div>
         <div class="history-session-body ${isOpen?'open':''}" id="hist-sess-${esc(sessId)}">
@@ -4811,9 +4804,6 @@ const Manager = {
       </div>`;
     }).join('');
 
-    const moreBtn = this._historyHasMore
-      ? `<div style="padding:12px;text-align:center"><button class="btn-sm" data-hist-more="1">Load more</button></div>`
-      : '';
     list.innerHTML = rows + moreBtn;
     // Re-apply open session state
     for (const sessId of this._openHistorySessions) {
@@ -4845,9 +4835,9 @@ const Manager = {
     }
 
     const revertBtn = r.reverted
-      ? `<button class="btn-sm" data-hist-unrevert="${esc(r._id)}">Unrevert</button>
-         <button class="btn-sm btn-sm-danger" data-hist-delete="${esc(r._id)}">Delete</button>`
-      : `<button class="btn-sm btn-sm-danger" data-hist-revert="${esc(r._id)}">Revert</button>`;
+      ? `<button class="btn-sm" data-hist-unrevert="${esc(r._id)}">Make again</button>
+         <button class="btn-sm btn-sm-danger" data-hist-delete="${esc(r._id)}">Delete entry</button>`
+      : `<button class="btn-sm btn-sm-danger" data-hist-revert="${esc(r._id)}">Reverse</button>`;
     return `<div class="history-row${r.reverted?' reverted':''}${nested?' nested':''}">
       <span class="history-action-pill ${action}">${action}</span>
       <span class="history-delta ${dClass}">${deltaDisplay}</span>
@@ -4868,48 +4858,58 @@ const Manager = {
   async historyRevert(historyId) {
     const r = this._historyRecords.find(x => x._id === historyId);
     if (!await Ask.confirm({ title: 'Reverse this stock change?', body: r ? `${r.itemName || r.stockId}: stock goes ${r.delta < 0 ? 'up' : 'down'} by ${Math.abs(r.delta)}.` : '', yes: 'Reverse change', no: 'Keep change', danger: true })) return;
-    try {
-      await DB.revertHistoryRecord(historyId);
-      this._loadHistory(); // refresh to reflect reverted flag
-    } catch(e) { tellFailed('Not reversed', e); }
+    try { await DB.revertHistoryRecord(historyId); this._histSet([historyId], { reverted: true }); }
+    catch(e) { tellFailed('Not reversed', e); }
   },
 
   async historyUnrevert(historyId) {
     if (!await Ask.confirm({ title: 'Make this stock change again?', yes: 'Make change again', no: 'Leave reversed' })) return;
-    try {
-      await DB.unrevertHistoryRecord(historyId);
-      this._loadHistory();
-    } catch(e) { tellFailed('Not changed', e); }
+    try { await DB.unrevertHistoryRecord(historyId); this._histSet([historyId], { reverted: false }); }
+    catch(e) { tellFailed('Not changed', e); }
   },
 
   async historyDelete(historyId) {
     if (!await Ask.confirm({ title: 'Delete this reversed entry?', body: 'This cannot be undone.', yes: 'Delete entry', no: 'Keep entry', danger: true })) return;
-    try {
-      await DB.deleteHistoryRecord(historyId);
-      this._loadHistory();
-    } catch(e) { tellFailed('Not deleted', e); }
+    try { await DB.deleteHistoryRecord(historyId); this._histSet([historyId], null); }
+    catch(e) { tellFailed('Not deleted', e); }
+  },
+  // A change shown where it happened: the row in place, no reload, the pages kept.
+  // patch null takes the entries off.
+  _histSet(ids, patch) {
+    const set = new Set(ids);
+    if (patch) this._historyRecords.forEach(r => { if (set.has(r._id)) Object.assign(r, patch); });
+    else this._historyRecords = this._historyRecords.filter(r => !set.has(r._id));
+    this.renderHistoryList();
   },
 
   // Session-level operations: fetch all records for the session, then act on each. Each
   // is safe to repeat, so a run that stops part-way can be started again.
-  async _historySession(sessId, ask, failed, each) {
+  // Each entry on its own, so one that fails is named and the rest still happen.
+  async _historySession(sessId, ask, failed, each, patch) {
     if (!await Ask.confirm(ask)) return;
-    try {
-      for (const r of await DB.fetchSessionRecords(sessId)) await each(r);
-    } catch(e) { tellFailed(failed, e, 'Some of it may have been done. Try again to finish.'); }
-    this._loadHistory();
+    let recs;
+    try { recs = await DB.fetchSessionRecords(sessId); }
+    catch (e) { tellFailed(failed, e); return; }
+    const done = [], bad = [];
+    let err = null;
+    for (const r of recs) {
+      try { if (await each(r) !== false) done.push(r._id); }
+      catch (e) { err = err || e; bad.push(r.itemName || r.stockId || r._id); }
+    }
+    this._histSet(done, patch);
+    if (bad.length) tellFailed(`${bad.length} of ${recs.length} ${failed}`, err, `Not done: ${bad.join(', ')}. Try again to finish.`);
   },
   historySessionRevert(sessId) {
     return this._historySession(sessId, { title: 'Reverse every stock change in this group?', yes: 'Reverse changes', no: 'Keep changes', danger: true },
-      'Not all reversed', r => r.reverted ? null : DB.revertHistoryRecord(r._id));
+      'not reversed', r => r.reverted ? false : DB.revertHistoryRecord(r._id), { reverted: true });
   },
   historySessionUnrevert(sessId) {
     return this._historySession(sessId, { title: 'Make every stock change in this group again?', yes: 'Make changes again', no: 'Leave reversed' },
-      'Not all changed', r => r.reverted ? DB.unrevertHistoryRecord(r._id) : null);
+      'not made again', r => r.reverted ? DB.unrevertHistoryRecord(r._id) : false, { reverted: false });
   },
   historySessionDelete(sessId) {
     return this._historySession(sessId, { title: 'Delete every reversed entry in this group?', body: 'This cannot be undone.', yes: 'Delete entries', no: 'Keep entries', danger: true },
-      'Not all deleted', r => r.reverted ? DB.deleteHistoryRecord(r._id) : null);
+      'not deleted', r => r.reverted ? DB.deleteHistoryRecord(r._id) : false, null);
   },
 
   // ══════════════════════════════════════════
@@ -5025,7 +5025,7 @@ const Manager = {
         <div class="settings-card">
           <div class="settings-row">
             <div><div class="settings-row-label">Materials the workshop can order</div><div class="settings-row-sub" id="cat-settings-sub">${esc(Catalogue.summary())}</div></div>
-            <button class="btn-sm" id="btn-open-catalogue">Open</button>
+            <button class="btn-sm" id="btn-open-catalogue">Open catalogue</button>
           </div>
         </div>
       </div>
@@ -5040,7 +5040,7 @@ const Manager = {
             if (perm === 'granted') {
               return `<div class="settings-row">
                 <div><div class="settings-row-label">System notifications</div><div class="settings-row-sub" style="color:var(--green-text)">Enabled — you'll receive alerts for new orders.</div></div>
-                <button class="btn-sm" id="btn-test-notif">Send test</button>
+                <button class="btn-sm" id="btn-test-notif">Send a test</button>
               </div>`;
             }
             if (perm === 'denied') {
@@ -5048,7 +5048,7 @@ const Manager = {
             }
             return `<div class="settings-row">
               <div><div class="settings-row-label">System notifications</div><div class="settings-row-sub">Not yet enabled. Allow to receive alerts when new orders arrive.</div></div>
-              <button class="btn-sm btn-sm-save" id="btn-enable-notif">Enable</button>
+              <button class="btn-sm btn-sm-save" id="btn-enable-notif">Turn on notifications</button>
             </div>`;
           })()}
         </div>
@@ -5084,40 +5084,31 @@ const Manager = {
     });
     document.getElementById('btn-mgr-toggle-test').addEventListener('click', () => { FirebaseConfig.setTestMode(!FirebaseConfig.isTestMode()); location.reload(); });
     document.getElementById('btn-reset-template').addEventListener('click', () => {
-      const ta = document.getElementById('s-template'); if (ta) ta.value = DEFAULT_SETTINGS.emailTemplate;
+      const ta = document.getElementById('s-template'); if (!ta) return;
+      ta.value = DEFAULT_SETTINGS.emailTemplate; ta.dispatchEvent(new Event('change', { bubbles: true }));
     });
+    // Each setting applies as it is changed: nothing to save, and Back loses nothing.
+    const text = { 's-supplier': 'supplierEmail', 's-cc': 'ccEmail', 's-subject': 'emailSubject', 's-bulk-subject': 'bulkConsumablesSubject',
+                   's-delivery': 'deliveryNote', 's-signature': 'emailSignature', 's-template': 'emailTemplate' };
+    for (const [id, key] of Object.entries(text)) {
+      const f = document.getElementById(id); if (!f) continue;
+      f.addEventListener('change', () => { Settings.save({ [key]: f.tagName === 'TEXTAREA' ? f.value : f.value.trim() }); f.defaultValue = f.value; });
+    }
+    const mn = document.getElementById('s-manager-name');
+    mn.addEventListener('change', () => { ManagerDeviceName.save(mn.value); mn.defaultValue = mn.value; });
+    document.getElementById('s-theme').addEventListener('change', e => Theme.set(e.target.value));
+    for (const [id, key] of [['s-natural-sort', 'naturalSort'], ['s-fraction-glyphs', 'fractionGlyphs'], ['s-unit-search', 'unitAwareSearch'], ['s-fuzzy-search', 'fuzzySearch']])
+      document.getElementById(id).addEventListener('change', e => {
+        Settings.save({ [key]: e.target.checked });
+        this.renderQueue(); this.renderNoList(); this.renderCoList(); this.renderReceiveList(); this.renderStockList();
+      });
+    document.querySelectorAll('#settings-body input[type=text], #settings-body input[type=email]').forEach(f =>
+      f.addEventListener('keydown', e => { if (e.key === 'Enter' && !f.id.startsWith('acct-')) f.blur(); }));
     document.getElementById('btn-clear-orders')?.addEventListener('click', async () => {
       if (!await Ask.confirm({ title: 'Delete every order in the test database?', body: 'This cannot be undone.', yes: 'Delete all orders', no: 'Keep orders', danger: true })) return;
       try { await DB.deleteAllOrders(); this._toast('All test orders deleted'); }
       catch(e) { console.error(e); this._toast(`Not deleted: ${whyFailed(e)}`, true); }
     });
-  },
-
-  saveSettings() {
-    Theme.set(document.getElementById('s-theme')?.value ?? Theme.get());   // per-device, applied immediately
-    const naturalSort     = document.getElementById('s-natural-sort')?.checked ?? true;
-    const unitAwareSearch = document.getElementById('s-unit-search')?.checked ?? true;
-    const fuzzySearch     = document.getElementById('s-fuzzy-search')?.checked ?? true;
-    const pill = document.getElementById('role-pill');
-    if (pill) pill.textContent = document.getElementById('s-manager-name')?.value.trim() || 'Manager';
-    Settings.save({
-      managerName:            document.getElementById('s-manager-name')?.value.trim(),
-      supplierEmail:          document.getElementById('s-supplier')?.value.trim(),
-      ccEmail:                document.getElementById('s-cc')?.value.trim(),
-      emailSubject:           document.getElementById('s-subject')?.value.trim(),
-      bulkConsumablesSubject: document.getElementById('s-bulk-subject')?.value.trim(),
-      deliveryNote:           document.getElementById('s-delivery')?.value.trim(),
-      emailSignature:         document.getElementById('s-signature')?.value,
-      emailTemplate:          document.getElementById('s-template')?.value,
-      naturalSort, unitAwareSearch, fuzzySearch,
-      fractionGlyphs: document.getElementById('s-fraction-glyphs')?.checked ?? false,
-    });
-    this.renderQueue(); this.renderStockList(); this.renderNoList(); this.renderCoList();
-    // Settings.get() is read live by Data.filter on every call, so list/search
-    // behaviour picks up the new toggles immediately — just need to re-render.
-    this.renderNoList(); this.renderCoList(); this.renderReceiveList(); this.renderStockList();
-    const btn = document.getElementById('btn-save-settings');
-    if (btn) { btn.textContent = '✓ Saved'; setTimeout(() => btn.textContent = 'Save', 1500); }
   },
 
 };

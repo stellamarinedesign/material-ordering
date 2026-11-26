@@ -1,4 +1,4 @@
-// accounts.js — v2026-11-26.5
+// accounts.js — v2026-11-26.6
 //
 // Manager page only: the Accounts section of Settings, for a MASTER and for
 // nobody else — absent otherwise, not greyed. Every listed address with its
@@ -15,6 +15,7 @@ const Accounts = {
   _fresh: null,       // { email, password } | { email, exists } | { email, failed } — what became of the last user made
   _activity: null,    // recent access changes, newest first (null = not fetched)
   _err: '',
+  _status: '',        // "Saving…": what is happening, not a failure
   _busy: false,
   _mounted: false,
 
@@ -25,6 +26,8 @@ const Accounts = {
     el.innerHTML = this._inner();
     restore();
   },
+  // Settings closed: the temporary password goes, as it says it will.
+  forget() { if (this._fresh) { this._fresh = null; this.refresh(); } },
   mount() {
     if (this._mounted) return;
     this._mounted = true;
@@ -37,7 +40,7 @@ const Accounts = {
     if (!Auth.isMaster()) { this._fresh = null; return ''; }
     if (this._activity === null) this._loadActivity();
     const me = Auth.email(), rows = Access.rows(Auth.access());
-    const roleSel = (value, attrs) => `<select class="acct-role" ${attrs || ''}>${
+    const roleSel = (value, attrs) => `<select class="acct-role" ${attrs || ''}>${value === 'none' ? '<option value="" selected disabled>No access</option>' : ''}${
       [...Access.ROLES, ...(value === 'engineer' ? ['engineer'] : [])].map(r => `<option value="${r}"${r === value ? ' selected' : ''}>${Access.ROLE_LABEL[r]}</option>`).join('')}</select>`;
     const rowHtml = r => {
       const self = r.email === me;
@@ -62,7 +65,8 @@ const Accounts = {
             ${roleSel('floor', 'id="acct-new-role"')}
             <button class="btn-sm btn-sm-save" data-acct-add${this._busy ? ' disabled' : ''}>${this._busy ? 'Adding…' : 'Add account'}</button>
           </div>
-          <div class="auth-err" id="acct-err">${esc(this._err)}</div>
+          <div class="acct-status" role="status">${esc(this._status)}</div>
+          <div class="auth-err" id="acct-err" role="alert">${esc(this._err)}</div>
           ${this._fresh ? this._freshHtml(this._fresh) : ''}
         </div>
       </div>
@@ -120,26 +124,35 @@ const Accounts = {
   _onChange(e) {
     const t = e.target, row = t.closest('[data-acct-row]'); if (!row) return;
     const email = row.dataset.acctRow;
-    if (t.matches('[data-acct-role]'))   this._save(Access.withRole(Auth.access(), email, t.value), `${email} is now ${Access.ROLE_LABEL[t.value].toLowerCase()}.`);
+    if (t.matches('[data-acct-role]') && t.value) this._save(Access.withRole(Auth.access(), email, t.value), `${email} is now ${Access.ROLE_LABEL[t.value].toLowerCase()}.`);
     if (t.matches('[data-acct-master]')) this._save(Access.withMaster(Auth.access(), email, t.checked), t.checked ? `${email} is now a master.` : `${email} is no longer a master.`);
   },
 
   async _remove(email) {
     if (!await Ask.confirm({ title: 'Remove this account?', body: `${email} stays able to sign in and sees nothing.`, yes: 'Remove account', no: 'Keep account', danger: true })) return;
-    await this._save(Access.withoutAccount(Auth.access(), email), `${email} removed from the lists.`);
+    // What it had, so Undo can give it back.
+    const was = Auth.access(), role = Access.isListed(was, email) ? Access.roleOf(was, email) : null, master = Access.isMaster(was, email);
+    const undo = role || master ? { label: 'Undo', run: () => {
+      let back = Auth.access();
+      if (role) back = Access.withRole(back, email, role);
+      if (master) back = Access.withMaster(back, email, true);
+      this._save(back, `${email} put back.`);
+    } } : null;
+    await this._save(Access.withoutAccount(was, email), `${email} removed from the lists.`, undo);
   },
   // Write the lists; log it; redraw. Returns whether it saved.
-  async _save(next, note) {
-    this._err = 'Saving…'; this.refresh();
+  async _save(next, note, action) {
+    this._status = 'Saving…'; this._err = ''; this.refresh();
     try {
       await DB.saveAccess(next);
-      this._err = '';
+      this._status = '';
       Auth.setAccess(next);        // redraws this section too
       this._log(note);
-      Manager._toast(note);
+      Manager._toast(note, false, action);
       return true;
     } catch (e) {
       console.error('Accounts not saved:', e);
+      this._status = '';
       this._err = `Not saved: ${whyFailed(e)}. Try again.`;
       this.refresh();
       return false;

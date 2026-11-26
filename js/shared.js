@@ -1,9 +1,9 @@
-// shared.js — v2026-11-26.5
+// shared.js — v2026-11-26.6
 
 // The build date plus that day's counter — "2026-10-06.2" is the second build
 // on 6 Oct 2026 (the production board's scheme). Set by tools/bump-version.py;
 // shown to people with a leading "v" (see verLabel).
-const APP_VERSION = '2026-11-26.5';
+const APP_VERSION = '2026-11-26.6';
 
 // Numeric version comparison, part by part. Returns true if `a` is strictly
 // newer than `b`. Reads both the dated form and the "v0.56"-style numbers used
@@ -1576,6 +1576,19 @@ const Ask = {
     });
   },
 };
+// A chosen filter pill: it alone is on, and says so.
+function pickChip(chip) {
+  chip.parentElement.querySelectorAll('.intake-filter-chip').forEach(c => {
+    const on = c === chip; c.classList.toggle('active', on); c.setAttribute('aria-pressed', on);
+  });
+}
+// Card headers and rows that open: Enter and Space work on them as on a button.
+document.addEventListener('keydown', e => {
+  if (e.defaultPrevented || (e.key !== 'Enter' && e.key !== ' ')) return;
+  const t = e.target;
+  if (t && t.tagName !== 'BUTTON' && t.getAttribute && t.getAttribute('role') === 'button') { e.preventDefault(); t.click(); }
+});
+
 // ── DIALOGS: Esc and Tab ──
 // The window on top keeps the keyboard: Tab goes round its own buttons and fields, and Esc
 // presses its way out (the button marked data-esc, or an open panel's Back). Ask answers Esc

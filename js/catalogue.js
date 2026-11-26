@@ -1,4 +1,4 @@
-// catalogue.js — v2026-11-26.5
+// catalogue.js — v2026-11-26.6
 //
 // Manager page only: the materials catalogue (Settings → Materials catalogue).
 // The list every page orders from lives in the database (meta/catalogMaterials,
@@ -177,7 +177,7 @@ const Catalogue = {
     if (!parts) { parts = []; for (const s of sheets) { const p = read(s); if (p) parts.push(...p); } }
     const seen = new Set();
     parts = parts.filter(p => { const k = p.code.toUpperCase(); if (seen.has(k)) return false; seen.add(k); return true; });
-    if (!parts.length) throw new Error('No part list found in that file. It needs a sheet with "Inventory ID" and "Description" columns.');
+    if (!parts.length) throw Object.assign(new Error('No part list found in that file. It needs a sheet with "Inventory ID" and "Description" columns.'), { plain: true });
     let erpDate = '', downloaded = '';
     const about = sheets.find(s => /^about$/i.test(norm(s.name)));
     if (about) for (const row of about.rows) {
@@ -193,7 +193,7 @@ const Catalogue = {
       const rows = Data._decode(buf).replace(/^﻿/, '').split(/\r?\n/).filter(l => l.trim() !== '').map(l => Data._splitLine(l));
       return this.parseRows([{ name: 'csv', rows }], file.name);
     }
-    if (typeof XLSX === 'undefined') throw new Error('The spreadsheet reader did not load — refresh the page and try again.');
+    if (typeof XLSX === 'undefined') throw Object.assign(new Error('The spreadsheet reader did not load. Refresh the page, then try again.'), { plain: true });
     const wb = XLSX.read(new Uint8Array(buf), { type: 'array' });
     const sheets = wb.SheetNames.map(name => ({ name, rows: XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, raw: false, defval: '' }) }));
     return this.parseRows(sheets, file.name);
@@ -329,9 +329,15 @@ const Catalogue = {
     this._loadErp();
   },
   async close() {
-    if (this.review && !await Ask.confirm({ title: 'Close without applying this import?', body: 'Nothing has been changed yet.', yes: 'Close', no: 'Keep reviewing' })) return;
-    this.review = null;
+    if (!await this._discardReview()) return;
     this._host.closePanel('catalogue-panel');
+  },
+  // Resolves true when there is no review left (none, or the manager let it go).
+  async _discardReview() {
+    if (!this.review) return true;
+    if (!await Ask.confirm({ title: 'Discard this review?', body: 'Nothing has been changed yet.', yes: 'Discard review', no: 'Keep reviewing', danger: true })) return false;
+    this.review = null;
+    return true;
   },
   _by() { return (Settings.get().managerName || 'Manager').trim() || 'Manager'; },
   _toast(msg, warn) { this._host._toast(msg, warn); },
@@ -361,7 +367,14 @@ const Catalogue = {
   async _loadErp(force) {
     if (this.erp !== undefined && !force) return;
     let erp = null;
-    try { erp = await DB.getErpParts(); } catch (e) { console.warn('[Catalogue] part list not readable:', e); }
+    this._erpErr = null;
+    try { erp = await DB.getErpParts(); }
+    catch (e) {
+      console.warn('[Catalogue] part list not readable:', e);
+      this._erpErr = e;            // stays "not fetched", so opening again tries again
+      if (this.isOpen() && !this.review) this.renderBody();
+      return;
+    }
     this._setErp(erp);
     if (this.isOpen() && !this.review) this.renderBody();
   },
@@ -396,7 +409,11 @@ const Catalogue = {
     if (sel.value !== '__new') return sel.value;
     const field = sel.dataset.pick;
     const label = { category: 'category', subcategory: 'type', qtyType: 'unit' }[field];
-    const name = await Ask.text({ title: `New ${label}`, label: 'Name', yes: `Add ${label}`, no: 'Cancel' });
+    const typed = await Ask.text({ title: `New ${label}`, label: 'Name', yes: `Add ${label}`, no: `Don't add` });
+    const tidy = v => String(v || '').replace(/\s+/g, ' ').trim();
+    const same = typed && this._vocab(field).find(v => tidy(v).toLowerCase() === tidy(typed).toLowerCase());
+    const name = same || tidy(typed);
+    if (same && same !== tidy(typed)) this._toast(`${same} is already a ${label}: using it`);
     if (name && !this._vocab(field).includes(name)) this._extra[field].push(name);
     const keep = name || sel.dataset.prev || '';
     sel.outerHTML = this._pick(field, keep, [...sel.attributes].filter(a => a.name !== 'class' && a.name !== 'data-pick').map(a => `${a.name}="${esc(a.value)}"`).join(' '));
@@ -409,18 +426,18 @@ const Catalogue = {
     const el = document.getElementById('cat-head'); if (!el) return;
     if (!this.doc || this.review) { el.innerHTML = ''; return; }
     const items = this.doc.items;
-    const tab = (k, label, icon) => `<div class="intake-filter-chip${this.tab === k ? ' active' : ''}" data-cat-tab="${k}"><i class="ti ${icon}"></i> ${label}</div>`;
+    const tab = (k, label, icon) => `<button type="button" class="tab${this.tab === k ? ' active' : ''}" data-cat-tab="${k}" aria-pressed="${this.tab === k}"><i class="ti ${icon}"></i> ${label}</button>`;
     let extra = '';
     if (this.tab === 'materials') {
       const live = items.filter(i => !i.retired);
       const n = { all: live.length, edited: live.filter(i => i.desc).length, nocode: live.filter(i => !this._real(i.code)).length, retired: items.length - live.length };
-      const chip = (k, label) => (k === 'all' || n[k]) ? `<div class="intake-filter-chip${this.filter === k ? ' active' : ''}" data-cat-filter="${k}">${label} · ${n[k]}</div>` : '';
+      const chip = (k, label) => (k === 'all' || n[k]) ? `<button type="button" class="intake-filter-chip${this.filter === k ? ' active' : ''}" data-cat-filter="${k}" aria-pressed="${this.filter === k}">${label} · ${n[k]}</button>` : '';
       extra = `<div class="search-wrap"><i class="ti ti-search"></i><input id="cat-search" type="search" placeholder="Search the catalogue" autocomplete="off" value="${esc(this.query)}"></div>
         <div class="intake-filter-bar">${chip('all', 'In use')}${chip('edited', 'Own wording')}${chip('nocode', 'No part code')}${chip('retired', 'Retired')}</div>`;
     } else if (this.tab === 'add') {
       extra = `<div class="search-wrap" style="margin-bottom:10px"><i class="ti ti-search"></i><input id="cat-add-search" type="search" placeholder="Search the part list by code or description" autocomplete="off" value="${esc(this.addQuery)}"></div>`;
     }
-    el.innerHTML = `<div class="intake-filter-bar cat-tabs">${tab('materials', 'Materials', 'ti-list')}${tab('import', 'Import part list', 'ti-file-import')}${tab('add', 'Add a material', 'ti-plus')}</div>${extra}`;
+    el.innerHTML = `<div class="cat-tabs"><div class="tabs-inner">${tab('materials', 'Materials', 'ti-list')}${tab('import', 'Import part list', 'ti-file-import')}${tab('add', 'Add a material', 'ti-plus')}</div></div>${extra}`;
   },
 
   renderBody() {
@@ -487,6 +504,7 @@ const Catalogue = {
   // ── ADD tab ───────────────────────────────────────────────────────────
   _addHtml() {
     const byHand = `<button class="btn btn-outline" data-cat-act="add-hand" style="align-self:flex-start"><i class="ti ti-pencil-plus"></i> Add a material by hand</button>`;
+    if (this.erp === undefined && this._erpErr) return byHand + `<div class="inline-error" style="margin-top:10px">Part list not loaded: ${esc(whyFailed(this._erpErr))}. <button class="btn-sm" data-cat-act="erp-retry">Try again</button></div>`;
     if (this.erp === undefined) return byHand + `<div class="settings-row-sub" style="margin-top:10px">Loading the part list…</div>`;
     if (!this.erp) return byHand + `<div class="settings-row-sub" style="margin-top:10px">No part list has been imported yet, so there is nothing to search. Import one (Import part list), or add the material by hand.</div>`;
     if (!this.addQuery.trim())
@@ -535,9 +553,9 @@ const Catalogue = {
             <div class="setup-field"><label>Ordered by</label>${this._pick('qtyType', sug.qtyType)}</div>
           </div>
           <div class="auth-err" id="cf-err"></div>
-          <button class="btn btn-primary" id="cf-save" style="width:100%"><i class="ti ti-check"></i> ${it ? 'Save' : 'Add to the catalogue'}</button>
+          <button class="btn btn-primary" id="cf-save" style="width:100%"><i class="ti ti-check"></i> ${it ? 'Save changes' : 'Add to the catalogue'}</button>
           ${it ? `<button class="btn btn-outline" id="cf-retire" style="width:100%;margin-top:8px">${it.retired ? '<i class="ti ti-arrow-back-up"></i> Restore — show it for ordering again' : '<i class="ti ti-eye-off"></i> Retire — hide it from ordering'}</button>` : ''}
-          <button class="btn btn-outline" id="cf-cancel" style="width:100%;margin-top:8px">Cancel</button>
+          <button class="btn btn-outline" id="cf-cancel" data-esc style="width:100%;margin-top:8px">${it ? 'Close without saving' : 'Close without adding'}</button>
         </div>
       </div>`;
     const $ = id => document.getElementById(id);
@@ -607,10 +625,20 @@ const Catalogue = {
       if (before && next) {
         const after = next.items.find(i => i.id === st.id);
         const from = stockId(this._shape(before)), to = after ? stockId(this._shape(after)) : from;
-        if (from !== to) await DB.moveMaterialStock(from, to).catch(e => console.warn('[Catalogue] stock move failed:', e));
+        if (from !== to) {
+          document.getElementById('overlay-wrap').innerHTML = '';
+          for (;;) {
+            try { await DB.moveMaterialStock(from, to); break; }
+            catch (e) {
+              console.error('[Catalogue] stock move failed:', e);
+              const why = whyFailed(e);
+              if (!await Ask.confirm({ title: 'Saved, but its stocktake count did not move', body: `${why[0].toUpperCase()}${why.slice(1)}. The count is still filed under the old code.`, yes: 'Try again', no: 'Leave it' })) return;
+            }
+          }
+        }
       }
       document.getElementById('overlay-wrap').innerHTML = '';
-      this._toast(before ? 'Saved' : 'Added to the catalogue');
+      this._toast(before ? 'Changes saved' : 'Added to the catalogue');
     } catch (e) {
       console.error('[Catalogue] not saved', e);
       back();
@@ -639,7 +667,7 @@ const Catalogue = {
       ? `<div class="settings-row">
           <div><div class="settings-row-label">${d.hasUndo === 'undo' ? 'The last import was undone' : 'Undo the last import'}</div>
           <div class="settings-row-sub">${d.hasUndo === 'undo' ? 'Puts the import back as it was applied.' : 'Puts the catalogue back to how it was just before that import. Edits made here since then go too.'}</div></div>
-          <button class="btn-sm" data-cat-act="undo">${d.hasUndo === 'undo' ? 'Put it back' : 'Undo'}</button>
+          <button class="btn-sm" data-cat-act="undo">${d.hasUndo === 'undo' ? 'Put import back' : 'Undo import'}</button>
         </div>` : '';
     return `<div class="settings-card">
         <div class="settings-row" style="flex-direction:column;align-items:flex-start;gap:10px">
@@ -654,7 +682,7 @@ const Catalogue = {
   async _fileChosen(input) {
     const file = input.files && input.files[0]; if (!file) return;
     const status = document.getElementById('cat-file-status');
-    if (status) status.textContent = `Reading ${file.name}…`;
+    if (status) { status.textContent = `Reading ${file.name}…`; status.style.color = ''; }
     try {
       const parsed = await this.readFile(file);
       await this._loadErp();
@@ -675,7 +703,7 @@ const Catalogue = {
       document.querySelector('#catalogue-panel .panel-scroll').scrollTop = 0;
     } catch (e) {
       console.error('[Catalogue] import read failed', e);
-      if (status) status.textContent = `Could not read that file: ${(e && e.message) || e}`;
+      if (status) { status.textContent = e && e.plain ? e.message : 'Could not read that file. Choose the part list workbook from the production board.'; status.style.color = 'var(--red-text)'; }
       input.value = '';
     }
   },
@@ -688,14 +716,14 @@ const Catalogue = {
   },
   _changedRowHtml(c) {
     const d = this.review.dec[c.id];
-    const btn = (k, label) => `<button class="intake-filter-chip${d.action === k ? ' active' : ''}" data-rev-act="${k}">${label}</button>`;
+    const btn = (k, label) => `<button type="button" class="${d.action === k ? 'on' : ''}" data-rev-act="${k}" aria-pressed="${d.action === k}">${label}</button>`;
     return `<div class="cat-rev" data-rev-id="${c.id}">
       <div class="cat-rev-meta">${esc(c.item.code)} · ${esc(c.item.category)} › ${esc(c.item.subcategory)}</div>
       <div class="cat-rev-line"><span>Shown now</span><div>${this._mark(c.shown, c.to)}</div></div>
       <div class="cat-rev-line"><span>List says</span><div>${this._mark(c.to, c.shown)}</div></div>
       ${c.hasOverride ? `<div class="cat-rev-line dim"><span>List said</span><div>${esc(c.from)}</div></div>` : ''}
       ${c.notes ? `<div class="cat-rev-note"><i class="ti ti-note"></i> ${esc(c.notes)}</div>` : ''}
-      <div class="cat-choice">${btn('replace', 'Replace')}${btn('ignore', 'Ignore')}${btn('edit', 'Edit')}
+      <div class="cat-choice"><div class="seg" role="group" aria-label="What to show">${btn('replace', 'Replace')}${btn('ignore', 'Ignore')}${btn('edit', 'Edit')}</div>
         <span class="cat-choice-hint">${d.action === 'replace' ? 'show the list wording' : d.action === 'ignore' ? 'keep showing what is shown now' : 'show your own wording:'}</span></div>
       ${d.action === 'edit' ? `<input class="cat-input" type="text" data-rev-text autocomplete="off" value="${esc(d.text)}">` : ''}
     </div>`;
@@ -733,8 +761,8 @@ const Catalogue = {
       ${sec('No longer on the part list', d.gone.length, 'Still in your catalogue. Leave them, or tick to retire.', d.gone.map(g => this._goneRowHtml(g)).join(''))}
       <div class="cat-apply">
         <span id="cat-rev-sum"></span>
-        <button class="btn btn-outline" data-cat-act="rev-cancel">Cancel</button>
-        <button class="btn btn-primary" data-cat-act="rev-apply"><i class="ti ti-check"></i> Apply</button>
+        <button class="btn btn-outline" data-cat-act="rev-cancel">Discard review</button>
+        <button class="btn btn-primary" data-cat-act="rev-apply"><i class="ti ti-check"></i> Apply changes</button>
       </div>`;
   },
   _updateReviewSummary() {
@@ -775,12 +803,15 @@ const Catalogue = {
       erpDate: r.parsed.erpDate || '', downloaded: r.parsed.downloaded || '', fileName: r.parsed.fileName || '',
       count: r.parsed.parts.length, fresh: r.diff.added.map(a => a.part.code), importedBy: this._by(),
     };
+    let kept = true;
     try { await DB.saveErpParts(erp); this._setErp(erp); }
-    catch (e) { this._fail(e, 'Import applied, part list not stored'); }
+    catch (e) { kept = false; console.error('[Catalogue] part list not kept', e); this._keepErr = e; }
     this.review = null;
     this.tab = 'materials'; this.filter = 'all'; this.query = '';
     this.render();
-    this._toast('Import applied');
+    if (kept) this._toast('Import applied');
+    else tellFailed('Import applied, but the part list was not kept', this._keepErr,
+      'Add a material can\'t search it, and the next upload compares against the old list. Upload the same file again to keep it.');
   },
   async undoImport(btn) {
     const redo = this.doc.hasUndo === 'undo';
@@ -806,8 +837,9 @@ const Catalogue = {
       if (a === 'backup')     this.downloadBackup();
       if (a === 'add-hand')   this.openForm({});
       if (a === 'undo')       this.undoImport(act);
+      if (a === 'erp-retry')  { this._erpErr = null; this.renderBody(); this._loadErp(true); }
       if (a === 'rev-apply')  this.applyReview(act);
-      if (a === 'rev-cancel') { this.review = null; this.render(); }
+      if (a === 'rev-cancel') this._discardReview().then(go => { if (go) this.render(); });
       return;
     }
     const r = this.review;

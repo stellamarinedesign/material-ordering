@@ -1,4 +1,4 @@
-// auth.js — v2026-11-26.5
+// auth.js — v2026-11-26.6
 //
 // Sign-in (Firebase email + password, compat SDK) and WHO IS WHAT, on every
 // page. The same model as the production board:
@@ -76,8 +76,9 @@ const Access = {
     const n = this.normalise(a);
     const all = [...new Set([...n.managers, ...n.engineers, ...n.floor, ...n.masters])];
     const rank = { manager: 0, engineer: 1, floor: 2 };
-    return all.map(email => ({ email, role: this.roleOf(n, email), master: n.masters.includes(email) }))
-      .sort((x, y) => Number(y.master) - Number(x.master) || rank[x.role] - rank[y.role] || x.email.localeCompare(y.email));
+    const onRole = email => Object.values(this.ROLE_LIST).some(k => n[k].includes(email));
+    return all.map(email => ({ email, role: onRole(email) ? this.roleOf(n, email) : 'none', master: n.masters.includes(email) }))
+      .sort((x, y) => Number(y.master) - Number(x.master) || (rank[x.role] ?? 3) - (rank[y.role] ?? 3) || x.email.localeCompare(y.email));
   },
   // The lists with this address in exactly the one role. Masters untouched.
   withRole(a, email, role) {
@@ -91,6 +92,7 @@ const Access = {
   withoutAccount(a, email) {
     const e = tidyEmail(email), n = this.normalise(a);
     for (const r of Object.keys(this.ROLE_LIST)) n[this.ROLE_LIST[r]] = n[this.ROLE_LIST[r]].filter(x => x !== e);
+    n.masters = n.masters.filter(x => x !== e);   // a master on no role list could still change the lists
     return n;
   },
   withMaster(a, email, on) {
