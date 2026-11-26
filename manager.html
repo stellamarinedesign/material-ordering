@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="theme-color" content="#282827">
   <script>/* Theme bootstrap — runs before first paint so a themed device never flashes the default look. Choice is per device; see Theme in js/shared.js */try{var t=localStorage.getItem("mo_theme");if(t&&t!=="stella")document.documentElement.setAttribute("data-theme",t);}catch(e){}</script>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <meta name="mobile-web-app-capable" content="yes">
   <title>Material Orders — Manager</title>
   <link rel="icon" type="image/png" href="favicon.png">
@@ -12,8 +12,8 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" media="print" onload="this.media='all'">
   <link rel="stylesheet" href="fonts/tabler-icons.min.css">
-  <link rel="stylesheet" href="css/style.css?v=2026-11-26.3">
-  <link rel="stylesheet" href="css/themes.css?v=2026-11-26.3">
+  <link rel="stylesheet" href="css/style.css?v=2026-11-26.4">
+  <link rel="stylesheet" href="css/themes.css?v=2026-11-26.4">
 </head>
 <body>
 <!-- Start-up cover: painted before any script; see Boot in js/shared.js -->
@@ -33,12 +33,12 @@
 <!-- APP CHECK: remove this line to disable App Check (also remove init block in firebase-sync.js) -->
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-check-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
-<script src="js/shared.js?v=2026-11-26.3"></script>
-<script src="js/firebase-sync.js?v=2026-11-26.3"></script>
-<script src="js/auth.js?v=2026-11-26.3"></script>
-<script src="js/intake.js?v=2026-11-26.3"></script>
-<script src="js/catalogue.js?v=2026-11-26.3"></script>
-<script src="js/accounts.js?v=2026-11-26.3"></script>
+<script src="js/shared.js?v=2026-11-26.4"></script>
+<script src="js/firebase-sync.js?v=2026-11-26.4"></script>
+<script src="js/auth.js?v=2026-11-26.4"></script>
+<script src="js/intake.js?v=2026-11-26.4"></script>
+<script src="js/catalogue.js?v=2026-11-26.4"></script>
+<script src="js/accounts.js?v=2026-11-26.4"></script>
 <!-- Vendored xlsx-js-style (SheetJS fork with cell styling) — stocktake Excel exports -->
 <script src="js/xlsx-style.min.js"></script>
 <!-- Vendored ExcelJS — used only for the consumables export, which embeds drawn
@@ -267,7 +267,7 @@ const Manager = {
             <span class="header-logo"></span>
             <div class="header-left">
               <div class="header-title">Material Orders — Manager</div>
-              <div class="header-ref"><span class="live-dot connecting" id="live-dot"></span><span id="live-label">Connecting…</span> &nbsp;·&nbsp; <span id="app-version" style="opacity:0.6;font-family:var(--mono)"></span></div>
+              <div class="header-ref"><span class="live-dot connecting" id="live-dot"></span><span id="live-label">Connecting…</span> &nbsp;·&nbsp; <span id="app-version" style="font-family:var(--mono)"></span></div>
             </div>
             <div class="header-actions">
               <span class="role-pill" id="role-pill">${esc(ManagerDeviceName.get() || 'Manager')}</span>
@@ -289,7 +289,7 @@ const Manager = {
                 <div style="display:flex">
                   <button class="main-tab active" id="main-tab-queue">
                     <i class="ti ti-inbox"></i>Order Queue
-                    <span class="sidebar-count zero" id="queue-pending-badge">0</span>
+                    <span class="sidebar-count act zero" id="queue-pending-badge">0</span>
                     <span class="new-order-dot" id="new-order-dot"></span>
                   </button>
                   <button class="main-tab" id="main-tab-new">
@@ -312,7 +312,7 @@ const Manager = {
                 <div style="display:flex">
                   <button class="main-tab" id="main-tab-stock">
                     <i class="ti ti-package"></i>Stock
-                    <span class="sidebar-count zero" id="stock-low-badge">0</span>
+                    <span class="sidebar-count act zero" id="stock-low-badge">0</span>
                   </button>
                   <button class="main-tab" id="main-tab-history">
                     <i class="ti ti-history"></i>History
@@ -332,7 +332,7 @@ const Manager = {
         <div id="view-queue" style="flex:1;display:flex;flex-direction:column;overflow:hidden;min-height:0;height:0">
           <!-- Mobile sub-tabs -->
           <div class="mobile-tabs" id="mobile-tabs">
-            <button class="tab active" data-view="pending">Pending <span class="sidebar-count zero" id="mob-pending-count" style="margin-left:4px">0</span></button>
+            <button class="tab active" data-view="pending">Pending <span class="sidebar-count act zero" id="mob-pending-count" style="margin-left:4px">0</span></button>
             <button class="tab" data-view="sent">Sent</button>
             <button class="tab" data-view="rejected">Rejected</button>
             <button class="tab" data-view="all">All</button>
@@ -342,7 +342,7 @@ const Manager = {
             <div class="manager-sidebar">
               <div class="sidebar-section">
                 <div class="sidebar-title">Orders</div>
-                <button class="sidebar-btn active" data-sb="pending"><i class="ti ti-clock"></i>Pending<span class="sidebar-count zero" id="pending-count">0</span></button>
+                <button class="sidebar-btn active" data-sb="pending"><i class="ti ti-clock"></i>Pending<span class="sidebar-count act zero" id="pending-count">0</span></button>
                 <button class="sidebar-btn" data-sb="sent"><i class="ti ti-mail-check"></i>Sent</button>
                 <button class="sidebar-btn" data-sb="rejected"><i class="ti ti-ban"></i>Rejected</button>
                 <button class="sidebar-btn" data-sb="all"><i class="ti ti-list"></i>All</button>
@@ -512,7 +512,7 @@ const Manager = {
           <div class="panel-header">
             <button class="back-btn" id="btn-close-email"><i class="ti ti-chevron-left"></i>Back</button>
             <div class="panel-title" id="email-panel-title">Order Email</div>
-            <button class="btn-green btn" id="btn-open-outlook" style="width:auto;padding:7px 14px;font-size:13px"><i class="ti ti-mail-forward"></i>Open in Outlook</button>
+            <button class="btn btn-primary" id="btn-open-outlook" style="width:auto;padding:0 16px;min-height:36px;font-size:13px"><i class="ti ti-mail-forward"></i>Open in Outlook</button>
           </div>
           <div class="inline-error" id="email-error" role="alert" hidden></div>
           <div class="email-fields">
@@ -533,7 +533,7 @@ const Manager = {
           </div>
           <div class="panel-scroll"><div class="panel-col" id="no-review-contents"></div></div>
           <div class="action-bar"><div class="action-bar-inner">
-            <button class="btn btn-orange" id="btn-no-add-to-orders">
+            <button class="btn btn-outline" id="btn-no-add-to-orders">
               <i class="ti ti-send"></i> Add to order queue
             </button>
             <div id="no-email-buttons" style="margin-top:2px"></div>
@@ -1666,7 +1666,7 @@ const Manager = {
   _mstChanged() { this._updateMstBadge(); this.renderStocktakeCount(); },
   _updateMstBadge() {
     const b = document.getElementById('mst-badge'); if (!b) return;
-    const n = this.mstCount(); b.textContent = n; b.classList.toggle('zero', n === 0);
+    const n = this.mstCount(); setCount(b, n);
   },
 
   renderStocktakeCount() {
@@ -1682,7 +1682,7 @@ const Manager = {
       const rec = stockMap.get(stockId(m));
       const showCode = m.partCode && !Data.isDummyCode(m.partCode);
       return `<div class="mat-card st-card ${Count.ready(qty, mode)?'in-order':''}">
-        <div class="mat-icon" style="background:${(CAT_ICONS[m.category]||CAT_ICONS.default).bg}"><i class="ti ${(CAT_ICONS[m.category]||CAT_ICONS.default).icon}" style="color:${(CAT_ICONS[m.category]||CAT_ICONS.default).color}"></i></div>
+        ${catTile(m.category)}
         <div class="mat-info">
           <div class="mat-name">${descHtml(m.description)}</div>
           ${showCode ? `<div class="mat-partcode">${esc(m.partCode)}</div>` : '<div class="mat-partcode"></div>'}
@@ -1965,7 +1965,7 @@ const Manager = {
       const n = this._materialsOrders().filter(o => this._orderHasPendingItems(o)).length;
       ['pending-count','mob-pending-count','queue-pending-badge'].forEach(id => {
         const el = document.getElementById(id);
-        if (el) { el.textContent = n; el.classList.toggle('zero', n === 0); }
+        if (el) { setCount(el, n); }
       });
 
       // New order notification — seed on first call, then detect arrivals.
@@ -2023,8 +2023,8 @@ const Manager = {
     const consN = countOutstanding('consumables');
     const mb = document.getElementById('deliveries-mat-badge');
     const cb = document.getElementById('deliveries-cons-badge');
-    if (mb) { mb.textContent = matN;  mb.classList.toggle('zero', matN  === 0); }
-    if (cb) { cb.textContent = consN; cb.classList.toggle('zero', consN === 0); }
+    setCount(mb, matN);
+    setCount(cb, consN);
 
     // Short deliveries with no explanation — surfaced separately from the outstanding
     // count, since they're a "chase purchasing" job rather than something to receive.
@@ -2033,7 +2033,7 @@ const Manager = {
     [['materials', 'followup-mat-badge'], ['consumables', 'followup-cons-badge']].forEach(([type, id]) => {
       const el = document.getElementById(id); if (!el) return;
       const n = countFollowUp(type);
-      el.textContent = n;
+      el.innerHTML = `<i class="ti ti-alert-triangle"></i>${n > 99 ? '99+' : n}`;
       el.style.display = n > 0 ? '' : 'none';
     });
   },
@@ -2117,7 +2117,7 @@ const Manager = {
               </div>
               ${excludedLines.map(line => `
                 <div class="combined-sub-row excluded">
-                  <div class="combined-sub-device"><i class="ti ti-device-ipad" style="font-size:11px"></i><span>${esc(line.deviceName||line.orderRef||'Unknown')}</span><span style="margin-left:4px;opacity:0.6;font-size:10px">${line.submittedAt?fmtTime(line.submittedAt):''}</span><span style="font-size:10px;color:var(--text3);margin-left:4px">(excluded)</span></div>
+                  <div class="combined-sub-device"><i class="ti ti-device-ipad" style="font-size:11px"></i><span>${esc(line.deviceName||line.orderRef||'Unknown')}</span><span style="margin-left:4px;font-size:10px">${line.submittedAt?fmtTime(line.submittedAt):''}</span><span style="font-size:10px;color:var(--text3);margin-left:4px">(excluded)</span></div>
                   <div class="excluded-acts">
                     <button class="btn-sm" data-unexclude="${esc(cat)}" data-order-id="${esc(line.orderId)}" data-partcode="${esc(pGroup.partCode)}">Restore</button>
                     <button class="btn-sm btn-sm-danger" data-reject-item="${esc(line.orderId)}" data-partcode="${esc(pGroup.partCode)}" title="Reject this line — it leaves the combined list but the rest of the order stays; restore it from the order card below"><i class="ti ti-ban"></i> Reject</button>
@@ -2140,8 +2140,8 @@ const Manager = {
               const displayDevice = mergedDev === '__merged__'
                 ? '<span style="font-size:10px;color:var(--green-text);font-family:var(--mono);background:var(--green-bg);padding:1px 6px;border-radius:20px">Merged</span>'
                 : line.deviceName
-                  ? `<span style="font-size:11px;color:var(--text3);font-family:var(--mono)">${esc(line.deviceName)}</span>${line.submittedAt ? `<span style="opacity:0.6;margin-left:4px;font-size:11px;font-family:var(--mono);white-space:nowrap;flex-shrink:0">${fmtTime(line.submittedAt)}</span>` : ''}`
-                  : line.submittedAt ? `<span style="opacity:0.6;font-size:11px;font-family:var(--mono);white-space:nowrap">${fmtTime(line.submittedAt)}</span>` : '';
+                  ? `<span style="font-size:11px;color:var(--text3);font-family:var(--mono)">${esc(line.deviceName)}</span>${line.submittedAt ? `<span style="margin-left:4px;font-size:11px;font-family:var(--mono);white-space:nowrap;flex-shrink:0">${fmtTime(line.submittedAt)}</span>` : ''}`
+                  : line.submittedAt ? `<span style="font-size:11px;font-family:var(--mono);white-space:nowrap">${fmtTime(line.submittedAt)}</span>` : '';
               return `<div class="combined-main-row${isExc ? ' excluded' : ''}">
                 <div class="combined-main-info">
                   <div class="combined-main-name">${descHtml(pGroup.description)}</div>
@@ -2177,7 +2177,7 @@ const Manager = {
                 </div>
                 <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
                   <span style="font-size:12px;color:var(--text3);font-family:var(--mono)">Total: ${totalQty} ${esc(pGroup.qtyType||'')}</span>
-                  <button class="btn-sm btn-sm-save" data-comb-merge="${esc(cat)}" data-partcode="${esc(pGroup.partCode)}">
+                  <button class="btn-sm" data-comb-merge="${esc(cat)}" data-partcode="${esc(pGroup.partCode)}">
                     <i class="ti ti-git-merge"></i> Merge
                   </button>
                 </div>
@@ -2187,7 +2187,7 @@ const Manager = {
                   <div class="combined-sub-device">
                     <i class="ti ti-device-ipad" style="font-size:11px;color:var(--text3);flex-shrink:0"></i>
                     <span>${esc(line.deviceName || 'Unknown')}</span>
-                    ${line.submittedAt ? `<span style="opacity:0.6;margin-left:4px;white-space:nowrap;flex-shrink:0">${fmtTime(line.submittedAt)}</span>` : ''}
+                    ${line.submittedAt ? `<span style="margin-left:4px;white-space:nowrap;flex-shrink:0">${fmtTime(line.submittedAt)}</span>` : ''}
                   </div>
                   <div class="qty-row" style="flex-shrink:0">
                     <button class="qty-btn" data-cqdec="${esc(cat)}" data-order-id="${esc(line.orderId)}" data-partcode="${esc(pGroup.partCode)}">−</button>
@@ -2206,7 +2206,7 @@ const Manager = {
                   <div class="combined-sub-device">
                     <i class="ti ti-eye-off" style="font-size:11px"></i>
                     <span>${esc(line.deviceName||line.orderRef||'Unknown')}</span>
-                    ${line.submittedAt ? `<span style="margin-left:4px;opacity:0.6;font-size:10px">${fmtTime(line.submittedAt)}</span>` : ''}
+                    ${line.submittedAt ? `<span style="margin-left:4px;font-size:10px">${fmtTime(line.submittedAt)}</span>` : ''}
                     <span style="font-size:10px;color:var(--text3);margin-left:4px">(excluded)</span>
                   </div>
                   <div class="excluded-acts">
@@ -2221,12 +2221,12 @@ const Manager = {
           return `<div style="border-bottom:2px solid var(--border)">
             <div class="combined-header" data-comb-cat="${esc(cat)}">
               <div style="display:flex;align-items:center;gap:8px">
-                <i class="ti ${CAT_ICONS[cat]?.icon||'ti-package'}" style="color:${CAT_ICONS[cat]?.color||'#6b7280'}"></i>
+                ${catTile(cat, 'sm')}
                 <span style="font-size:13px;font-weight:500">${esc(cat)}</span>
                 <span style="font-size:11px;color:var(--text3);font-family:var(--mono)">${Object.keys(g.byPartCode).length} item${Object.keys(g.byPartCode).length!==1?'s':''}</span>
               </div>
               <div style="display:flex;align-items:center;gap:8px">
-                <button class="btn-sm btn-sm-save" data-cat-email="${esc(cat)}">
+                <button class="btn-sm" data-cat-email="${esc(cat)}">
                   <i class="ti ti-mail"></i> Email
                 </button>
                 <i class="ti ti-chevron-right chevron ${isOpen?'open':''}" id="comb-chev-${catKey}"></i>
@@ -2293,7 +2293,9 @@ const Manager = {
     const submittedDates = entries
       .map(e => e.order.submittedAt?.toDate ? e.order.submittedAt.toDate() : (e.order.submittedAt || null))
       .filter(Boolean);
-    const ts = submittedDates.length
+    const emailed = entries.map(e => e.item.emailedAt).filter(Boolean);
+    const ts = emailed.length ? 'Emailed ' + fmtTime(new Date(Math.max(...emailed)))
+      : submittedDates.length
       ? fmtTime(new Date(Math.min(...submittedDates.map(d => d instanceof Date ? d.getTime() : new Date(d).getTime()))))
       : '';
     const deviceNames = [...new Set(entries.map(e => e.order.deviceName || ''))].filter(Boolean);
@@ -2322,7 +2324,7 @@ const Manager = {
             const b = byItemId.get(key); b.totalQty += (item.qty || 0); b.orders.push({ item, order });
           }
           return [...byItemId.values()].map(({ item, totalQty, orders }) => `
-          <div class="order-line emailed">
+          <div class="order-line">
             <div class="order-line-info">
               <div class="order-line-name">${descHtml(item.description)}</div>
               <div class="order-line-code">${esc(item.partCode)}${orders.length > 1 ? ` &middot; ${orders.length} orders` : distinctOrderIds.length > 1 ? ' &middot; ' + esc(orders[0].order.deviceName || orders[0].order.ref || orders[0].order._id) : ''}</div>
@@ -2672,7 +2674,7 @@ const Manager = {
         <i class="ti ti-trash"></i> Delete record
       </button>` : isPending && pendingCats.length ? `
       ${pendingCats.map(cat => { const n = this._categoryLines(cat).orders; return `
-        <button class="btn btn-green" data-cat-email="${esc(cat)}" style="margin-bottom:6px">
+        <button class="btn btn-outline" data-cat-email="${esc(cat)}" style="margin-bottom:6px">
           <i class="ti ti-mail"></i> Email all pending ${esc(cat)} (${n} order${n !== 1 ? 's' : ''})
         </button>`; }).join('')}
       ${emailedItems.length > 0 ? `
@@ -3236,7 +3238,7 @@ const Manager = {
   _updateNoBadge() {
     this._keepCarts();
     const b = document.getElementById('new-order-badge'); if (!b) return;
-    const n = this.noCount(); b.textContent = n; b.classList.toggle('zero', n === 0);
+    const n = this.noCount(); setCount(b, n);
     const c = document.getElementById('btn-no-clear-main'); if (c) c.hidden = n === 0;
   },
 
@@ -3345,7 +3347,7 @@ const Manager = {
       const showCode = m.partCode && !Data.isDummyCode(m.partCode);
       return `<div class="mat-card ${inOrder?'in-order':''}">
         <button class="mat-bin" data-bin="${m.id}"><i class="ti ti-trash"></i></button>
-        <div class="mat-icon" style="background:${ci.bg}"><i class="ti ${ci.icon}" style="color:${ci.color}"></i></div>
+        ${catTile(m.category)}
         <div class="mat-info">
           <div class="mat-name">${descHtml(m.description)}</div>
           ${showCode ? `<div class="mat-partcode">${esc(m.partCode)}</div>` : '<div class="mat-partcode"></div>'}
@@ -3404,7 +3406,7 @@ const Manager = {
     const cats = [...new Set(items.map(i => i.category))];
     const btns = document.getElementById('no-email-buttons'); if (!btns) return;
     btns.innerHTML = cats.map(cat => `
-      <button class="btn btn-green" data-no-cat="${esc(cat)}" style="margin-bottom:6px">
+      <button class="btn ${cats.length === 1 ? 'btn-primary' : 'btn-outline'}" data-no-cat="${esc(cat)}" style="margin-bottom:6px">
         <i class="ti ti-mail"></i> Email — ${esc(cat)}
       </button>`).join('');
   },
@@ -3487,7 +3489,7 @@ const Manager = {
   _updateCoBadge() {
     this._keepCarts();
     const b = document.getElementById('co-badge'); if (!b) return;
-    const n = this.coCount(); b.textContent = n; b.classList.toggle('zero', n === 0);
+    const n = this.coCount(); setCount(b, n);
     const c = document.getElementById('btn-co-clear-main'); if (c) c.hidden = n === 0;
   },
 
@@ -3523,7 +3525,7 @@ const Manager = {
       const unitLabel = isBoxed ? `Ordered in ${esc(m.boxUnit||'Box')}es · ${m.boxSize} per ${esc((m.boxUnit||'Box').toLowerCase())}` : esc(m.qtyType||'');
       return `<div class="mat-card ${inOrder?'in-order':''} ${isUntracked?'untracked-item':''}">
         <button class="mat-bin" data-bin="${m.id}"><i class="ti ti-trash"></i></button>
-        <div class="mat-icon" style="background:${ci.bg}"><i class="ti ${ci.icon}" style="color:${ci.color}"></i></div>
+        ${catTile(m.category)}
         <div class="mat-info">
           <div class="mat-name">${descHtml(m.description)}</div>
           ${showCode ? `<div class="mat-partcode">${esc(m.partCode)}</div>` : '<div class="mat-partcode"></div>'}
@@ -3581,7 +3583,7 @@ const Manager = {
       ? `<button class="btn btn-primary" data-co-email-all="1" style="margin-top:6px"><i class="ti ti-mail-forward"></i> Email all consumables</button>`
       : '';
     btns.innerHTML = cats.map(cat => `
-      <button class="btn btn-green" data-co-cat="${esc(cat)}" style="margin-top:6px"><i class="ti ti-mail"></i> Email — ${esc(cat)}</button>`).join('') +
+      <button class="btn ${cats.length === 1 ? 'btn-primary' : 'btn-outline'}" data-co-cat="${esc(cat)}" style="margin-top:6px"><i class="ti ti-mail"></i> Email — ${esc(cat)}</button>`).join('') +
       emailAllBtn;
   },
 
@@ -3622,7 +3624,7 @@ const Manager = {
   _receiveChanged() { this._updateReceiveBadge(); this.renderReceiveList(); },
   _updateReceiveBadge() {
     const b = document.getElementById('receive-badge'); if (!b) return;
-    const n = this.receiveCount(); b.textContent = n; b.classList.toggle('zero', n === 0);
+    const n = this.receiveCount(); setCount(b, n);
     const c = document.getElementById('btn-receive-clear-main'); if (c) c.hidden = n === 0;
   },
 
@@ -3658,7 +3660,7 @@ const Manager = {
       const unitLabel = isBoxed ? `${esc(m.boxUnit||'Box')}(es)` : esc(m.qtyType||'');
       return `<div class="mat-card ${inOrder?'in-order':''} ${isUntracked?'untracked-item':''}">
         <button class="mat-bin" data-bin="${m.id}"><i class="ti ti-trash"></i></button>
-        <div class="mat-icon" style="background:${ci.bg}"><i class="ti ${ci.icon}" style="color:${ci.color}"></i></div>
+        ${catTile(m.category)}
         <div class="mat-info">
           <div class="mat-name">${descHtml(m.description)}</div>
           ${showCode ? `<div class="mat-partcode">${esc(m.partCode)}</div>` : '<div class="mat-partcode"></div>'}
@@ -3806,7 +3808,7 @@ const Manager = {
       return rec.warningQty > 0 && (rec.qty||0) <= rec.warningQty;
     }).length;
     const badge = document.getElementById('stock-low-badge');
-    if (badge) { badge.textContent = low; badge.classList.toggle('zero', low === 0); }
+    if (badge) { setCount(badge, low); }
     const banner = document.getElementById('stock-low-banner');
     const bannerText = document.getElementById('stock-low-text');
     if (banner && bannerText) {
@@ -3872,8 +3874,8 @@ const Manager = {
     let note = '';
     if (q.trim()) { const found = Data.filter(items, null, null, q); note = searchNote(found, q); items = [...found]; }
 
-    // Sort: critical → warning → zero → ok → untracked
-    const order = { critical:0, warning:1, zero:2, ok:3, untracked:4 };
+    // Sort: out → reorder → low → ok → untracked
+    const order = { zero:0, critical:1, warning:2, ok:3, untracked:4 };   // what has run out first
     items.sort((a, b) => {
       const ra = this._stockFor(stockId(a)), rb = this._stockFor(stockId(b));
       const sa = this._stockStatus(ra), sb = this._stockStatus(rb);
@@ -3929,8 +3931,9 @@ const Manager = {
     const badgeClass = status === 'ok' ? '' : status === 'zero' ? ' zero' : status === 'warning' ? ' warning' : status === 'critical' ? ' critical' : ' zero';
     const cardClass  = status === 'untracked' ? ' untracked' : status === 'warning' ? ' warning' : status === 'critical' ? ' critical' : status === 'zero' ? ' zero' : '';
 
+    const word = { zero: 'Out of stock', critical: `Reorder · ${boxDisplay(m, qty)}`, warning: `Low · ${boxDisplay(m, qty)}` }[status];
     const qtyBadge = tracked
-      ? `<span class="stock-qty-badge${badgeClass}">${esc(boxDisplay(m, qty))}</span>`
+      ? `<span class="stock-qty-badge${badgeClass}">${esc(word || boxDisplay(m, qty))}</span>`
       : `<span style="font-size:11px;color:var(--text3);font-family:var(--mono)">Not tracked</span>`;
 
     // Boxed items get a box-centric workflow (add whole boxes, override by boxes+loose,
@@ -3944,7 +3947,7 @@ const Manager = {
             <span class="stock-action-label">Add stock</span>
             <input class="stock-delta-input" type="number" min="1" step="1" placeholder="${esc(m.boxUnit||'Box')}es" id="si-intake-box-${esc(sid)}">
             <span style="font-size:11px;color:var(--text3)">${esc(m.boxUnit||'Box')}(es)</span>
-            <button class="btn-sm btn-sm-save" data-stock-intake-boxn="${esc(sid)}"><i class="ti ti-plus"></i> Intake</button>
+            <button class="btn-sm" data-stock-intake-boxn="${esc(sid)}"><i class="ti ti-plus"></i> Intake</button>
             <button class="btn-sm" data-stock-hist="${esc(sid)}" data-stock-name="${descHtml(m.description)}" style="margin-left:auto"><i class="ti ti-history"></i></button>
           </div>
           <div class="stock-action-row">
@@ -3971,7 +3974,7 @@ const Manager = {
           <div class="stock-action-row">
             <span class="stock-action-label">Add stock</span>
             <input class="stock-delta-input" type="number" min="1" step="1" placeholder="Qty" id="si-intake-${esc(sid)}">
-            <button class="btn-sm btn-sm-save" data-stock-intake="${esc(sid)}"><i class="ti ti-plus"></i> Intake</button>
+            <button class="btn-sm" data-stock-intake="${esc(sid)}"><i class="ti ti-plus"></i> Intake</button>
             <button class="btn-sm" data-stock-hist="${esc(sid)}" data-stock-name="${descHtml(m.description)}" style="margin-left:auto"><i class="ti ti-history"></i></button>
           </div>
           <div class="stock-action-row">
@@ -3995,7 +3998,7 @@ const Manager = {
             <input class="stock-threshold-input" type="number" min="0" step="1" value="${rec?.warningQty||0}" id="si-warn-${esc(sid)}">
             <span class="stock-threshold-label" style="margin-left:8px">Reorder:</span>
             <input class="stock-threshold-input" type="number" min="0" step="1" value="${rec?.reorderQty||0}" id="si-reorder-${esc(sid)}">
-            <button class="btn-sm btn-sm-save" data-stock-thresh="${esc(sid)}" style="margin-left:auto">Save</button>
+            <button class="btn-sm" data-stock-thresh="${esc(sid)}" style="margin-left:auto">Save</button>
           </div>
           <div class="stock-action-row" style="border-top:1px solid var(--border);padding-top:8px;margin-top:2px">
             <button class="btn-sm btn-sm-danger" data-stock-disable="${esc(sid)}" style="margin-left:auto">Disable tracking</button>
@@ -4007,14 +4010,14 @@ const Manager = {
           <div class="stock-action-row">
             <span style="font-size:12px;color:var(--text2);flex:1">Enable tracking to manage stock levels for this item.</span>
             <input class="stock-delta-input" type="number" min="0" step="1" placeholder="Initial qty" id="si-init-${esc(sid)}" style="width:80px">
-            <button class="btn-sm btn-sm-save" data-stock-enable="${esc(sid)}"><i class="ti ti-check"></i> Enable</button>
+            <button class="btn-sm" data-stock-enable="${esc(sid)}"><i class="ti ti-check"></i> Enable</button>
           </div>
         </div>
       </div>`;
 
     return `<div class="stock-card${cardClass}" id="stock-card-${esc(sid)}">
       <div class="stock-card-header" data-stock-hdr="${esc(sid)}">
-        <div class="stock-card-icon" style="background:${ci.bg}"><i class="ti ${ci.icon}" style="color:${ci.color}"></i></div>
+        ${catTile(m.category, 'stock-card-icon')}
         <div class="stock-card-info">
           <div class="stock-card-name">${descHtml(m.description)}${m._ghost ? ' <span class="ghost-chip"><i class="ti ti-sparkles" style="font-size:10px"></i> New — not in CSV yet</span>' : ''}</div>
           <div class="stock-card-meta">${showCode ? esc(m.partCode)+' · ' : ''}${esc(m.category)} · ${esc(m.subcategory)}</div>

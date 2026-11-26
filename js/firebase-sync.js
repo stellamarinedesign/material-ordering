@@ -1,4 +1,4 @@
-// firebase-sync.js — v2026-11-26.3
+// firebase-sync.js — v2026-11-26.4
 let _db = null, _configured = false, _config = null, _second = null;
 
 // Signed-in email for stamping writes (null when the device isn't signed in —
@@ -327,7 +327,7 @@ const DB = {
           if (item.emailed && item.deliveryId !== deliveryId) return item;
           want.splice(i, 1);
           if (!item.emailed && ticks[String(item.id)]) { delete ticks[String(item.id)]; old = true; }
-          return { ...item, emailed: true, deliveryId };
+          return { ...item, emailed: true, deliveryId, emailedAt: item.emailed ? item.emailedAt || Date.now() : Date.now() };
         });
         const live = items.filter(i => !i.rejected);
         return { items, ...(old ? { 'intake.items': ticks } : {}), status: live.length > 0 && live.every(i => i.emailed) ? 'sent' : 'pending' };
@@ -348,7 +348,7 @@ const DB = {
       if ((await tx.get(ref)).exists) return;   // an earlier try got through
       tx.set(ref, {
         ...order,
-        items: order.items.map(i => ({ ...i, emailed: true, deliveryId: deliveryIds[i.category] })),
+        items: order.items.map(i => ({ ...i, emailed: true, deliveryId: deliveryIds[i.category], emailedAt: Date.now() })),
         status: 'sent', authEmail: _who(),
         submittedAt: firebase.firestore.FieldValue.serverTimestamp(),
       });
@@ -372,7 +372,7 @@ const DB = {
         const data = doc.data(), was = data.items || [];
         const mine = i => i.emailed && keys.includes(i.deliveryId || `legacy:${ids[n]}:${i.category}`);
         if (!was.some(mine)) return;
-        const items = remove ? was.filter(i => !mine(i)) : was.map(i => mine(i) ? { ...i, emailed: false } : i);
+        const items = remove ? was.filter(i => !mine(i)) : was.map(i => { if (!mine(i)) return i; const { emailedAt, ...rest } = i; return { ...rest, emailed: false }; });
         if (!items.length) { tx.delete(refs[n]); return; }
         // Without this, emailing them again makes a delivery that already shows the old ticks.
         const ticks = { ...((data.intake && data.intake.items) || {}) };

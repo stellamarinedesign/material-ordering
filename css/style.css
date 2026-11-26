@@ -23,8 +23,13 @@
   --text:        #ffffff;
   --text2:       #d2d2ce;
   --text3:       #b0b0ab;
-  --accent:      #af1f24;   /* Upsdell Red — primary buttons, active chips */
+  --accent:      #af1f24;   /* Upsdell Red — the one main action on a screen */
   --accent-text: #ffffff;
+  /* The rest of the Stella palette (universal resources: Brand Colours.md) */
+  --marina:      #1d62af;   /* Marina Blue */
+  --royal:       #253b7c;   /* Royal Blue */
+  --sand:        #f5cfb2;   /* Beach Sand */
+  --navy:        #1c1c27;   /* Deep Sea Navy */
   --blue:        #3b82f6;  --blue-bg:  #172033;  --blue-text:  #8ab4ff;
   --green:       #5fb85f;  --green-bg: #13261a;  --green-text: #7fd47f;
   --red:         #ea372e;  --red-bg:   #2b100e;  --red-text:   #ff7369;
@@ -45,10 +50,11 @@
   --logo:        url('../images/brand/stella-icon.png');  /* header logo slot — */
   --logo-w:      46px;                                     /* set all three, or  */
   --logo-gap:    12px;                                     /* none for no logo   */
+  --logo-h:      44px;                                     /* on the sign-in card */
   /* Tabs, focus, surfaces that differ from the cards */
-  --tab-active:     #ea372e;             /* worker-page tab underline */
-  --main-tab-active:#ea372e;             /* manager main-tab underline */
-  --focus:          #ea372e;             /* focused input border */
+  --tab-active:     var(--marina);       /* chosen tab underline (selected = blue) */
+  --main-tab-active:var(--marina);
+  --focus:          var(--marina);       /* focused field border and focus ring */
   --panel-bg:       var(--ground);       /* slide-in panels, setup screen, manager content */
   --search-strip:   var(--ground);       /* strip the search box sits in… */
   --search-strip-line: 0 solid transparent;
@@ -60,17 +66,18 @@
   --stocktake-banner-bg:   #2b1f08;  --stocktake-banner-text: #f2b84b;  --stocktake-banner-line: #4a3610;
   --setup-banner-bg:       #251c45;  --setup-banner-text:     #c4b5fd;  --setup-banner-line:     #3f3480;
   --ghost-bg:              #251c45;  --ghost-text:            #c4b5fd;  --ghost-line:            #4c3d8a;
-  /* Non-status accents — selected/active highlights, count bubbles, links,
-     neutral chips, notes. The brand has no blue and amber means "warning", so
-     these are red/neutral here; the Workshop theme maps them back to blue/amber. */
-  --select-bg:   var(--accent);          /* active sidebar item, in-order add button, dialog icon */
-  --select-text: var(--accent-text);
-  --select-line: #ea372e;                /* in-order card border, delivery-group card rule */
-  --count-bg:    #ea372e;                /* count bubbles beside tabs — Burning Star Red */
+  /* Colour roles (agreed 2026-11-26): red is the one main action; blue is what is
+     selected or in the order, and counts that only inform; a red count needs doing.
+     Status colours above keep their meanings. */
+  --select-bg:   var(--royal);           /* chosen sidebar item and filter, in-order tick, dialog icon */
+  --select-text: #ffffff;
+  --select-line: var(--marina);          /* in-order card border, delivery-group card rule */
+  --count-bg:    var(--royal);           /* a count that informs */
   --count-text:  #ffffff;
+  --count-act:   #ea372e;                /* a count of something to do — Burning Star Red */
   --count-on-btn-bg:   rgba(255,255,255,0.22); /* …but on a red/orange button a red bubble vanishes */
   --count-on-btn-text: #ffffff;
-  --link:        #ff7369;                /* back buttons, links, hover-to-open names */
+  --link:        var(--sand);            /* back buttons, links, hover-to-open names */
   --chip-bg:     var(--bg2);             /* informational chips (barcodes) */
   --chip-text:   var(--text2);
   --chip-line:   var(--border2);
@@ -79,6 +86,11 @@
   --note-line:   #af1f24;
   --radius:      8px;
   --radius-lg:   11px;
+  /* Motion: one set of durations, so one reduced-motion rule turns them all off */
+  --dur-fast:    120ms;   /* colour and state changes, a press */
+  --dur:         200ms;   /* messages, small things arriving */
+  --dur-panel:   260ms;   /* panels and sheets */
+  --ease-out:    cubic-bezier(.23, 1, .32, 1);
   --font:        'IBM Plex Sans', sans-serif;
   --mono:        'IBM Plex Mono', monospace;
 }
@@ -199,19 +211,19 @@ button { cursor: pointer; }
   border-bottom: 2px solid transparent; white-space: nowrap; flex-shrink: 0;
   background: none; border-top: none; border-left: none; border-right: none;
 }
-.tab.active { color: var(--text); border-bottom-color: var(--tab-active); }
+.tab.active { color: var(--text); border-bottom-color: var(--tab-active); font-weight: 600; }
 .main-tab {
   padding: 11px 18px; font-size: 13px; font-weight: 500; color: var(--text3);
   border-bottom: 2px solid transparent; background: none;
   border-top: none; border-left: none; border-right: none;
   cursor: pointer; white-space: nowrap; display: inline-flex; align-items: center; gap: 6px;
 }
-.main-tab.active { color: var(--text); border-bottom-color: var(--main-tab-active); }
+.main-tab.active { color: var(--text); border-bottom-color: var(--main-tab-active); font-weight: 600; }
 .main-tabs { display: flex; align-items: stretch; overflow-x: auto; scrollbar-width: none; }
 .main-tabs::-webkit-scrollbar { display: none; }
 .main-tab-group { display: flex; flex-direction: column; flex-shrink: 0; }
 .main-tab-group-label {
-  font-size: 9px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em;
+  font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em;
   color: var(--text3); font-family: var(--mono); padding: 4px 18px 0;
 }
 .main-tab-divider { width: 1px; background: var(--border); margin: 6px 4px; flex-shrink: 0; }
@@ -244,7 +256,7 @@ button { cursor: pointer; }
 .mat-card {
   background: var(--surface); border: 1px solid var(--border);
   border-radius: var(--radius-lg); padding: 11px 12px;
-  display: flex; align-items: center; gap: 10px; transition: border-color 0.15s;
+  display: flex; align-items: center; gap: 10px; transition: border-color var(--dur-fast);
 }
 .mat-card.in-order { border-color: var(--select-line); border-width: 1.5px; }
 .mat-card.untracked-item { opacity: 0.55; }
@@ -278,7 +290,7 @@ button { cursor: pointer; }
 .mat-bin {
   width: 36px; height: 36px; display: flex; align-items: center; justify-content: center;
   background: none; border: none; color: var(--red-text); font-size: 15px;
-  opacity: 0; pointer-events: none; transition: opacity 0.15s; flex-shrink: 0;
+  opacity: 0; pointer-events: none; transition: opacity var(--dur-fast); flex-shrink: 0;
 }
 .mat-card.in-order .mat-bin { opacity: 1; pointer-events: auto; }
 
@@ -288,10 +300,10 @@ button { cursor: pointer; }
 .panel {
   position: absolute; inset: 0; background: var(--panel-bg);
   transform: translateX(100%);
-  transition: transform 0.3s cubic-bezier(0.32,0.72,0,1);
+  transition: transform calc(var(--dur-panel) * .8) var(--ease-out);   /* closing is a little quicker */
   z-index: 20; display: flex; flex-direction: column; overflow: hidden;
 }
-.panel.open { transform: translateX(0); }
+.panel.open { transform: translateX(0); transition-duration: var(--dur-panel); }
 .panel-header {
   background: var(--surface); border-bottom: 1px solid var(--border);
   padding: 13px 16px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0;
@@ -346,9 +358,7 @@ button { cursor: pointer; }
 .btn-outline { background: var(--surface); border-color: var(--border); color: var(--text); }
 .btn-outline:active { background: var(--bg); }
 .btn-danger  { background: var(--surface); border-color: var(--border); color: var(--red-text); }
-.btn-green   { background: var(--green); color: #fff; }
-.btn-green:active { opacity: 0.85; }
-.btn-orange  { background: var(--orange); color: #fff; }
+
 .btn-blue    { background: var(--select-bg); color: var(--select-text); }
 
 /* ═══════════════════════════════════════
@@ -388,9 +398,9 @@ button { cursor: pointer; }
 /* ═══════════════════════════════════════
    OVERLAY + BOTTOM SHEET
    ═══════════════════════════════════════ */
-.overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 100; display: flex; align-items: flex-end; justify-content: center; opacity: 0; transition: opacity 0.2s; pointer-events: none; }
+.overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 100; display: flex; align-items: flex-end; justify-content: center; opacity: 0; transition: opacity var(--dur); pointer-events: none; }
 .overlay.show { opacity: 1; pointer-events: all; }
-.sheet { background: var(--surface); border-radius: 16px 16px 0 0; padding: 20px 20px 40px; width: 100%; max-width: 600px; transform: translateY(100%); transition: transform 0.3s cubic-bezier(0.32,0.72,0,1); max-height: 80dvh; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+.sheet { background: var(--surface); border-radius: 16px 16px 0 0; padding: 20px 20px 40px; width: 100%; max-width: 600px; transform: translateY(100%); transition: transform var(--dur-panel) var(--ease-out); max-height: 80dvh; overflow-y: auto; -webkit-overflow-scrolling: touch; }
 .overlay.show .sheet { transform: translateY(0); }
 .sheet-handle { width: 36px; height: 4px; background: var(--border2); border-radius: 2px; margin: 0 auto 16px; }
 .sheet h3 { font-size: 16px; font-weight: 600; margin-bottom: 6px; }
@@ -483,10 +493,17 @@ button { cursor: pointer; }
 .sidebar-title { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text3); font-family: var(--mono); margin-bottom: 4px; padding: 0 4px; }
 .sidebar-btn { width: 100%; min-height: 36px; text-align: left; padding: 7px 10px; border-radius: var(--radius); border: none; background: none; font-size: 13px; color: var(--text2); display: flex; align-items: center; gap: 8px; }
 .sidebar-btn:hover  { background: var(--bg); }
-.sidebar-btn.active { background: var(--select-bg); color: var(--select-text); font-weight: 500; }
-.sidebar-count { margin-left: auto; font-size: 10px; font-family: var(--mono); background: var(--count-bg); color: var(--count-text); padding: 1px 6px; border-radius: 20px; }
+/* The chosen item: blue, and a bar on its edge so it never rests on colour alone */
+.sidebar-btn.active { background: var(--select-bg); color: var(--select-text); font-weight: 600; box-shadow: inset 3px 0 0 var(--select-line); }
+.sidebar-count {
+  margin-left: auto; min-width: 18px; text-align: center; font-size: 10px; font-family: var(--mono); font-variant-numeric: tabular-nums;
+  background: var(--count-bg); color: var(--count-text); padding: 1px 6px; border-radius: 20px;
+}
+.sidebar-count.act { background: var(--count-act); color: #fff; }   /* something to do */
 .btn .sidebar-count { background: var(--count-on-btn-bg); color: var(--count-on-btn-text); }
 .sidebar-count.zero { display: none; }
+/* A count beside a tab keeps its room at zero, so the tab never changes width */
+.main-tab .sidebar-count.zero { display: inline-block; visibility: hidden; }
 
 /* ═══════════════════════════════════════
    ORDER CARDS
@@ -526,9 +543,9 @@ button { cursor: pointer; }
 .edit-note { font-size: 11px; color: var(--text3); font-style: italic; margin-bottom: 8px; }
 .emailed-badge { font-size:10px;font-family:var(--mono);background:var(--green-bg);color:var(--green-text);padding:1px 6px;border-radius:20px;white-space:nowrap; }
 .sent-stamp { font-size: 11px; color: var(--green-text); font-family: var(--mono); background: var(--green-bg); padding: 2px 8px; border-radius: 20px; display: inline-flex; align-items: center; gap: 4px; }
-.chevron { transition: transform 0.2s; color: var(--text3); font-size: 16px; }
+.chevron { transition: transform var(--dur); color: var(--text3); font-size: 16px; }
 .chevron.open { transform: rotate(90deg); }
-.live-dot { width: 7px; height: 7px; background: var(--green); border-radius: 50%; display: inline-block; margin-right: 5px; animation: pulse 2s infinite; }
+.live-dot { width: 7px; height: 7px; background: var(--green); border-radius: 50%; display: inline-block; margin-right: 5px; }   /* steady: nothing moves for ever */
 .live-dot.disconnected { background: var(--red); animation: none; }
 .live-dot.connecting { background: var(--text3); animation: none; }
 .live-reload {
@@ -551,7 +568,7 @@ button { cursor: pointer; }
 .skels.tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
 .skels.tiles .skel { height: 290px; }
 .search-note { font-size: 13px; color: var(--text2); padding: 4px 2px 6px; text-wrap: pretty; }
-.live-dot.update-available { background: var(--amber-text); animation: pulse 2s infinite; }
+.live-dot.update-available { background: var(--amber-text); }
 .update-banner {
   background: var(--amber-bg); border-bottom: 1px solid var(--amber-text);
   padding: 8px 14px; font-size: 12px; color: var(--amber-text);
@@ -600,7 +617,7 @@ button { cursor: pointer; }
 .stock-list { padding: 10px 12px 20px; display: flex; flex-direction: column; gap: 6px; }
 .stock-card {
   background: var(--surface); border: 1px solid var(--border);
-  border-radius: var(--radius-lg); overflow: hidden; transition: border-color 0.15s;
+  border-radius: var(--radius-lg); overflow: hidden; transition: border-color var(--dur-fast);
 }
 .stock-card.warning { border-color: var(--amber-text); }
 .stock-card.critical { border-color: var(--red); }
@@ -714,6 +731,50 @@ button { cursor: pointer; }
 
 @keyframes spin { to { transform: rotate(360deg); } }
 
+/* ═══ PRESSED, FOCUS, MOTION, FIELDS, EDGES ═══ */
+/* A press shows at once, on every button */
+button { transition: transform var(--dur-fast) var(--ease-out), background-color var(--dur-fast), border-color var(--dur-fast), color var(--dur-fast); }
+button:not(:disabled):active { transform: scale(.97); }
+.tab:not(:disabled):active, .main-tab:not(:disabled):active, .sidebar-btn:not(:disabled):active { transform: none; background: var(--bg); }
+/* Where the keyboard is: a ring, only for the keyboard */
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+input:focus-visible, textarea:focus-visible, select:focus-visible { outline: none; }
+/* Quantity fields show when they are the one being typed in */
+.qty-input:focus, .qty-row .qty-edit:focus, .stock-delta-input:focus, .stock-threshold-input:focus, .intake-partial-input:focus {
+  border-color: var(--focus); box-shadow: inset 0 0 0 1px var(--focus); position: relative; z-index: 1;
+}
+/* No colours fading one by one while the theme changes */
+.theme-switching, .theme-switching * { transition: none !important; }
+/* Reduced motion: nothing slides, fades or spins */
+@media (prefers-reduced-motion: reduce) {
+  :root { --dur-fast: 0ms; --dur: 0ms; --dur-panel: 0ms; }
+  *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0ms !important; scroll-behavior: auto !important; }
+  button:not(:disabled):active { transform: none; }
+}
+/* Touch screens: fields at 16px or more, so iOS never zooms in on them */
+@media (pointer: coarse) {
+  input:not([type=checkbox]):not([type=radio]), select, textarea { font-size: max(16px, 1em) !important; }
+}
+/* Clear of the iPad's home indicator */
+.action-bar { padding-bottom: calc(12px + env(safe-area-inset-bottom)); }
+.sheet { padding-bottom: calc(40px + env(safe-area-inset-bottom)); }
+.scan-toast { bottom: calc(88px + env(safe-area-inset-bottom)); }
+/* Category tiles: the pastels as set, toned down on a dark theme so they aren't the
+   brightest thing on every row */
+.mat-icon, .stock-card-icon, .cons-tile-icon { background: var(--cat-bg); }
+.mat-icon i, .stock-card-icon i, .cons-tile-icon i { color: var(--cat); }
+.mat-icon.sm { width: 26px; height: 26px; font-size: 14px; border-radius: 6px; }
+:root:not([data-theme="workshop"]) :is(.mat-icon, .stock-card-icon, .cons-tile-icon) { background: color-mix(in srgb, var(--cat) 26%, var(--surface)); }
+:root:not([data-theme="workshop"]) :is(.mat-icon, .stock-card-icon, .cons-tile-icon) i { color: color-mix(in srgb, var(--cat) 45%, #ffffff); }
+/* Floating cards stand off the page in both themes */
+.success-overlay .success-card, #auth-gate .success-card, #auth-block .success-card {
+  border: 1px solid var(--border);
+  box-shadow: 0 1px 2px rgba(0,0,0,.18), 0 8px 24px rgba(0,0,0,.22), 0 24px 56px rgba(0,0,0,.18);
+}
+/* What has run out reads first, and isn't the quietest row */
+.stock-card.zero { opacity: 1; border-color: var(--red); }
+.stock-qty-badge.zero { background: var(--red-bg); color: var(--red-text); }
+
 /* ═══════════════════════════════════════
    INTAKE — order cards, item rows, buttons
    ═══════════════════════════════════════ */
@@ -727,9 +788,9 @@ button { cursor: pointer; }
   display: flex; align-items: center; gap: 5px; white-space: nowrap;
   min-height: 36px; padding: 0 14px; border-radius: 20px; font-size: 12px; font-weight: 500;
   border: 1px solid var(--border); background: var(--surface); color: var(--text2);
-  cursor: pointer; user-select: none; transition: background .12s, color .12s, border-color .12s;
+  cursor: pointer; user-select: none; transition: background var(--dur-fast), color var(--dur-fast), border-color var(--dur-fast);
 }
-.intake-filter-chip.active { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+.intake-filter-chip.active { background: var(--select-bg); color: var(--select-text); border-color: var(--select-line); font-weight: 600; }
 
 /* Intake scroll container */
 .intake-scroll { flex: 1; overflow-y: auto; }
@@ -771,8 +832,8 @@ button { cursor: pointer; }
 .intake-confirm-btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 8px; white-space: nowrap;
   min-height: 40px; font-size: 14px; font-weight: 600; padding: 0 18px;
-  border-radius: var(--radius); border: 1px solid var(--green);
-  background: var(--green-bg); color: var(--green-text); cursor: pointer;
+  border-radius: var(--radius); border: 1px solid var(--accent);
+  background: var(--accent); color: var(--accent-text); cursor: pointer;
 }
 .intake-confirm-btn:disabled { opacity: .7; cursor: default; border-color: var(--border); background: var(--bg2); color: var(--text2); }
 
@@ -828,7 +889,7 @@ button { cursor: pointer; }
   background: var(--toast-bg); color: #fff; padding: 11px 16px;
   border-radius: var(--radius-lg); font-size: 14px; font-weight: 600;
   box-shadow: 0 6px 20px rgba(0,0,0,0.3); z-index: 200;
-  opacity: 0; pointer-events: none; transition: opacity 0.18s, transform 0.18s;
+  opacity: 0; pointer-events: none; transition: opacity var(--dur) var(--ease-out), transform var(--dur) var(--ease-out);
 }
 .scan-toast.show { opacity: 1; transform: translate(-50%, 0); }
 .scan-toast.warn { background: var(--toast-warn-bg); }
@@ -848,7 +909,7 @@ button { cursor: pointer; }
 .scan-link-row:active { background: var(--bg2); }
 /* Flash a barcode-panel row when its code is scanned (verification) */
 @keyframes bc-hit-flash { 0% { background: var(--amber-bg); } 100% { background: var(--surface); } }
-.bc-hit { animation: bc-hit-flash 1.6s ease-out; }
+.bc-hit { animation: bc-hit-flash 1s ease-out; }
 
 /* ═══ ORDER NOTES — worker/manager → manager; never in the email or a delivery ═══ */
 /* Confirmation screens */
@@ -884,7 +945,7 @@ button { cursor: pointer; }
 .auth-pill .ti { font-size: 14px; }
 .auth-card .setup-field { margin-bottom: 12px; }
 .auth-card .setup-field input { font-family: var(--font); font-size: 15px; padding: 10px 12px; width: 100%; }
-.auth-logo { width: 100%; height: 44px; margin: 2px 0 10px; background: var(--logo) center / contain no-repeat; }
+.auth-logo { width: 100%; height: var(--logo-h); margin: 2px 0 10px; background: var(--logo) center / contain no-repeat; }
 .auth-err { min-height: 18px; font-size: 12.5px; color: var(--red-text); margin: 2px 0 8px; line-height: 1.4; }
 
 /* ═══ CONSUMABLE BARCODES (manager panel) ═══ */
@@ -979,7 +1040,7 @@ button.bc-chip { font-family: var(--mono); line-height: inherit; }
   display: flex; flex-direction: column; align-items: center; gap: 2px;
   padding: 6px 8px; border-radius: var(--radius); border: 1px solid var(--border);
   background: var(--bg); color: var(--text2); font-size: 10px; font-weight: 500;
-  cursor: pointer; min-width: 44px; min-height: 36px; justify-content: center; transition: background .1s, color .1s, border-color .1s;
+  cursor: pointer; min-width: 44px; min-height: 36px; justify-content: center; transition: background var(--dur-fast), color var(--dur-fast), border-color var(--dur-fast);
   line-height: 1;
 }
 .intake-btn .ti { font-size: 14px; }
@@ -1041,10 +1102,11 @@ button.bc-chip { font-family: var(--mono); line-height: inherit; }
   background: var(--red-bg); color: var(--red-text);
 }
 .followup-badge {
-  display: inline-flex; align-items: center; justify-content: center; min-width: 18px;
+  display: inline-flex; align-items: center; justify-content: center; gap: 2px; min-width: 18px;
   height: 18px; padding: 0 5px; margin-left: 4px; border-radius: 9px;
-  background: var(--red); color: #fff; font-size: 11px; font-weight: 600; font-family: var(--mono);
+  background: var(--count-act); color: #fff; font-size: 11px; font-weight: 600; font-family: var(--mono); font-variant-numeric: tabular-nums;
 }
+.followup-badge .ti { font-size: 11px; }
 
 /* Notes textarea row */
 .intake-notes-row {
@@ -1266,7 +1328,7 @@ button.bc-chip { font-family: var(--mono); line-height: inherit; }
    nothing moves, and it is at the other end of the row from "+" */
 .floor .mat-card { padding: 9px 12px; position: relative; }
 .floor .mat-bin { position: absolute; left: 7px; top: 50%; width: 48px; height: 48px; margin-top: -24px; font-size: 20px; }
-.floor .mat-icon { transition: opacity 0.12s; }
+.floor .mat-icon { transition: opacity var(--dur-fast); }
 .floor .mat-card.in-order .mat-bin + .mat-icon { opacity: 0; }
 .floor .remove-btn { min-width: 48px; min-height: 48px; justify-content: center; padding: 0 8px; font-size: 14px; }
 .floor .order-item-name { font-size: 15px; }
@@ -1391,7 +1453,8 @@ label.settings-row { cursor: pointer; }
   position: fixed; inset: 0; z-index: 100; background: var(--ground);
   display: flex; align-items: center; justify-content: center; padding: 20px;
 }
-#auth-gate .auth-logo { height: 52px; margin: 6px 0 14px; }
+#auth-gate .auth-logo { height: calc(var(--logo-h) + 8px); margin: 6px 0 14px; }
+[data-theme="workshop"] .auth-logo { display: none; }   /* no logo on the light theme */
 [data-master-only][hidden] { display: none !important; }
 .master-chip {
   display: inline-block; margin-left: 6px; padding: 1px 7px; border-radius: 10px; vertical-align: 1px;

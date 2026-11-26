@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="theme-color" content="#282827">
   <script>/* Theme bootstrap — runs before first paint so a themed device never flashes the default look. Choice is per device; see Theme in js/shared.js */try{var t=localStorage.getItem("mo_theme");if(t&&t!=="stella")document.documentElement.setAttribute("data-theme",t);}catch(e){}</script>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <meta name="mobile-web-app-capable" content="yes">
   <title>Warehouse Intake</title>
   <link rel="icon" type="image/png" href="favicon.png">
@@ -12,8 +12,8 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" media="print" onload="this.media='all'">
   <link rel="stylesheet" href="fonts/tabler-icons.min.css">
-  <link rel="stylesheet" href="css/style.css?v=2026-11-26.3">
-  <link rel="stylesheet" href="css/themes.css?v=2026-11-26.3">
+  <link rel="stylesheet" href="css/style.css?v=2026-11-26.4">
+  <link rel="stylesheet" href="css/themes.css?v=2026-11-26.4">
 </head>
 <body class="floor">
 <!-- Start-up cover: painted before any script; see Boot in js/shared.js -->
@@ -33,10 +33,10 @@
 <!-- APP CHECK: remove this line to disable App Check (also remove init block in firebase-sync.js) -->
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-check-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
-<script src="js/shared.js?v=2026-11-26.3"></script>
-<script src="js/firebase-sync.js?v=2026-11-26.3"></script>
-<script src="js/auth.js?v=2026-11-26.3"></script>
-<script src="js/intake.js?v=2026-11-26.3"></script>
+<script src="js/shared.js?v=2026-11-26.4"></script>
+<script src="js/firebase-sync.js?v=2026-11-26.4"></script>
+<script src="js/auth.js?v=2026-11-26.4"></script>
+<script src="js/intake.js?v=2026-11-26.4"></script>
 <script>
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.getRegistrations().then(rs => rs.forEach(r => r.unregister()));
@@ -93,7 +93,7 @@ const Warehouse = {
               <div class="header-title"><i class="ti ti-warehouse" style="opacity:.7;margin-right:6px"></i>Warehouse Intake</div>
               <div class="header-ref">
                 <span class="live-dot connecting" id="live-dot"></span><span id="live-label">Connecting…</span><span class="hdr-extra">
-                &nbsp;·&nbsp; <span id="app-version" style="opacity:.6;font-family:var(--mono)"></span></span>
+                &nbsp;·&nbsp; <span id="app-version" style="font-family:var(--mono)"></span></span>
               </div>
             </div>
             <div class="header-actions">

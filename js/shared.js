@@ -1,9 +1,9 @@
-// shared.js — v2026-11-26.3
+// shared.js — v2026-11-26.4
 
 // The build date plus that day's counter — "2026-10-06.2" is the second build
 // on 6 Oct 2026 (the production board's scheme). Set by tools/bump-version.py;
 // shown to people with a leading "v" (see verLabel).
-const APP_VERSION = '2026-11-26.3';
+const APP_VERSION = '2026-11-26.4';
 
 // Numeric version comparison, part by part. Returns true if `a` is strictly
 // newer than `b`. Reads both the dated form and the "v0.56"-style numbers used
@@ -72,6 +72,15 @@ const CAT_ICONS = {
   'default':         { icon:'ti-package', bg:'#f3f4f6', color:'#6b7280' },
 };
 
+// A category's tile. Its colours are set as --cat and --cat-bg and the stylesheet decides
+// how to use them, so a dark theme can tone the pastels down. cls: 'sm', or the class of
+// a tile that isn't the usual material one.
+function catTile(category, cls) {
+  const ci = CAT_ICONS[category] || CAT_ICONS.default;
+  const klass = cls === 'sm' ? 'mat-icon sm' : cls || 'mat-icon';
+  return `<div class="${klass}" style="--cat:${ci.color};--cat-bg:${ci.bg}"><i class="ti ${ci.icon}"></i></div>`;
+}
+
 // ── THEMES ────────────────────────────────────────────────────────────
 // Visual themes are CSS-variable override blocks in css/themes.css, keyed on
 // <html data-theme="…">. The choice is per device (localStorage) — it's a
@@ -89,7 +98,11 @@ const Theme = {
   get()   { try { const v = localStorage.getItem(this._key) || ''; return v === 'stella' ? '' : v; } catch { return ''; } },
   set(id) {
     try { if (id) localStorage.setItem(this._key, id); else localStorage.removeItem(this._key); } catch {}
+    const root = document.documentElement;
+    root.classList.add('theme-switching');
     this.apply();
+    void getComputedStyle(root).color;   // the new colours land while nothing may fade
+    root.classList.remove('theme-switching');
   },
   apply() {
     const id = this.get();
@@ -1471,6 +1484,13 @@ const Live = {
     Ask.tell('No connection', 'Check the Wi-Fi, then tap Reload.');
   },
 };
+
+// A count beside a tab or on a button: capped, and hidden (its room kept) at zero.
+function setCount(el, n) {
+  if (!el) return;
+  el.textContent = n > 99 ? '99+' : String(n);
+  el.classList.toggle('zero', !n);
+}
 
 // A brief message at the foot of the screen, for things that are fine to miss.
 // action: { label, run } — one thing that can still be done about it, offered for longer.

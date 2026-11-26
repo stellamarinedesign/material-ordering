@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="theme-color" content="#282827">
   <script>/* Theme bootstrap — runs before first paint so a themed device never flashes the default look. Choice is per device; see Theme in js/shared.js */try{var t=localStorage.getItem("mo_theme");if(t&&t!=="stella")document.documentElement.setAttribute("data-theme",t);}catch(e){}</script>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
@@ -15,8 +15,8 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" media="print" onload="this.media='all'">
   <link rel="stylesheet" href="fonts/tabler-icons.min.css">
-  <link rel="stylesheet" href="css/style.css?v=2026-11-26.3">
-  <link rel="stylesheet" href="css/themes.css?v=2026-11-26.3">
+  <link rel="stylesheet" href="css/style.css?v=2026-11-26.4">
+  <link rel="stylesheet" href="css/themes.css?v=2026-11-26.4">
   <style>
     .cons-stock-badge {
       font-size: 11px; font-family: var(--mono); padding: 2px 8px;
@@ -40,7 +40,7 @@
       transition: transform 0.06s;
     }
     .cons-tile:active { transform: scale(0.97); }   /* tap feedback — the tile is the button */
-    .cons-tile.in-order { border-color: var(--green); box-shadow: 0 0 0 1px var(--green); }
+    .cons-tile.in-order { border-color: var(--select-line); box-shadow: 0 0 0 1px var(--select-line); }
     .cons-tile.out-of-stock { opacity: 0.55; pointer-events: none; }
     .cons-tile-img { position: relative; width: 100%; aspect-ratio: 1 / 1; background: var(--bg2); }
     .cons-tile-img img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
@@ -49,7 +49,7 @@
     /* Count bubble — how many of this you've picked, readable at a glance */
     .cons-tile-qty {
       position: absolute; top: 6px; left: 6px; min-width: 26px; height: 26px; padding: 0 7px;
-      border-radius: 13px; background: var(--green); color: #fff;
+      border-radius: 13px; background: var(--select-bg); color: var(--select-text);
       display: flex; align-items: center; justify-content: center;
       font-size: 13px; font-weight: 700; font-family: var(--mono);
       box-shadow: 0 1px 4px rgba(0,0,0,0.25);
@@ -139,9 +139,9 @@
 <!-- APP CHECK: remove this line to disable App Check (also remove init block in firebase-sync.js) -->
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-check-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
-<script src="js/shared.js?v=2026-11-26.3"></script>
-<script src="js/firebase-sync.js?v=2026-11-26.3"></script>
-<script src="js/auth.js?v=2026-11-26.3"></script>
+<script src="js/shared.js?v=2026-11-26.4"></script>
+<script src="js/firebase-sync.js?v=2026-11-26.4"></script>
+<script src="js/auth.js?v=2026-11-26.4"></script>
 <script>
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.getRegistrations().then(rs => rs.forEach(r => r.unregister()));
@@ -201,7 +201,7 @@ const ConsApp = {
             <span class="header-logo"></span>
             <div class="header-left">
               <div class="header-title">Consumables Checkout</div>
-              <div class="header-ref"><span class="live-dot connecting" id="live-dot"></span><span id="live-label">Connecting…</span><span class="hdr-extra"> &nbsp;·&nbsp; <span id="app-version" style="opacity:0.6;font-family:var(--mono)"></span></span></div>
+              <div class="header-ref"><span class="live-dot connecting" id="live-dot"></span><span id="live-label">Connecting…</span><span class="hdr-extra"> &nbsp;·&nbsp; <span id="app-version" style="font-family:var(--mono)"></span></span></div>
             </div>
             <div class="header-actions">
               ${deviceName ? `<span class="device-chip"><i class="ti ti-device-ipad" style="font-size:12px"></i> ${esc(deviceName)}</span>` : ''}
@@ -562,7 +562,7 @@ const ConsApp = {
   },
   _updateBadge() {
     const b = document.getElementById('cons-badge'); if (!b) return;
-    const n = this.count(); b.textContent = n; b.classList.toggle('zero', n===0);
+    const n = this.count(); setCount(b, n);
     const c = document.getElementById('btn-cons-clear-main'); if (c) c.hidden = n === 0;
     this._keep();
   },
@@ -611,7 +611,7 @@ const ConsApp = {
       const sid    = stockId(m);
 
       const stockBadgeClass = status==='low' ? 'low' : status==='zero' ? 'zero' : 'ok';
-      const stockLabel = avail === null ? '' : isZero ? 'Out of stock' : `${avail} in stock`;
+      const stockLabel = avail === null ? '' : isZero ? 'Out of stock' : status === 'low' ? `Only ${avail} left` : `${avail} in stock`;
       const stockBadge = avail !== null
         ? `<span class="cons-stock-badge ${stockBadgeClass} cons-tile-badge">${stockLabel}</span>`
         : '';
@@ -630,7 +630,7 @@ const ConsApp = {
         ? `<span class="cons-bc-flag ${bcCount ? 'has' : 'none'}"><i class="ti ti-barcode"></i>${bcCount ? ' ' + bcCount : ''}</span>` : '';
       return `<div class="cons-tile ${inOrder?'in-order':''} ${isZero?'out-of-stock':''}" data-tile="${m.id}">
         <div class="cons-tile-img">
-          <div class="cons-tile-icon" style="background:${ci.bg}"><i class="ti ${ci.icon}" style="color:${ci.color}"></i></div>
+          ${catTile(m.category, 'cons-tile-icon')}
           ${imgTag}
           ${stockBadge}
           ${qty > 0 ? `<span class="cons-tile-qty">${qty}</span>` : ''}

@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="theme-color" content="#282827">
   <script>/* Theme bootstrap — runs before first paint so a themed device never flashes the default look. Choice is per device; see Theme in js/shared.js */try{var t=localStorage.getItem("mo_theme");if(t&&t!=="stella")document.documentElement.setAttribute("data-theme",t);}catch(e){}</script>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
@@ -16,8 +16,8 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" media="print" onload="this.media='all'">
   <link rel="stylesheet" href="fonts/tabler-icons.min.css">
-  <link rel="stylesheet" href="css/style.css?v=2026-11-26.3">
-  <link rel="stylesheet" href="css/themes.css?v=2026-11-26.3">
+  <link rel="stylesheet" href="css/style.css?v=2026-11-26.4">
+  <link rel="stylesheet" href="css/themes.css?v=2026-11-26.4">
   <style>
     /* Prominent header button — stocktakes are worker-run, no manager needed */
     .stocktake-btn {
@@ -71,9 +71,9 @@
 <!-- APP CHECK: remove this line to disable App Check (also remove init block in firebase-sync.js) -->
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-check-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
-<script src="js/shared.js?v=2026-11-26.3"></script>
-<script src="js/firebase-sync.js?v=2026-11-26.3"></script>
-<script src="js/auth.js?v=2026-11-26.3"></script>
+<script src="js/shared.js?v=2026-11-26.4"></script>
+<script src="js/firebase-sync.js?v=2026-11-26.4"></script>
+<script src="js/auth.js?v=2026-11-26.4"></script>
 <script>
 const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker global
   activeCat:  null,
@@ -158,7 +158,7 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
             <span class="header-logo"></span>
             <div class="header-left">
               <div class="header-title">Material Orders</div>
-              <div class="header-ref" style="display:flex;gap:6px;align-items:center"><span class="live-dot connecting" id="live-dot"></span><span id="live-label">Connecting…</span><span class="hdr-extra" style="opacity:0.45">·</span><span class="hdr-extra" id="order-ref"></span><span class="hdr-extra" style="opacity:0.45">·</span><span class="hdr-extra" id="app-version" style="opacity:0.6;font-family:var(--mono)"></span></div>
+              <div class="header-ref" style="display:flex;gap:6px;align-items:center"><span class="live-dot connecting" id="live-dot"></span><span id="live-label">Connecting…</span><span class="hdr-extra" style="opacity:0.45">·</span><span class="hdr-extra" id="order-ref"></span><span class="hdr-extra" style="opacity:0.45">·</span><span class="hdr-extra" id="app-version" style="font-family:var(--mono)"></span></div>
             </div>
             <div class="header-actions">
               <span class="device-chip">${esc(device)}</span>
@@ -217,7 +217,7 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
             <div class="panel-col" id="review-contents"></div>
           </div>
           <div class="action-bar"><div class="action-bar-inner">
-            <button class="btn btn-orange" id="btn-submit">
+            <button class="btn btn-primary" id="btn-submit">
               <i class="ti ti-send"></i> Submit
             </button>
           </div></div>
@@ -438,7 +438,7 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
     const ci=CAT_ICONS[m.category]||CAT_ICONS.default;
     return `<div class="mat-card ${inOrder?'in-order':''}">
       <button class="mat-bin" data-bin="${m.id}" aria-label="Remove"><i class="ti ti-trash"></i></button>
-      <div class="mat-icon" style="background:${ci.bg}"><i class="ti ${ci.icon}" style="color:${ci.color}"></i></div>
+      ${catTile(m.category)}
       <div class="mat-info">
         <div class="mat-name">${descHtml(m.description)}</div>
         <div class="mat-partcode">${esc(m.partCode)}</div>
@@ -464,7 +464,7 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
     const ci   = CAT_ICONS[m.category] || CAT_ICONS.default;
     const showCode = m.partCode && !Data.isDummyCode(m.partCode);
     return `<div class="mat-card st-card ${Count.ready(qty, mode)?'in-order':''}">
-      <div class="mat-icon" style="background:${ci.bg}"><i class="ti ${ci.icon}" style="color:${ci.color}"></i></div>
+      ${catTile(m.category)}
       <div class="mat-info">
         <div class="mat-name">${descHtml(m.description)}</div>
         ${showCode ? `<div class="mat-partcode">${esc(m.partCode)}</div>` : '<div class="mat-partcode"></div>'}
@@ -491,7 +491,7 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
 
   updateBadge() {
     const b=document.getElementById('order-badge'); if(!b) return;
-    const n=Order.count(); b.textContent=n; b.classList.toggle('zero', n===0);
+    const n=Order.count(); setCount(b, n);
     const c=document.getElementById('btn-clear-main'); if(c) c.hidden = n===0;
     this._keep();
   },
@@ -623,7 +623,7 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
           <p>The production manager will review and forward to purchasing.</p>
           <div class="inline-error" id="submit-error" role="alert" hidden style="margin-bottom:10px"></div>
           <div class="sheet-btns">
-            <button class="btn btn-orange" id="btn-confirm-yes"><i class="ti ti-send"></i> Confirm and submit</button>
+            <button class="btn btn-primary" id="btn-confirm-yes"><i class="ti ti-send"></i> Confirm and submit</button>
             <button class="btn btn-outline" id="btn-confirm-no">Cancel</button>
           </div>
         </div>
@@ -636,7 +636,7 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
   closeOverlay() {
     const el=document.getElementById('submit-confirm'); if(!el) return;
     el.classList.remove('show');
-    setTimeout(()=>{ document.getElementById('overlay-wrap').innerHTML=''; },300);
+    setTimeout(()=>{ document.getElementById('overlay-wrap').innerHTML=''; },260);
   },
 
   async doSubmit() {
@@ -784,7 +784,7 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
   _stChanged() { this._updateStBadge(); this.renderList(); },
   _updateStBadge() {
     const b = document.getElementById('st-badge'); if (!b) return;
-    const n = this.stCount(); b.textContent = n; b.classList.toggle('zero', n === 0);
+    const n = this.stCount(); setCount(b, n);
     const c = document.getElementById('btn-st-clear'); if (c) c.hidden = n === 0;
     const l = document.getElementById('stocktake-btn-label'); if (l) l.textContent = this._stocktakeMode ? 'Exit stocktake' : n ? `Stocktake (${n})` : 'Stocktake';
     this._keep();
