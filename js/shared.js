@@ -1,9 +1,9 @@
-// shared.js — v2026-11-27.3
+// shared.js — v2026-11-27.4
 
 // The build date plus that day's counter — "2026-10-06.2" is the second build
 // on 6 Oct 2026 (the production board's scheme). Set by tools/bump-version.py;
 // shown to people with a leading "v" (see verLabel).
-const APP_VERSION = '2026-11-27.3';
+const APP_VERSION = '2026-11-27.4';
 
 // Numeric version comparison, part by part. Returns true if `a` is strictly
 // newer than `b`. Reads both the dated form and the "v0.56"-style numbers used
@@ -1034,6 +1034,27 @@ const BarcodeScanner = {
     onScan(code);
   },
 };
+
+// ── OPENING OFFLINE ──────────────────────────────────────────────────────
+// sw.js keeps a copy of each page's files on the device, so a page opened once online
+// opens again with no connection, on the data the database kept (DB.init). Online it
+// always fetches the newest files first, so updates arrive as before. The first visit
+// loads before the worker can see it, so the page hands over the addresses it used.
+// (An early version's worker served old files after updates; this one only falls back
+// to its copy when the site can't be reached.)
+if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol)) {
+  window.addEventListener('load', () => {
+    const first = !navigator.serviceWorker.controller;
+    navigator.serviceWorker.register('sw.js')
+      .then(() => navigator.serviceWorker.ready)
+      .then(reg => {
+        if (!first || !reg.active) return;
+        const used = performance.getEntriesByType('resource').map(r => r.name);
+        reg.active.postMessage({ keep: [location.href, ...used] });
+      })
+      .catch(e => console.warn('[offline] files not kept on this device:', e && e.message));
+  });
+}
 
 // ── AUTO-UPDATE (idle reload for the home-screen iPads) ──────────────────
 // The iPads run these pages as home-screen web apps: no address bar, no easy
