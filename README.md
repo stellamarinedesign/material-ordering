@@ -16,6 +16,7 @@ Ordering, stock and deliveries for the workshop. Four pages, one Firebase databa
 3. Each device signs in with an account a master has listed on the manager page (Settings → Accounts). The floor iPads share one floor account; on those iPads, sign out, change password and the device name sit behind Settings → Admin, which unlocks with that account's password.
 4. To add a page to an iPad's home screen, open it in Safari → Share → Add to Home Screen. Each page has its own icon name.
 5. Once a page has been opened online, it also opens with no connection (`sw.js` keeps its files on the device), showing the data saved there. Online, the newest files are always fetched first.
+6. Orders, consumables sign-outs and stocktake counts made with no connection wait on the device (the "waiting to submit" pill) and send themselves when it returns. Release the database rules (`firestore.rules`) before the code that needs them.
 
 ## Materials and consumables lists
 

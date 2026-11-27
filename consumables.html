@@ -16,8 +16,8 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" media="print" onload="this.media='all'">
   <link rel="stylesheet" href="fonts/tabler-icons.min.css">
-  <link rel="stylesheet" href="css/style.css?v=2026-11-27.4">
-  <link rel="stylesheet" href="css/themes.css?v=2026-11-27.4">
+  <link rel="stylesheet" href="css/style.css?v=2026-11-27.5">
+  <link rel="stylesheet" href="css/themes.css?v=2026-11-27.5">
   <style>
     .cons-stock-badge {
       font-size: 11px; font-family: var(--mono); padding: 2px 8px;
@@ -143,9 +143,9 @@
 <!-- APP CHECK: remove this line to disable App Check (also remove init block in firebase-sync.js) -->
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-check-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
-<script src="js/shared.js?v=2026-11-27.4"></script>
-<script src="js/firebase-sync.js?v=2026-11-27.4"></script>
-<script src="js/auth.js?v=2026-11-27.4"></script>
+<script src="js/shared.js?v=2026-11-27.5"></script>
+<script src="js/firebase-sync.js?v=2026-11-27.5"></script>
+<script src="js/auth.js?v=2026-11-27.5"></script>
 <script>
 const ConsApp = {
   consumables: [],
@@ -169,12 +169,17 @@ const ConsApp = {
     FirebaseConfig.forget();
     const ok = await DB.init(FirebaseConfig.get());
     if (!ok) { this.showSetup("Can't reach the database. Check the Wi-Fi, then tap Reload."); return; }
+    // Sign-outs not yet confirmed by the server wait here (and go by themselves); this
+    // page's own list, apart from the ordering page's, and test mode's apart from live.
+    Outbox.start(`mo_outbox_cons${FirebaseConfig.isTestMode() ? '_test' : ''}`,
+      () => this._renderOutbox(), en => this._announceSent(en), note => toast(note, true));
     DB.onDenied = () => Auth.denied();
     Auth.deviceName = ConsumablesDeviceName;
-    Auth.start();
+    Auth.start(user => { if (user) Outbox.resume(); });
     this._baseConsumables = await Data.loadConsumables('./consumables.csv', list => this._setConsumables(list));
     this.consumables = this._baseConsumables;
     this.renderShell();
+    this._renderOutbox();
     Boot.ready('page');
     this._loadPhotos();
     this.startStockListening();
@@ -219,7 +224,7 @@ const ConsApp = {
             </div>
             <div class="header-actions">
               ${deviceName ? `<span class="device-chip"><i class="ti ti-device-ipad" style="font-size:12px"></i> ${esc(deviceName)}</span>` : ''}
-              <span id="auth-pill"></span>
+              <span id="outbox-slot"></span><span id="auth-pill"></span>
               <button class="icon-btn" id="btn-settings" aria-label="Settings"><i class="ti ti-settings"></i></button>
             </div>
           </div></div>
@@ -351,7 +356,14 @@ const ConsApp = {
     DB.listenConnectionStatus(connected => {
       this._connState.connected = connected;
       this._renderLiveStatus();
+      this._renderOutbox();
     });
+  },
+  _renderOutbox() { const el = document.getElementById('outbox-slot'); if (el) el.innerHTML = Outbox.pillHtml(); },
+  // A sign-out that waited on this iPad has reached the database.
+  _announceSent(en) {
+    if (Date.now() - (en.placedAt || 0) < 15000) return;   // the sign-out message said so already
+    toast(`${en.ref ? en.ref + '’s' : 'A'} sign-out has gone through. Stock updated.`);
   },
 
   // Version staleness check — see firebase-sync.js announceVersionIfNewer
@@ -576,9 +588,7 @@ const ConsApp = {
     }).filter(Boolean);
   },
 
-  _cartId: null,   // from the first try to sign this cart out until it is empty: a try that failed never counts twice
   _changed() {
-    if (!this.count()) this._cartId = null;
     this._updateBadge(); this.renderList();
     // A scan with the sign-out dialog open lands in its list.
     if (document.getElementById('signout-item-list')) this._refreshSignOutItemsOnly();
@@ -908,10 +918,7 @@ const ConsApp = {
     }
     const items = this.items();
     if (!items.length) { document.getElementById('overlay-wrap').innerHTML=''; return; }
-    if (this._connState.connected === false || navigator.onLine === false) {
-      inlineError('signout-error', 'Offline. Connect, then tap Confirm sign out.');
-      return;
-    }
+    // The stock shown here already takes off sign-outs still waiting on this iPad.
     for (const item of items) {
       const avail = this._availableQty(item);
       if (avail !== null && item.qty > avail) {
@@ -924,44 +931,53 @@ const ConsApp = {
     try {
       const deviceName = ConsumablesDeviceName.get();
       const by = deviceName ? `${deviceName} — ${tradesmanName}` : tradesmanName;
-      const sessionId = genRef();
-      this._cartId = this._cartId || `${genRef()}-${Date.now()}`;
-
       const btn = document.getElementById('btn-overlay-confirm');
       const cancel = document.getElementById('btn-overlay-cancel');
-      if (cancel) cancel.disabled = true;
-      if (btn) { btn.disabled = true; btn.innerHTML = '<i class="ti ti-loader" style="animation:spin 1s linear infinite"></i> Signing out…'; }
+      const busy = on => {
+        if (cancel) cancel.disabled = on;
+        if (btn) { btn.disabled = on; btn.innerHTML = on ? '<i class="ti ti-loader" style="animation:spin 1s linear infinite"></i> Signing out…' : '<i class="ti ti-check"></i> Confirm sign out'; }
+      };
+      busy(true);
 
-      const errors = [];
-      const failedIds = new Set();
-      for (const item of items) {
-        try {
-          const op = `signout:${item.id}`;
-          await DB.adjustStock(stockId(item), item.description, -item.qty, 'checkout', by, sessionId, null,
-            OpId.for(op, { cart: this._cartId, qty: item.qty, by }));
-          OpId.done(op);
-        } catch(e) {
-          failedIds.add(item.id);
-          errors.push(`${item.description}: ${e.message === 'INSUFFICIENT_STOCK' ? 'not enough in stock' : whyFailed(e)}`);
-        }
+      // The whole sign-out is one write, made here and kept on this iPad until the
+      // server has it: it goes at once with a connection, or by itself when one is back.
+      const payload = {
+        by, sessionId: genRef(), at: Date.now(),
+        lines: items.map(i => {
+          const avail = this._availableQty(i);
+          return { sid: stockId(i), description: i.description, partCode: i.partCode || '', unit: i.qtyType || '',
+                   qty: i.qty, newQty: avail === null ? null : round2(avail - i.qty) };
+        }),
+      };
+      let queued;
+      try { queued = DB.queueSignOut(payload, OpId.fresh()); }
+      catch (e) {
+        busy(false);
+        inlineError('signout-error', `Not signed out: ${whyFailed(e)}. Tap Confirm sign out to try again.`);
+        return;
       }
-
-      // Clear only what went through — failed items stay selected so they can be
-      // adjusted and retried instead of having to be found and re-added from scratch.
-      for (const item of items) if (!failedIds.has(item.id)) delete this._items[item.id];
-      this._changed();
-
-      const ow = document.getElementById('overlay-wrap');
-      if (errors.length) {
-        this._checkoutBusy = false;
-        this._renderSignOutOverlay();      // what is left, with the name still in it
-        document.getElementById('overlay-tradesman-name').value = tradesmanName;
-        inlineError('signout-error', `Not signed out. ${errors.join('. ')}. Tap Confirm sign out to try again.`);
+      Outbox.add({ kind: 'signout', id: queued.id, ref: tradesmanName, payload, done: queued.done });
+      const result = await Promise.race([
+        queued.done.then(() => 'sent', e => e),
+        new Promise(r => setTimeout(() => r('waiting'), 3000)),
+      ]);
+      if (result !== 'sent' && result !== 'waiting') {
+        // Refused straight away (it never counted): nothing is kept, the list stays to try again.
+        Outbox.drop(queued.id);
+        busy(false);
+        inlineError('signout-error', `Not signed out: ${result && result.code === 'permission-denied' ? 'refused by the server' : whyFailed(result)}. Tap Confirm sign out to try again.`);
         return;
       }
 
+      this._items = {};
+      this._changed();
       this._saveRecentName(tradesmanName);
-      doneMessage(ow, { title: 'Signed out', text: `${items.length} item${items.length !== 1 ? 's' : ''} signed out to ${tradesmanName}. Stock updated.` });
+      const offline = this._connState.connected === false || navigator.onLine === false;
+      const what = `${items.length} item${items.length !== 1 ? 's' : ''} signed out to ${tradesmanName}.`;
+      doneMessage(document.getElementById('overlay-wrap'), { title: 'Signed out',
+        text: result === 'sent' ? `${what} Stock updated.`
+            : offline ? `${what} The stock updates when this iPad is back online.`
+            : `${what} The stock updates in a moment.` });
     } finally {
       this._checkoutBusy = false;
     }

@@ -77,12 +77,26 @@ service cloud.firestore {
       allow delete: if manager();
     }
 
-    // Materials stock levels (stocktake counts) and stocktake sessions.
+    // Materials stock levels (stocktake counts) and stocktake sessions. A count
+    // carries the time it was made (countedAt). One made before the count already
+    // recorded is refused: the newer count already includes it. That happens when a
+    // count waited on a device with no connection while another device counted.
     match /material_stock/{id} {
-      allow read, write: if listed();
+      allow read, create, delete: if listed();
+      allow update: if listed() && (!('countedAt' in resource.data)
+        || request.resource.data.get('countedAt', resource.data.countedAt) >= resource.data.countedAt);
     }
     match /material_stocktakes/{id} {
       allow read, write: if listed();
+    }
+
+    // One marker per waiting write (a sign-out or counts sent from a device; see
+    // WAITING WRITES in js/firebase-sync.js). It is created with the write and never
+    // written again, so the same write arriving twice (its first reply was lost and it
+    // was sent again) is refused the second time and nothing is counted twice.
+    match /ops/{id} {
+      allow read, create: if listed();
+      allow delete: if manager();
     }
 
     // App version marker, connection probe, the consumables SC-code counter —

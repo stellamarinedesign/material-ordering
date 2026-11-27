@@ -16,8 +16,8 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" media="print" onload="this.media='all'">
   <link rel="stylesheet" href="fonts/tabler-icons.min.css">
-  <link rel="stylesheet" href="css/style.css?v=2026-11-27.4">
-  <link rel="stylesheet" href="css/themes.css?v=2026-11-27.4">
+  <link rel="stylesheet" href="css/style.css?v=2026-11-27.5">
+  <link rel="stylesheet" href="css/themes.css?v=2026-11-27.5">
   <style>
     /* Prominent header button — stocktakes are worker-run, no manager needed */
     .stocktake-btn {
@@ -74,9 +74,9 @@
 <!-- APP CHECK: remove this line to disable App Check (also remove init block in firebase-sync.js) -->
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-check-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
-<script src="js/shared.js?v=2026-11-27.4"></script>
-<script src="js/firebase-sync.js?v=2026-11-27.4"></script>
-<script src="js/auth.js?v=2026-11-27.4"></script>
+<script src="js/shared.js?v=2026-11-27.5"></script>
+<script src="js/firebase-sync.js?v=2026-11-27.5"></script>
+<script src="js/auth.js?v=2026-11-27.5"></script>
 <script>
 const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker global
   activeCat:  null,
@@ -97,14 +97,13 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
   _matStock:      [],               // live material_stock records
   _unsubMatStock: null,
   _stBusy:        false,            // bulk-submit in-flight guard
-  _stTickBusy:    new Set(),        // per-item tick in-flight guards
 
   async init() {
     FirebaseConfig.forget();
     const ok = await DB.init(FirebaseConfig.get());
     if (!ok) { this.showSetup("Can't reach the database. Check the Wi-Fi, then tap Reload."); return; }
     // Test mode has its own list, so a waiting order only ever goes to the database it was made for.
-    Outbox.start(`mo_outbox${FirebaseConfig.isTestMode() ? '_test' : ''}`, () => this._renderOutbox(), en => this._announceSent(en));
+    Outbox.start(`mo_outbox${FirebaseConfig.isTestMode() ? '_test' : ''}`, () => this._renderOutbox(), en => this._announceSent(en), note => toast(note, true));
     DB.onDenied = () => Auth.denied();
     Auth.deviceName = DeviceName;
     Auth.start(user => { if (user) Outbox.resume(); });
@@ -431,7 +430,7 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
     const stockMap = this._stocktakeMode ? new Map(this._matStock.map(r => [r._id, r])) : null;
     if (this._stocktakeMode) {
       const p = document.getElementById('st-progress');
-      if (p) p.textContent = this._matStockReady && filtered.length ? `${filtered.filter(m => isToday((stockMap.get(stockId(m)) || {}).updatedAt)).length} of ${filtered.length} counted today` : '';
+      if (p) p.textContent = this._matStockReady && filtered.length ? `${filtered.filter(m => isToday(countedWhen(stockMap.get(stockId(m))))).length} of ${filtered.length} counted today` : '';
     }
     if(!filtered.length){list.innerHTML=note||`<div class="empty-state"><i class="ti ti-package-off"></i><p>No materials in this category.</p></div>`;return;}
     const restoreFocus = captureInputFocus(); // live data re-renders mid-typing
@@ -493,7 +492,7 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
     const rec  = stockMap.get(stockId(m));
     const ci   = CAT_ICONS[m.category] || CAT_ICONS.default;
     const showCode = m.partCode && !Data.isDummyCode(m.partCode);
-    const today = !!rec && isToday(rec.updatedAt);
+    const today = !!rec && isToday(countedWhen(rec));
     return `<div class="mat-card st-card ${Count.ready(qty, mode)?'in-order':''}">
       ${catTile(m.category)}
       <div class="mat-info">
@@ -736,9 +735,10 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
     set('btn-new-order', el => { el.classList.toggle('btn-primary', st !== 'failed'); el.classList.toggle('btn-outline', st === 'failed'); });
   },
 
-  // An order that waited on this device and has now reached the manager.
+  // An order or counts that waited on this device and have now reached the database.
   _announceSent(en) {
     if (Date.now() - (en.placedAt || 0) < 15000) return;   // the success screen is saying so
+    if (en.kind === 'count') { toast(`Counts from ${fmtTime(new Date(en.placedAt))} recorded.`); return; }
     if (this._lastOrderId === en.id && document.getElementById('success-panel')?.classList.contains('open')) return;
     toast(`Order ${en.ref || ''} has reached the production manager.`);
   },
@@ -841,30 +841,26 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
     this._keep();
   },
 
-  // Progressive tick — records ONE item immediately, then clears it from the cart.
-  // The material_stock listener refreshes its "recorded" figure a moment later.
-  async stTickItem(id) {
-    if (this._stTickBusy.has(id)) return;
+  // Progressive tick — records ONE item at once (or keeps it on this iPad until the
+  // connection is back; see Count.queue) and clears it from the counts being entered.
+  // The recorded figure on the card follows straight away.
+  _recordedQty(sid) { return (this._matStock.find(r => r._id === sid) || {}).qty; },
+  _keepCounts(parts) {
+    for (const p of parts) Outbox.add({ kind: 'count', id: p.id, ref: DeviceName.get(), payload: p.payload, done: p.done });
+  },
+  stTickItem(id) {
     if (!Count.ready(this.stGet(id), this.stModeOf(id))) return;
-    if (this._connState.connected === false || navigator.onLine === false) {
-      Ask.tell('Count not recorded', 'Offline. Connect, then tap the tick again.'); return;
-    }
     const m = this.materials.find(x => x.id == id); if (!m) return;
-    this._stTickBusy.add(id);
-    const tick = document.querySelector(`[data-st-tick="${id}"]`);
-    if (tick) { tick.disabled = true; tick.classList.add('busy'); tick.setAttribute('aria-label', 'Recording'); tick.innerHTML = '<i class="ti ti-loader" style="animation:spin 1s linear infinite"></i>'; }
-    try {
-      const payload = [this._stPayload(m)];
-      await DB.recordStocktake(payload, DeviceName.get(), OpId.for(`tick:${id}`, payload));
-      OpId.done(`tick:${id}`);
-      delete this._st._items[id]; delete this._stModes[id];
-      this._updateStBadge(); this.renderList();
-    } catch(e) {
-      console.error('Count not recorded:', e);
+    let parts;
+    try { parts = Count.queue([this._stPayload(m)], DeviceName.get(), sid => this._recordedQty(sid)); }
+    catch (e) {
       const why = whyFailed(e);
-      this._stTickBusy.delete(id); this.renderList();
       Ask.tell('Count not recorded', `${why[0].toUpperCase()}${why.slice(1)}. Tap the tick to try again.`);
-    } finally { this._stTickBusy.delete(id); }
+      return;
+    }
+    this._keepCounts(parts);
+    delete this._st._items[id]; delete this._stModes[id];
+    this._updateStBadge(); this.renderList();
   },
 
   stOpenReview() {
@@ -899,26 +895,38 @@ const WorkerApp = { // not "Worker" — that shadows the browser's Web Worker gl
     if (this._stBusy) return; // double-tap guard
     const items = this.stItems();
     if (!items.length) { document.getElementById('overlay-wrap').innerHTML=''; return; }
-    if (this._connState.connected === false || navigator.onLine === false) {
-      inlineError('st-error', 'Offline. Connect, then tap Confirm stocktake.'); return;
-    }
     this._stBusy = true;
     inlineError('st-error', '');
     const btn = document.getElementById('btn-st-confirm'), cancel = document.getElementById('btn-st-cancel');
-    if (cancel) cancel.disabled = true;
-    if (btn) { btn.disabled = true; btn.innerHTML = `<i class="ti ti-loader" style="animation:spin 1s linear infinite"></i> Saving ${items.length} count${items.length!==1?'s':''}…`; }
+    const busy = on => {
+      if (cancel) cancel.disabled = on;
+      if (btn) { btn.disabled = on; btn.innerHTML = on ? `<i class="ti ti-loader" style="animation:spin 1s linear infinite"></i> Saving ${items.length} count${items.length!==1?'s':''}…` : '<i class="ti ti-check"></i> Confirm stocktake'; }
+    };
+    busy(true);
     try {
-      const payload = items.map(m => this._stPayload(m));
-      await DB.recordStocktake(payload, DeviceName.get(), OpId.for('stocktake', payload));
-      OpId.done('stocktake');
-      this._st._items = {}; this._stModes = {};
+      const n = `${items.length} item${items.length!==1?'s':''}`, by = DeviceName.get();
+      let parts;
+      try { parts = Count.queue(items.map(m => this._stPayload(m)), by, sid => this._recordedQty(sid)); }
+      catch (e) { busy(false); inlineError('st-error', `Not saved: ${whyFailed(e)}. Nothing was recorded. Tap Confirm stocktake to try again.`); return; }
+      this._keepCounts(parts);
+      // A few seconds for the server's answer; after that the counts wait on this iPad.
+      const settled = parts.map(p => p.done.then(() => { p.ok = true; }, e => { p.err = e; }));
+      await Promise.race([Promise.all(settled), new Promise(r => setTimeout(r, 3000))]);
+      // Refused at once: off the waiting list, and those counts stay entered to try again.
+      const refused = parts.filter(p => p.err), keep = new Set();
+      for (const p of refused) { Outbox.drop(p.id); p.payload.lines.forEach(l => keep.add(l.sid)); }
+      for (const m of items) if (!keep.has(stockId(m))) { delete this._st._items[m.id]; delete this._stModes[m.id]; }
       this._updateStBadge(); this.renderList();
-      doneMessage(document.getElementById('overlay-wrap'), { title: 'Counts recorded', text: `${items.length} item${items.length!==1?'s':''} recorded as ${DeviceName.get()}.` });
-    } catch(e) {
-      console.error('Stocktake not saved:', e);
-      if (cancel) cancel.disabled = false;
-      if (btn) { btn.disabled = false; btn.innerHTML = '<i class="ti ti-check"></i> Confirm stocktake'; }
-      inlineError('st-error', `Not saved: ${whyFailed(e)}.${nothingDone(e, 'Nothing was recorded.')} Tap Confirm stocktake to try again.`);
+      if (refused.length) {
+        const e = refused[0].err;
+        this.stOpenReview();
+        inlineError('st-error', `Not saved: ${e && e.code === 'permission-denied' ? 'refused by the server' : whyFailed(e)}. Tap Confirm stocktake to try again.`);
+        return;
+      }
+      const offline = this._connState.connected === false || navigator.onLine === false;
+      doneMessage(document.getElementById('overlay-wrap'), parts.every(p => p.ok)
+        ? { title: 'Counts recorded', text: `${n} recorded as ${by}.` }
+        : { title: 'Counts saved', text: `${n} saved on this iPad as ${by}. ${offline ? 'They are recorded when it is back online.' : 'They are recorded in a moment.'}` });
     } finally { this._stBusy = false; }
   },
 

@@ -1,9 +1,9 @@
-// shared.js — v2026-11-27.4
+// shared.js — v2026-11-27.5
 
 // The build date plus that day's counter — "2026-10-06.2" is the second build
 // on 6 Oct 2026 (the production board's scheme). Set by tools/bump-version.py;
 // shown to people with a leading "v" (see verLabel).
-const APP_VERSION = '2026-11-27.4';
+const APP_VERSION = '2026-11-27.5';
 
 // Numeric version comparison, part by part. Returns true if `a` is strictly
 // newer than `b`. Reads both the dated form and the "v0.56"-style numbers used
@@ -712,20 +712,29 @@ const Kept = {
 };
 
 // ── OUTBOX ──────────────────────────────────────────────────────────────
-// Orders placed on this device that the server has not yet confirmed. The
-// write itself sits in Firestore's on-device queue (DB.init) and goes on its
-// own when the connection returns; this is the belt to those braces: a copy
-// of each order kept here until the server confirms it, re-sent under the
-// same id (so never duplicated) if that queue is ever lost, and the "waiting
-// to send" count the header shows. Entries: { id, ref, payload, placedAt,
-// tries, lastTry, failed? }.
+// Writes made on this device that the server has not yet confirmed: orders,
+// consumables sign-outs and stocktake counts. The write itself sits in
+// Firestore's on-device queue (DB.init) and goes on its own when the
+// connection returns; this is the belt to those braces: a copy of each kept
+// here until the server confirms it, re-sent under the same id if that queue
+// is ever lost (an order overwrites itself; a sign-out or count is refused if
+// it already landed, see DB WAITING WRITES), and the "waiting to submit" count
+// the header shows. Entries: { kind, id, ref, payload, placedAt, tries,
+// lastTry, failed? } — kind 'order' (the default), 'signout' or 'count'.
 const Outbox = {
-  _key: 'mo_outbox', _entries: [], _watchers: {}, _onChange: null, _onSent: null, _resumed: false,
+  _key: 'mo_outbox', _entries: [], _watchers: {}, _onChange: null, _onSent: null, _onNote: null, _resumed: false,
   MAX_AUTO_TRIES: 3,
+  _kinds: {
+    order:   { send: en => DB.queueOrder(en.payload, en.id),   watch: (id, cb) => DB.watchOrderWrite(id, cb) },
+    signout: { send: en => DB.queueSignOut(en.payload, en.id), watch: (id, cb) => DB.watchOp(id, cb) },
+    count:   { send: en => DB.queueCounts(en.payload, en.id),  watch: (id, cb) => DB.watchOp(id, cb) },
+  },
+  _kind(en) { return this._kinds[en.kind] || this._kinds.order; },
 
-  // onSent(entry): the server has an order this device was keeping.
-  start(key, onChange, onSent) {
-    this._key = key || this._key; this._onChange = onChange || null; this._onSent = onSent || null;
+  // onSent(entry): the server has something this device was keeping.
+  // onNote(text): something the person should know that isn't a failure (a count not used).
+  start(key, onChange, onSent, onNote) {
+    this._key = key || this._key; this._onChange = onChange || null; this._onSent = onSent || null; this._onNote = onNote || null;
     try { this._entries = JSON.parse(localStorage.getItem(this._key) || '[]'); } catch { this._entries = []; }
     if (!Array.isArray(this._entries)) this._entries = [];
     window.addEventListener('online', () => this.retryFailed());
@@ -744,9 +753,9 @@ const Outbox = {
   count()       { return this._entries.length; },
   failedCount() { return this._entries.filter(e => e.failed).length; },
 
-  // Right after DB.queueOrder: keep the copy and follow the write.
-  add({ id, ref, payload, done }) {
-    const en = { id, ref: ref || '', payload, placedAt: payload.placedAt || Date.now(), tries: 1, lastTry: Date.now() };
+  // Right after DB.queueOrder / queueSignOut / queueCounts: keep the copy and follow the write.
+  add({ kind, id, ref, payload, done }) {
+    const en = { kind: kind || 'order', id, ref: ref || '', payload, placedAt: payload.placedAt || payload.at || Date.now(), tries: 1, lastTry: Date.now() };
     this._entries.push(en);
     this._save(); this._render();
     this._follow(id, done);
@@ -765,8 +774,43 @@ const Outbox = {
   },
   _fail(id, e) {
     const en = this._get(id); if (!en) return;
+    if (en.kind && en.kind !== 'order' && e && e.code === 'permission-denied') { this._refused(en, e); return; }
     en.failed = (e && e.code === 'permission-denied') ? 'refused by the server' : whyFailed(e);   // never the database's own words
     this._save(); this._render();
+  },
+  // A sign-out or count the server refused. It may simply be there already (sent twice
+  // after a lost reply); a count may have been overtaken by a newer one of the same item,
+  // which stands. Anything else stays on the list as refused, with Retry.
+  async _refused(en, e) {
+    try {
+      if (await DB.opLanded(en.id)) { this._confirm(en.id); return; }
+      if (en.kind === 'count') {
+        const stale = await DB.staleCounts(en.payload);
+        if (stale.length) {
+          const gone = new Set(stale.map(l => l.sid));
+          const names = stale.map(l => l.description).join(', ');
+          if (this._onNote) this._onNote(`${names}: a newer count was already recorded, so ${stale.length === 1 ? 'this one was' : 'these were'} not used.`);
+          en.payload = { ...en.payload, lines: en.payload.lines.filter(l => !gone.has(l.sid)) };
+          if (!en.payload.lines.length) {
+            this._entries = this._entries.filter(x => x.id !== en.id);
+            this._unwatch(en.id); this._save(); this._render();
+            return;
+          }
+          this._save();
+          this.retry(en.id, true);   // the rest, at once
+          return;
+        }
+      }
+      en.failed = 'refused by the server';
+    } catch (err) { en.failed = whyFailed(err); }
+    this._save(); this._render();
+  },
+  // A write refused at once, while the person is still there to be told: take it off the
+  // list (the page keeps what they entered, to try again).
+  drop(id) {
+    if (!this._get(id)) return;
+    this._entries = this._entries.filter(e => e.id !== id);
+    this._unwatch(id); this._save(); this._render();
   },
   // Re-send the kept copy under the same id (overwrites, never duplicates).
   // Automatic retries are few and spaced out; a tap on Retry is always allowed.
@@ -782,15 +826,15 @@ const Outbox = {
     }
     en.tries++; en.lastTry = Date.now(); delete en.failed;
     this._save(); this._render();
-    try { const { done } = DB.queueOrder(en.payload, en.id); this._follow(en.id, done); }
+    try { const { done } = this._kind(en).send(en); this._follow(en.id, done); }
     catch (e) { this._fail(en.id, e); }
   },
   retryFailed() { this._entries.filter(e => e.failed).forEach(e => this.retry(e.id, false)); },
   // What the database says about the write: the server has it → done; the
-  // server says there is no such order and nothing is queued → re-send the copy.
+  // server says there is no such record and nothing is queued → re-send the copy.
   _watch(en) {
-    if (this._watchers[en.id] || typeof DB === 'undefined' || !DB.watchOrderWrite) return;
-    this._watchers[en.id] = DB.watchOrderWrite(en.id, s => {
+    if (this._watchers[en.id] || typeof DB === 'undefined' || !DB.isReady()) return;
+    this._watchers[en.id] = this._kind(en).watch(en.id, s => {
       if (s.error) { this._fail(en.id, s.error); return; }
       if (s.exists && !s.pending && !s.fromCache) this._confirm(en.id);
       else if (!s.exists && !s.fromCache) this.retry(en.id, false);
@@ -815,13 +859,22 @@ const Outbox = {
   // — so it can be read off the screen (and phoned through) if the connection
   // stays down. _open: which ones are open, kept across re-renders.
   _open: new Set(),
+  _lines(e) { return (e.payload && (e.payload.items || e.payload.lines)) || []; },
+  // What the row is called: the order's reference, whose sign-out, or the counts.
+  _title(e) {
+    if (e.kind === 'signout') return `Sign-out · ${e.ref || ''}`;
+    if (e.kind === 'count')   return 'Stocktake counts';
+    return e.ref || e.id;
+  },
   _detailHtml(e) {
-    const items = (e.payload && e.payload.items) || [];
-    const note  = e.payload && e.payload.note;
-    return items.map(i => `<div class="outbox-line">
-        <div class="outbox-qty">${esc(orderQtyDisplay(i, i.qty))}</div>
+    const line = (qty, i) => `<div class="outbox-line">
+        <div class="outbox-qty">${esc(qty)}</div>
         <div><div class="outbox-desc">${descHtml(i.description || '')}</div>${i.partCode && !Data.isDummyCode(i.partCode) ? `<div class="outbox-code">${esc(i.partCode)}</div>` : ''}</div>
-      </div>`).join('') + (note ? `<div class="outbox-note">${esc(note)}</div>` : '');
+      </div>`;
+    if (e.kind === 'signout') return this._lines(e).map(i => line(`${i.qty} ${i.unit || ''}`.trim(), i)).join('');
+    if (e.kind === 'count')   return this._lines(e).map(i => line(Count.words(i.mode, i.qty, i.unit || ''), i)).join('');
+    const note = e.payload && e.payload.note;
+    return this._lines(e).map(i => line(orderQtyDisplay(i, i.qty), i)).join('') + (note ? `<div class="outbox-note">${esc(note)}</div>` : '');
   },
   openList() {
     let ow = document.getElementById('overlay-wrap');
@@ -829,11 +882,11 @@ const Outbox = {
     const prev = document.querySelector('#outbox-card .outbox-list');
     const top = prev ? prev.scrollTop : 0;      // re-rendered while open (an order went): stay where the reader was
     const rows = this._entries.map(e => {
-      const open = this._open.has(e.id), n = ((e.payload && e.payload.items) || []).length;
+      const open = this._open.has(e.id), n = this._lines(e).length;
       return `<div class="outbox-item">
         <div class="outbox-top">
           <button class="outbox-head" data-outbox-toggle="${esc(e.id)}" aria-expanded="${open}" aria-controls="outbox-d-${esc(e.id)}">
-            <span class="outbox-head-text"><span class="outbox-ref">${esc(e.ref || e.id)}</span><span class="outbox-sub">${esc(fmtTime(new Date(e.placedAt)))} ·${n} line${n === 1 ? '' : 's'}${e.failed ? ' · ' + esc(e.failed) : ''}</span></span>
+            <span class="outbox-head-text"><span class="outbox-ref${e.kind && e.kind !== 'order' ? ' words' : ''}">${esc(this._title(e))}</span><span class="outbox-sub">${esc(fmtTime(new Date(e.placedAt)))} · ${n} line${n === 1 ? '' : 's'}${e.failed ? ' · ' + esc(e.failed) : ''}</span></span>
             <i class="ti ti-chevron-${open ? 'up' : 'down'}"></i>
           </button>
           ${e.failed ? `<button class="btn-sm outbox-retry" data-outbox-retry="${esc(e.id)}">Retry</button>` : ''}
@@ -1399,6 +1452,20 @@ const Count = {
         </div>
       </div>`;
   },
+  // Counts as waiting writes (DB.queueCounts): they go now with a connection, or by
+  // themselves when one is back. lines: [{ sid, partCode, description, category,
+  // subcategory, unit, qty, mode }]; recorded(sid): the qty recorded now, so "take off"
+  // never goes below nothing. In parts of 400 (a batch holds 500 writes).
+  // Returns [{ id, payload, done }].
+  queue(lines, by, recorded) {
+    const at = Date.now(), out = [];
+    const fit = lines.map(l => l.mode === 'subtract' ? { ...l, applyQty: Math.min(l.qty, Math.max(0, recorded(l.sid) || 0)) } : l);
+    for (let i = 0; i < fit.length; i += 400) {
+      const payload = { by, at, lines: fit.slice(i, i + 400) };
+      out.push({ payload, ...DB.queueCounts(payload, OpId.fresh()) });
+    }
+    return out;
+  },
   // What is in the field: a number of 0 or more, or undefined (nothing entered yet).
   read(el) {
     const raw = String(el.value).trim().replace(',', '.'), n = Number(raw);
@@ -1743,10 +1810,11 @@ function inlineError(id, msg) {
 // but whose reply was lost can be tried again without counting twice.
 const OpId = {
   _open: {},
+  fresh() { return `OP-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`; },
   for(key, payload) {
     const sig = JSON.stringify(payload), cur = this._open[key];
     if (cur && cur.sig === sig) return cur.id;
-    return (this._open[key] = { sig, id: `OP-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}` }).id;
+    return (this._open[key] = { sig, id: this.fresh() }).id;
   },
   done(key) { delete this._open[key]; },
 };
@@ -1761,6 +1829,9 @@ function genRef() {
 function genDeliveryId() {
   return `DLV-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,8)}`;
 }
+// When a recorded stocktake count was made: on the device that made it (countedAt, which
+// a count that waited offline keeps), or for older counts, when the server got it.
+function countedWhen(rec) { return rec ? (rec.countedAt || rec.updatedAt || null) : null; }
 // A Firestore time (or a Date) that falls on today, on this device's clock.
 function isToday(ts) {
   const d = ts && ts.toDate ? ts.toDate() : ts instanceof Date ? ts : null;

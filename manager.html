@@ -12,8 +12,8 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" media="print" onload="this.media='all'">
   <link rel="stylesheet" href="fonts/tabler-icons.min.css">
-  <link rel="stylesheet" href="css/style.css?v=2026-11-27.4">
-  <link rel="stylesheet" href="css/themes.css?v=2026-11-27.4">
+  <link rel="stylesheet" href="css/style.css?v=2026-11-27.5">
+  <link rel="stylesheet" href="css/themes.css?v=2026-11-27.5">
 </head>
 <body>
 <!-- Start-up cover: painted before any script; see Boot in js/shared.js -->
@@ -33,12 +33,12 @@
 <!-- APP CHECK: remove this line to disable App Check (also remove init block in firebase-sync.js) -->
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-check-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
-<script src="js/shared.js?v=2026-11-27.4"></script>
-<script src="js/firebase-sync.js?v=2026-11-27.4"></script>
-<script src="js/auth.js?v=2026-11-27.4"></script>
-<script src="js/intake.js?v=2026-11-27.4"></script>
-<script src="js/catalogue.js?v=2026-11-27.4"></script>
-<script src="js/accounts.js?v=2026-11-27.4"></script>
+<script src="js/shared.js?v=2026-11-27.5"></script>
+<script src="js/firebase-sync.js?v=2026-11-27.5"></script>
+<script src="js/auth.js?v=2026-11-27.5"></script>
+<script src="js/intake.js?v=2026-11-27.5"></script>
+<script src="js/catalogue.js?v=2026-11-27.5"></script>
+<script src="js/accounts.js?v=2026-11-27.5"></script>
 <!-- Vendored xlsx-js-style (SheetJS fork with cell styling) — stocktake Excel exports -->
 <script src="js/xlsx-style.min.js"></script>
 <!-- Vendored ExcelJS — used only for the consumables export, which embeds drawn
@@ -1637,7 +1637,7 @@ const Manager = {
       const unit = stocktakeUnit(m);
       const showCode = m.partCode && !Data.isDummyCode(m.partCode);
       const counted = rec && rec.qty != null, known = this._matStockReady;
-      const when = rec?.updatedAt?.toDate ? fmtTime(rec.updatedAt.toDate()) : '';
+      const at = countedWhen(rec), when = at && at.toDate ? fmtTime(at.toDate()) : '';
       return `<div class="stocktake-row">
         <div class="stocktake-row-info">
           <div class="stocktake-row-name">${descHtml(m.description)}</div>
@@ -1724,18 +1724,28 @@ const Manager = {
     restoreFocus();
   },
 
+  // Counts go as waiting writes (Count.queue), like the iPads'. This PC is normally
+  // online, so it waits for the server's answer; offline, or when the answer is slow,
+  // the counts stay saved on this PC and are recorded when the connection is back.
+  // 'sent' or 'kept'; throws if the server refused them (nothing recorded).
+  _mstRecorded(sid) { return (this._matStock.find(r => r._id === sid) || {}).qty; },
+  async _mstSend(lines) {
+    const parts = Count.queue(lines, this._mstCountedBy(), sid => this._mstRecorded(sid));
+    if (this._connState.connected === false || navigator.onLine === false) return 'kept';
+    try { await Promise.all(parts.map(p => DB.settle(p.id, p.done))); return 'sent'; }
+    catch (e) { if (e && e.code === 'deadline-exceeded') return 'kept'; throw e; }
+  },
+
   async mstTickItem(id) {
     if (this._mstTickBusy.has(id)) return;
     if (!Count.ready(this.mstGet(id), this.mstModeOf(id))) return;
-    if (this._connState.connected === false || navigator.onLine === false) { Ask.tell('Count not recorded', 'Offline. Connect, then tap the tick again.'); return; }
     const m = this.materials.find(x => x.id == id); if (!m) return;
     this._mstTickBusy.add(id);
     try {
-      const payload = [this._mstPayload(m)];
-      await DB.recordStocktake(payload, this._mstCountedBy(), OpId.for(`tick:${id}`, payload));
-      OpId.done(`tick:${id}`);
+      const how = await this._mstSend([this._mstPayload(m)]);
       delete this._mstCart[id]; delete this._mstModes[id];
       this._updateMstBadge(); this.renderStocktakeCount();
+      if (how === 'kept') toast('Count saved on this PC. It is recorded when the connection is back.');
     } catch(e) {
       console.error('Count not recorded:', e);
       const why = whyFailed(e);
@@ -1771,25 +1781,22 @@ const Manager = {
     if (this._mstBusy) return;
     const items = this.mstItems();
     if (!items.length) { document.getElementById('overlay-wrap').innerHTML=''; return; }
-    if (this._connState.connected === false || navigator.onLine === false) { inlineError('mst-error', 'Offline. Connect, then tap Confirm stocktake.'); return; }
     this._mstBusy = true;
     inlineError('mst-error', '');
     const btn = document.getElementById('btn-mst-confirm'), cancel = document.getElementById('btn-mst-cancel');
     if (cancel) cancel.disabled = true;
     if (btn) { btn.disabled = true; btn.innerHTML = `<i class="ti ti-loader" style="animation:spin 1s linear infinite"></i> Saving ${items.length} count${items.length !== 1 ? 's' : ''}…`; }
     try {
-      const payload = items.map(m => this._mstPayload(m));
-      await DB.recordStocktake(payload, this._mstCountedBy(), OpId.for('stocktake', payload));
-      OpId.done('stocktake');
+      const how = await this._mstSend(items.map(m => this._mstPayload(m)));
       this._mstCart = {}; this._mstModes = {};
       this._updateMstBadge(); this.renderStocktakeCount();
-      const ow = document.getElementById('overlay-wrap');
+      const ow = document.getElementById('overlay-wrap'), n = `${items.length} item${items.length!==1?'s':''}`;
       ow.innerHTML = `
         <div class="success-overlay">
           <div class="success-card">
             <div class="success-icon green"><i class="ti ti-circle-check"></i></div>
-            <h3>Stocktake submitted</h3>
-            <p>${items.length} item${items.length!==1?'s':''} recorded.</p>
+            <h3>${how === 'sent' ? 'Stocktake submitted' : 'Stocktake saved'}</h3>
+            <p>${how === 'sent' ? `${n} recorded.` : `${n} saved on this PC. They are recorded when the connection is back.`}</p>
             <button class="btn btn-primary" id="btn-mst-done">Back to stocktake</button>
           </div>
         </div>`;
@@ -1820,10 +1827,16 @@ const Manager = {
     if (!this._stSessions.length) { el.innerHTML = `<div class="empty-state"><i class="ti ti-clipboard-off"></i><p>No stocktakes submitted yet.</p></div>`; return; }
     // Sessions are one-per-device-per-day and can mix modes (a day of ticks +
     // submits), so the mode indicator lives on each line, not the session header.
+    // A session's lines: the older `items` list, then `counts` (one per item, latest wins).
+    const linesOf = s => {
+      const by = new Map((s.items || []).map(i => [i.sid, i]));
+      Object.values(s.counts || {}).sort((a, b) => (a.at || 0) - (b.at || 0)).forEach(c => { by.delete(c.sid); by.set(c.sid, c); });
+      return [...by.values()];
+    };
     el.innerHTML = this._stSessions.map(s => {
       const ts = s.submittedAt?.toDate ? fmtTime(s.submittedAt.toDate()) : '';
       const isOpen = this._openStSessions.has(s._id);
-      const n = (s.items || []).length;
+      const lines = linesOf(s), n = lines.length;
       return `<div class="stocktake-row" data-st-session="${esc(s._id)}" style="cursor:pointer;flex-wrap:wrap">
         <span class="intake-status-badge" style="color:var(--text2);background:var(--bg2)"><i class="ti ti-clipboard-list"></i> Stocktake</span>
         <div class="stocktake-row-info">
@@ -1832,7 +1845,7 @@ const Manager = {
         </div>
         <i class="ti ${isOpen ? 'ti-chevron-up' : 'ti-chevron-down'}" style="color:var(--text3)"></i>
         ${isOpen ? `<div style="flex-basis:100%;padding-top:8px;border-top:1px solid var(--border);margin-top:6px">
-          ${(s.items || []).map(i => `<div class="stocktake-row-meta" style="padding:2px 0">${descHtml(i.description)} — <strong style="color:${Count.colour(i.mode)}">${esc(Count.words(i.mode, i.qty, i.unit || ''))}</strong></div>`).join('')}
+          ${lines.map(i => `<div class="stocktake-row-meta" style="padding:2px 0">${descHtml(i.description)} — <strong style="color:${Count.colour(i.mode)}">${esc(Count.words(i.mode, i.qty, i.unit || ''))}</strong></div>`).join('')}
         </div>` : ''}
       </div>`;
     }).join('');
@@ -1937,7 +1950,7 @@ const Manager = {
         qty === '' ? { v: '', t: 's', s: S_QTY } : { v: qty, t: 'n', s: S_QTY },
       ];
       if (!blank) {
-        const when = qty !== '' && rec.updatedAt && rec.updatedAt.toDate ? rec.updatedAt.toDate() : null;
+        const at = countedWhen(rec), when = qty !== '' && at && at.toDate ? at.toDate() : null;
         row.push(when ? { v: excelDay(when), t: 'n', z: DATE_FMT, s: S_DATE } : { v: '', t: 's', s: S_QTY });
       }
       rows.push(row);
@@ -4855,7 +4868,10 @@ const Manager = {
   },
 
   _historyRowHtml(r, nested) {
-    const ts     = r.timestamp?.toDate ? fmtTime(r.timestamp.toDate()) : fmtTime(r.timestamp);
+    // When it happened; a sign-out that waited offline also says when it arrived.
+    const got    = r.timestamp?.toDate ? r.timestamp.toDate() : r.timestamp ? new Date(r.timestamp) : null;
+    const late   = r.placedAt && got && got - r.placedAt > 90000;
+    const ts     = late ? `${fmtTime(r.placedAt)} · arrived ${fmtTime(got)}` : fmtTime(got || r.timestamp);
     const action = r.action || 'adjustment';
     const subtype = r.subtype || null;
 
@@ -4886,7 +4902,7 @@ const Manager = {
       <span class="history-delta ${dClass}">${deltaDisplay}</span>
       <div style="flex:1;min-width:0">
         <div class="history-item-name">${esc(r.itemName||r.stockId||'')}</div>
-        <div class="history-meta">${esc(r.by||'')}${ts ? ' · '+ts : ''} · now: ${r.newQty??'?'}${r.reverted?' · reverted':''}</div>
+        <div class="history-meta">${esc(r.by||'')}${ts ? ' · '+ts : ''}${r.newQty != null ? ` · now: ${r.newQty}` : ''}${r.reverted?' · reverted':''}</div>
       </div>
       ${revertBtn}
     </div>`;

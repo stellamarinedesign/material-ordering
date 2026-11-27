@@ -1,4 +1,4 @@
-// firebase-sync.js — v2026-11-27.4
+// firebase-sync.js — v2026-11-27.5
 let _db = null, _configured = false, _config = null, _second = null;
 
 // Signed-in email for stamping writes (null when the device isn't signed in —
@@ -685,67 +685,109 @@ const DB = {
       snap => snap.docs.map(d => ({ _id: d.id, ...d.data({ serverTimestamps: 'estimate' }) })), callback);
   },
 
-  // Records a stocktake — one item (progressive tick) or many (Review & submit).
-  // Each item carries its OWN mode: 'set' replaces the recorded qty, 'add'/'subtract'
-  // move it relative to what's there.
-  // All the counts are saved together or none is, so a failed submit can be tried
-  // again without adding anything twice. opId (OpId in shared.js) is written with
-  // them: if the first try did go through and only its reply was lost, the second
-  // finds the id and stops. Very long lists go in parts, each with its own id.
-  // The submission is merged into ONE session doc per device per day (id
-  // "<deviceSlug>-<YYYY-MM-DD>", items keyed by sid, latest count wins) so a day of
-  // ticks + submits reads as a single history row rather than flooding it.
-  // items: [{ sid, partCode, description, category, subcategory, unit, qty, mode }]
-  async recordStocktake(items, deviceName, opId) {
+  // Records stocktake counts — one item (a tick) or many (Review & submit) — as a
+  // waiting write (see WAITING WRITES below), so it works offline too.
+  // Each line carries its OWN mode: 'set' replaces the recorded qty; 'add'/'subtract'
+  // move it by that much (applyQty: what to move it by, which the page keeps from
+  // going below nothing), so counts from two devices add up in either order.
+  // countedAt is when the count was made, on the device; the rules refuse one older than
+  // the count already recorded, since that newer count already includes it.
+  // The counts are also merged into ONE session doc per device per day (id
+  // "<deviceSlug>-<YYYY-MM-DD>", `counts` keyed by sid, latest wins) so a day of ticks
+  // and submits reads as a single history row. Older sessions keep an `items` array.
+  // p: { by, at (ms), lines: [{ sid, partCode, description, category, subcategory, unit, qty, mode, applyQty? }] }
+  queueCounts(p, id) {
     if (!this.isReady()) throw new Error('Firebase not initialised');
-    const d = new Date();
+    const F = firebase.firestore.FieldValue, now = F.serverTimestamp();
+    const d = new Date(p.at);
     const dateStr = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-    const slug = String(deviceName || 'device').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '').slice(0, 30) || 'device';
-    const sessRef = _db.collection('material_stocktakes').doc(`${slug}-${dateStr}`);
-    const PART = 300;   // well inside what one transaction may write
-    for (let at = 0; at < items.length; at += PART) {
-      const part = items.slice(at, at + PART), partId = opId ? `${opId}:${at}` : null;
-      await _tx(async tx => {
-        const sess = await tx.get(sessRef);
-        const prev = sess.exists ? sess.data() : {};
-        const ops  = prev.ops || [];
-        if (partId && ops.includes(partId)) return;   // already recorded
-        const sids = [...new Set(part.map(i => i.sid))];
-        const refs = sids.map(sid => _db.collection('material_stock').doc(sid));
-        const docs = await Promise.all(refs.map(r => tx.get(r)));
-        const rec  = new Map(sids.map((sid, n) => [sid, { ref: refs[n], qty: docs[n].exists ? (docs[n].data().qty || 0) : 0 }]));
-        const bySid = new Map((prev.items || []).map(i => [i.sid, i]));
-        for (const item of part) {
-          const r = rec.get(item.sid);
-          if (item.mode === 'add')           r.qty = Math.round((r.qty + item.qty) * 100) / 100;
-          else if (item.mode === 'subtract') r.qty = Math.max(0, Math.round((r.qty - item.qty) * 100) / 100);
-          else                               r.qty = item.qty;
-          r.item = item;
-          bySid.set(item.sid, {
-            sid: item.sid, partCode: item.partCode || '', description: item.description || '',
-            category: item.category || '', subcategory: item.subcategory || '',
-            unit: item.unit || '', qty: item.qty, mode: item.mode || 'set',
-          });
-        }
-        for (const r of rec.values()) tx.set(r.ref, {
-          qty:         r.qty,
-          unit:        r.item.unit || '',
-          partCode:    r.item.partCode || '',
-          description: r.item.description || '',
-          category:    r.item.category || '',
-          subcategory: r.item.subcategory || '',
-          updatedBy:   deviceName || '',
-          updatedAt:   firebase.firestore.FieldValue.serverTimestamp(),
-        }, { merge: true });
-        // submittedAt tracks last activity so history sorts newest-first without an index.
-        tx.set(sessRef, {
-          deviceName: deviceName || '', date: dateStr, authEmail: _who(),
-          items: [...bySid.values()],
-          ...(partId ? { ops: [...ops, partId].slice(-40) } : {}),
-          submittedAt: firebase.firestore.FieldValue.serverTimestamp(),
-        }, { merge: true });
+    const slug = String(p.by || 'device').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '').slice(0, 30) || 'device';
+    const batch = _db.batch(), counts = {};
+    for (const l of p.lines) {
+      const move = l.applyQty != null ? l.applyQty : l.qty;
+      batch.set(_db.collection('material_stock').doc(l.sid), {
+        qty:         l.mode === 'add' ? F.increment(move) : l.mode === 'subtract' ? F.increment(-move) : l.qty,
+        unit:        l.unit || '',
+        partCode:    l.partCode || '',
+        description: l.description || '',
+        category:    l.category || '',
+        subcategory: l.subcategory || '',
+        updatedBy:   p.by || '',
+        updatedAt:   now,
+        countedAt:   firebase.firestore.Timestamp.fromMillis(p.at),
+      }, { merge: true });
+      counts[l.sid] = {
+        sid: l.sid, partCode: l.partCode || '', description: l.description || '',
+        category: l.category || '', subcategory: l.subcategory || '',
+        unit: l.unit || '', qty: l.qty, mode: l.mode || 'set', at: p.at,
+      };
+    }
+    // submittedAt tracks last activity so history sorts newest-first without an index.
+    batch.set(_db.collection('material_stocktakes').doc(`${slug}-${dateStr}`), {
+      deviceName: p.by || '', date: dateStr, authEmail: _who(), counts, submittedAt: now,
+    }, { merge: true });
+    batch.set(this._opRef(id), { kind: 'count', by: p.by || '', lines: p.lines.length, at: now });
+    return { id, done: batch.commit() };
+  },
+  // Which of these counts were made before the one now recorded (so the newer one stood).
+  async staleCounts(p) {
+    const docs = await Promise.all(p.lines.map(l => _db.collection('material_stock').doc(l.sid).get({ source: 'server' })));
+    return p.lines.filter((l, n) => {
+      const c = docs[n].exists && docs[n].data().countedAt;
+      return c && c.toMillis && c.toMillis() > p.at;
+    });
+  },
+
+  // ── WAITING WRITES ────────────────────────────────────────────────
+  // Sign-outs and stocktake counts are plain batched writes, so like orders they wait in
+  // the on-device store when there is no connection and go by themselves when it returns
+  // (see init; Outbox in shared.js keeps a copy and follows each one).
+  // Every batch also creates ops/<id>. The rules let that marker be created once and
+  // never written again, so a batch that arrives twice (its first reply was lost and it
+  // was sent again) is refused the second time and nothing is counted twice.
+  _opRef(id) { return _db.collection('ops').doc(id); },
+  // Follows one waiting write by its marker: callback({ exists, pending, fromCache }), or ({ error }).
+  watchOp(id, callback) {
+    if (!this.isReady()) return ()=>{};
+    return this._opRef(id).onSnapshot({ includeMetadataChanges: true },
+      snap => callback({ exists: snap.exists, pending: snap.metadata.hasPendingWrites, fromCache: snap.metadata.fromCache }),
+      err  => callback({ error: err }));
+  },
+  // Did this write reach the server (asked of the server itself)?
+  async opLanded(id) { return (await this._opRef(id).get({ source: 'server' })).exists; },
+  // For a page that is online and waits for the answer (the manager's stocktake): up to
+  // TX_WAIT. A refusal that only means "it is already there" counts as done.
+  async settle(id, done) {
+    let timer;
+    const slow = new Promise((_, no) => { timer = setTimeout(() => no(Object.assign(new Error('The connection dropped'), { code: 'deadline-exceeded' })), TX_WAIT); });
+    try { await Promise.race([done, slow]); }
+    catch (e) {
+      if (e && e.code === 'permission-denied' && await this.opLanded(id).catch(() => false)) return;
+      throw e;
+    } finally { clearTimeout(timer); }
+  },
+
+  // A consumables sign-out (the door iPad) as a waiting write: each line takes its
+  // quantity off the stock ("take 2 off", so sign-outs from two devices add up in either
+  // order) and files its history row under <id>-<sid>. newQty on the row is what this
+  // device expected the stock to become; placedAt is when it was signed out, the
+  // row's timestamp when it reached the server.
+  // p: { by, sessionId, at (ms), lines: [{ sid, description, qty, newQty }] }
+  queueSignOut(p, id) {
+    if (!this.isReady()) throw new Error('Firebase not initialised');
+    const F = firebase.firestore.FieldValue, now = F.serverTimestamp();
+    const batch = _db.batch();
+    for (const l of p.lines) {
+      batch.update(_db.collection('stock').doc(l.sid), { qty: F.increment(-l.qty) });
+      batch.set(_db.collection('stock_history').doc(`${id}-${l.sid}`), {
+        stockId: l.sid, itemName: l.description || '', delta: -l.qty,
+        newQty: l.newQty != null ? l.newQty : null,
+        action: 'checkout', subtype: null, by: p.by || '', authEmail: _who(),
+        sessionId: p.sessionId || null, reverted: false, placedAt: p.at, timestamp: now,
       });
     }
+    batch.set(this._opRef(id), { kind: 'signout', by: p.by || '', lines: p.lines.length, at: now });
+    return { id, done: batch.commit() };
   },
 
   // ── MATERIALS CATALOGUE ───────────────────────────────────────────
