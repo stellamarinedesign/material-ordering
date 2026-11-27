@@ -576,10 +576,17 @@ button { cursor: pointer; }
 .edit-scope { margin-bottom: 10px; }
 /* A cart emailed one category at a time: how far along */
 .email-progress { display: flex; align-items: center; gap: 6px; margin: 2px 0 8px; font-size: 13px; color: var(--green-text); font-variant-numeric: tabular-nums; }
-/* Manager lists keep the header's column instead of running edge to edge */
-.order-queue > * { max-width: 900px; margin-left: auto; margin-right: auto; }
-.stock-list, .history-list { width: 100%; max-width: 900px; margin: 0 auto; }
-.stock-action-buttons, .history-filter-bar, .low-stock-banner { padding-left: max(12px, calc((100% - 876px) / 2)); padding-right: max(12px, calc((100% - 876px) / 2)); }
+/* Manager lists keep the header's column (1200px, as Deliveries and New order do) instead
+   of running edge to edge. The queue sits beside the 220px sidebar: its cards end where
+   the header's column ends, and start where it starts, or just after the sidebar (and
+   the queue's 12px padding) when the window is too narrow for both. */
+.order-queue > * {
+  margin-left:  max(0px, calc((100vw - 1200px) / 2 + 16px - 232px));
+  margin-right: max(4px, calc((100vw - 1200px) / 2 + 4px));
+}
+@media (max-width: 640px) { .order-queue > * { margin-left: 4px; margin-right: 4px; } }   /* no sidebar */
+.stock-list, .history-list { width: 100%; max-width: 1192px; margin: 0 auto; }
+.stock-action-buttons, .history-filter-bar, .low-stock-banner { padding-left: max(12px, calc((100% - 1168px) / 2)); padding-right: max(12px, calc((100% - 1168px) / 2)); }
 .emailed-badge { font-size:10px;font-family:var(--mono);background:var(--green-bg);color:var(--green-text);padding:1px 6px;border-radius:20px;white-space:nowrap; }
 .sent-stamp { font-size: 11px; color: var(--green-text); font-family: var(--mono); background: var(--green-bg); padding: 2px 8px; border-radius: 20px; display: inline-flex; align-items: center; gap: 4px; }
 .chevron { transition: transform var(--dur); color: var(--text3); font-size: 16px; }
