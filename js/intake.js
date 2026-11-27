@@ -1,4 +1,4 @@
-// intake.js — v2026-11-27.9
+// intake.js — v2026-11-27.10
 // Shared intake rendering module used by warehouse.html and manager.html.
 
 const Intake = {

@@ -1,4 +1,4 @@
-// auth.js — v2026-11-27.9
+// auth.js — v2026-11-27.10
 //
 // Sign-in (Firebase email + password, compat SDK) and WHO IS WHAT, on every
 // page. The same model as the production board:
@@ -132,6 +132,7 @@ const Auth = {
   hub: null,          // the hub (js/hub-bridge.js), when it loaded
   hubState: null,     // what it answered: in | legacy | none | broken | unreachable
   hubDrawn: false,    // one of its own screens was up as it answered: its card
+  _joining: false,    // the hub has been asked and has not answered yet
 
   // Call once, after DB.init has succeeded. onChange(user|null) fires on every
   // auth state change AND again once the access document has been read, so a
@@ -158,10 +159,20 @@ const Auth = {
     // THE HUB, before the app's own listener: it may sign this app in, or out, as the
     // hub's person first, and its sign-in screen waits for one. The start-up cover stays
     // up meanwhile, so nothing of the page shows for the wrong person. Fails open.
-    const joined = await HubBridge.join({ reload: () => this._again() });
+    const atStart = await HubBridge.firstUser();
+    let wentOut = false;
+    const stopWatch = firebase.auth().onAuthStateChanged(u => { if (!u) wentOut = true; });
+    this._joining = true;
+    const joined = await HubBridge.join({ reload: () => this._again() }).finally(() => { this._joining = false; stopWatch(); });
     this.hub = (joined && joined.Hub) || null;
     this.hubState = (joined && joined.state) || null;
     this.hubDrawn = !!(joined && joined.drawn);
+    // SIGNED IN BY THE HUB JUST NOW (its sign-in screen, or a key it holds): the page opened
+    // with nobody signed in, or with someone the hub signed out first (signed out of the hub
+    // in another app, or somebody else signed in to it). The page's lists started before
+    // that and were refused, and a refused list stays stopped. Reload, as the app's own form
+    // always has after a sign-in, so every list starts signed in. The start-up cover is still up.
+    if (this._signedInAfterOpen(this._signedInSince(atStart, wentOut, firebase.auth().currentUser))) { this._again(); return; }
     // Nothing shows until a sign-in is known: the page's opaque start-up cover (Boot) stays
     // until Firebase reports a user, or the hub's screen, its card or the old form (off the
     // live site) takes its place. No page content is ever glimpsed signed out.
@@ -184,6 +195,24 @@ const Auth = {
   },
   _leaving: false,
   _again() { if (this._leaving) return; this._leaving = true; location.reload(); },
+  SIGNED_IN_RELOAD: 'mo_signed_in_reload',
+  /** Signed in now, and not simply as the page opened: nobody then, a sign-out since, or somebody else. */
+  _signedInSince(atStart, wentOut, now) { return !!now && (!atStart || wentOut || now.uid !== atStart.uid); },
+  /**
+   * Reload after a sign-in that came after the page opened? Once in a row per tab: if the
+   * reloaded page needs one again (a browser that keeps no sign-in), it carries on rather
+   * than reloading for ever.
+   */
+  _signedInAfterOpen(signedInSinceOpen) {
+    let tried = false;
+    try {
+      tried = sessionStorage.getItem(this.SIGNED_IN_RELOAD) === '1';
+      sessionStorage.removeItem(this.SIGNED_IN_RELOAD);
+      if (!signedInSinceOpen || tried) return false;
+      sessionStorage.setItem(this.SIGNED_IN_RELOAD, '1');
+    } catch { return false; }   // nowhere to note the try: never risk reloading for ever
+    return true;
+  },
 
   /** Signed in as the hub's person: Password and Sign out behind the lock are the hub's. */
   get viaHub() { return this.hubState === 'in' && !!this.hub; },
@@ -264,6 +293,7 @@ const Auth = {
   // the hub drawing nothing, the app's copy of its card; a device the hub left alone that
   // has just signed out reloads into the hub's sign-in; off the live site, the old form.
   _signInWay() {
+    if (this._joining) return;      // a list refused while the hub is still answering (its sign-in screen may be up): its answer decides
     const way = this._noUser();
     if (way === 'card') return;
     if (way === 'down') { HubBridge.downCard(); return; }

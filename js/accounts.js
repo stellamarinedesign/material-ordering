@@ -1,4 +1,4 @@
-// accounts.js — v2026-11-27.9
+// accounts.js — v2026-11-27.10
 //
 // Manager page only: the Accounts section of Settings, for an ADMIN (a
 // "master" in settings/access) and for nobody else — absent otherwise.

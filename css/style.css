@@ -45,8 +45,6 @@
   --title-transform: uppercase;          /* header title treatment */
   --title-spacing:  .1em;
   --title-weight:   700;
-  --icon-btn-bg:    rgba(255,255,255,0.06);
-  --icon-btn-line:  var(--border);
   --logo:        url('../images/brand/stella-icon.png');  /* header logo slot — */
   --logo-w:      46px;                                     /* set all three, or  */
   --logo-gap:    12px;                                     /* none for no logo   */
@@ -168,13 +166,17 @@ button { cursor: pointer; }
 /* The hub's app switcher (js/hub-bridge.js): drawn only for a login with two or more apps */
 .hd-apps { display: flex; margin-right: -4px; }
 .hd-apps:empty { display: none; }
+/* The cog: a bare icon, like the hub's apps button beside it, shaded the same way on
+   hover and while pressed. The tap target keeps its full size. */
 .icon-btn {
-  background: var(--icon-btn-bg); border: 1px solid var(--icon-btn-line);
+  background: transparent; border: 0;
   border-radius: var(--radius); width: 36px; height: 36px;
   display: flex; align-items: center; justify-content: center;
   color: var(--header-text); font-size: 18px; position: relative; flex-shrink: 0;
+  transition: background-color 120ms ease-out;
 }
-.icon-btn:active { background: rgba(255,255,255,0.24); }
+@media (hover: hover) { .icon-btn:hover { background: rgba(127,127,127,0.22); } }
+.icon-btn:active { background: rgba(127,127,127,0.3); transform: scale(.97); }
 .order-badge {
   position: absolute; top: -5px; right: -5px;
   background: var(--red); color: #fff; border-radius: 50%;

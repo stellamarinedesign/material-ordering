@@ -1,4 +1,4 @@
-// hub-bridge.js — v2026-11-27.9
+// hub-bridge.js — v2026-11-27.10
 //
 // THE HUB: one sign-in for every Stella app (the Stella-Hubinator repo). This
 // app keeps its own Firebase project, rules, data and roles; joining adds one
