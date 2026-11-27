@@ -1,4 +1,4 @@
-// firebase-sync.js — v2026-11-27.5
+// firebase-sync.js — v2026-11-27.6
 let _db = null, _configured = false, _config = null, _second = null;
 
 // Signed-in email for stamping writes (null when the device isn't signed in —
@@ -454,6 +454,17 @@ const DB = {
       .map(i => String(i.id)));
     if (!doc.exists || itemIds.some(id => !on.has(String(id))))
       throw Object.assign(new Error('The delivery has changed'), { code: 'delivery-changed' });
+  },
+
+  // Whether any of these orders still has a line on this delivery (asked of the server).
+  async deliveryStillThere(orderIds, groupKey) {
+    for (const id of orderIds) {
+      const doc = await _db.collection('orders').doc(id).get({ source: 'server' });
+      const data = doc.exists ? doc.data() : null; if (!data) continue;
+      const flags = !data.type || data.type === 'materials' || (data.items || []).some(i => i.emailed);
+      if ((data.items || []).some(i => !i.rejected && (i.emailed || !flags) && (i.deliveryId || `legacy:${doc.id}:${i.category}`) === groupKey)) return true;
+    }
+    return false;
   },
 
   // Merges an intake patch into an order inside a transaction. patch is a map of

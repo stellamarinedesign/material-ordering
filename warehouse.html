@@ -16,8 +16,8 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" media="print" onload="this.media='all'">
   <link rel="stylesheet" href="fonts/tabler-icons.min.css">
-  <link rel="stylesheet" href="css/style.css?v=2026-11-27.5">
-  <link rel="stylesheet" href="css/themes.css?v=2026-11-27.5">
+  <link rel="stylesheet" href="css/style.css?v=2026-11-27.6">
+  <link rel="stylesheet" href="css/themes.css?v=2026-11-27.6">
 </head>
 <body class="floor">
 <!-- Start-up cover: painted before any script; see Boot in js/shared.js -->
@@ -37,10 +37,10 @@
 <!-- APP CHECK: remove this line to disable App Check (also remove init block in firebase-sync.js) -->
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-check-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
-<script src="js/shared.js?v=2026-11-27.5"></script>
-<script src="js/firebase-sync.js?v=2026-11-27.5"></script>
-<script src="js/auth.js?v=2026-11-27.5"></script>
-<script src="js/intake.js?v=2026-11-27.5"></script>
+<script src="js/shared.js?v=2026-11-27.6"></script>
+<script src="js/firebase-sync.js?v=2026-11-27.6"></script>
+<script src="js/auth.js?v=2026-11-27.6"></script>
+<script src="js/intake.js?v=2026-11-27.6"></script>
 <script>
 const Warehouse = {
   orders:      [],
@@ -57,6 +57,7 @@ const Warehouse = {
     const ok = await DB.init(FirebaseConfig.get());
     if (!ok) { this.showSetup("Can't reach the database. Check the Wi-Fi, then tap Reload."); return; }
     this._drafts = Intake.loadDrafts('warehouse');   // ticks left unsaved on this device
+    Intake.page = 'warehouse';                       // and saves waiting for the connection (Intake.waiting)
     DB.onDenied = () => Auth.denied();
     Auth.deviceName = WarehouseDeviceName;
     Auth.start();
@@ -280,7 +281,10 @@ const Warehouse = {
   // ── LIVE STATUS ────────────────────────────────────────────────────────
   _renderLiveStatus() { Live.render(this._connState); },
   startConnectionStatus() {
-    DB.listenConnectionStatus(c => { this._connState.connected = c; this._renderLiveStatus(); });
+    DB.listenConnectionStatus(c => {
+      this._connState.connected = c; this._renderLiveStatus();
+      if (c) Intake.flushWaiting(this._host());   // deliveries saved here while offline
+    });
   },
   startVersionCheck() {
     DB.announceVersionIfNewer(APP_VERSION, isVersionNewer);
@@ -300,6 +304,7 @@ const Warehouse = {
       if (!fromCache || orders.length) this._ordersReady = true;
       this.renderList('materials');
       this.renderList('consumables');
+      Intake.flushWaiting(this._host());   // anything saved here offline, once the connection is there
     });
   },
 
@@ -489,9 +494,11 @@ const Warehouse = {
   // What the shared save code (Intake.saveCard and friends) needs from this page.
   _host() {
     return {
-      page: 'warehouse', drafts: this._drafts,
+      page: 'warehouse', drafts: this._drafts, device: 'iPad',
       by:     () => WarehouseDeviceName.get() || 'Warehouse',
       find:   groupKey => this._findGroup(groupKey),
+      connected: () => this._connState.connected,
+      ready:     () => !!this._ordersReady,   // the save itself checks against the server
       redraw: group => this.renderList(!group.entries[0].order.type || group.entries[0].order.type === 'materials' ? 'materials' : 'consumables'),
       // "Show" on the toast after a Confirm: the delivery, where it went, opened.
       show: (group, filter) => {

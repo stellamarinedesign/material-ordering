@@ -16,8 +16,8 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" media="print" onload="this.media='all'">
   <link rel="stylesheet" href="fonts/tabler-icons.min.css">
-  <link rel="stylesheet" href="css/style.css?v=2026-11-27.5">
-  <link rel="stylesheet" href="css/themes.css?v=2026-11-27.5">
+  <link rel="stylesheet" href="css/style.css?v=2026-11-27.6">
+  <link rel="stylesheet" href="css/themes.css?v=2026-11-27.6">
   <style>
     .cons-stock-badge {
       font-size: 11px; font-family: var(--mono); padding: 2px 8px;
@@ -27,8 +27,6 @@
     .cons-stock-badge.low      { background: var(--amber-bg); color: var(--amber-text); }
     .cons-stock-badge.critical { background: var(--red-bg);   color: var(--red-text); }
     .cons-stock-badge.zero     { background: var(--bg2);      color: var(--text3); }
-    .mat-card.out-of-stock     { opacity: 0.5; pointer-events: none; }
-    .mat-card.out-of-stock .mat-controls { opacity: 0.4; }
     /* ── Image grid (tradesmen pick by photo) ── */
     .cons-grid {
       display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
@@ -42,7 +40,6 @@
     }
     .cons-tile:active { transform: scale(0.97); }   /* tap feedback — the tile is the button */
     .cons-tile.in-order { border-color: var(--select-line); box-shadow: 0 0 0 1px var(--select-line); }
-    .cons-tile.out-of-stock { opacity: 0.55; pointer-events: none; }
     .cons-tile-img { position: relative; width: 100%; aspect-ratio: 1 / 1; background: var(--bg2); }
     .cons-tile-img img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
     .cons-tile-icon { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 46px; }
@@ -104,7 +101,6 @@
       .signout-item-controls { grid-row: 2; grid-column: 1 / -1; }
       .signout-item-row .remove-btn { grid-row: 1; grid-column: 2; }
     }
-    .signout-item-row.over-limit { border-color: var(--amber-text); }
     .signout-item-info { flex: 1; min-width: 0; text-align: left; }
     .signout-item-name { font-size: 15px; font-weight: 500; color: var(--text); line-height: 1.3; }
     .signout-item-unit { font-size: 13px; color: var(--text3); margin-top: 1px; }
@@ -143,9 +139,9 @@
 <!-- APP CHECK: remove this line to disable App Check (also remove init block in firebase-sync.js) -->
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-check-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
-<script src="js/shared.js?v=2026-11-27.5"></script>
-<script src="js/firebase-sync.js?v=2026-11-27.5"></script>
-<script src="js/auth.js?v=2026-11-27.5"></script>
+<script src="js/shared.js?v=2026-11-27.6"></script>
+<script src="js/firebase-sync.js?v=2026-11-27.6"></script>
+<script src="js/auth.js?v=2026-11-27.6"></script>
 <script>
 const ConsApp = {
   consumables: [],
@@ -293,7 +289,7 @@ const ConsApp = {
       zero: true,
       item: el => this.consumables.find(m => m.id == el.dataset.qid),
       get:  el => this.get(+el.dataset.qid),
-      set:  (el, qty) => { this.set(+el.dataset.qid, qty); this._limit(+el.dataset.qid, qty, el); },
+      set:  (el, qty) => { this.set(+el.dataset.qid, qty); },
       live: el => {
         const tile = el.closest('.cons-tile'), qty = this.get(+el.dataset.qid);
         if (tile) {
@@ -441,27 +437,15 @@ const ConsApp = {
   },
 
   // Cart helpers
+  // Nothing is capped at the recorded stock: people sign out what they are holding. If
+  // the record said there was less, the stock goes below zero, and the manager page
+  // marks the item "Count needed".
   get(id)        { return this._items[id]||0; },
-  set(id,qty)    {
-    const m = this.consumables.find(x=>x.id==id);
-    const avail = m ? this._availableQty(m) : null;
-    if (avail !== null) qty = Math.min(qty, avail);
-    if (qty <= 0) delete this._items[id]; else this._items[id]=qty;
-  },
-  // quiet: the caller says what happened itself (a scan).
-  adj(id,d,quiet) { const want = round2(this.get(id)+d); this.set(id, want); if (!quiet) this._limit(id, want); this._changed(); },
+  set(id,qty)    { if (qty <= 0) delete this._items[id]; else this._items[id]=qty; },
+  adj(id,d)      { this.set(id, round2(this.get(id)+d)); this._changed(); },
   // Secondary "take a box" action for boxed items — adds a whole box's worth of
-  // individual units (clamped to available stock by set()). Individual +/− stays primary.
-  addBox(id,quiet){ const m = this.consumables.find(x=>x.id==id); if (!hasBoxTracking(m)) return; const want = this.get(id) + m.boxSize; this.set(id, want); if (!quiet) this._limit(id, want); this._changed(); },
-  // Asked for more than there is: it was capped, and that is said.
-  _limit(id, want, field) {
-    if (this.get(id) >= want) return false;
-    const m = this.consumables.find(x => x.id == id), a = m ? this._availableQty(m) : null;
-    if (a === null) return false;
-    const msg = a > 0 ? `Only ${a} left` : 'None left';
-    if (field) QtyField._note(field, msg); else toast(msg, true);
-    return true;
-  },
+  // individual units. Individual +/− stays primary.
+  addBox(id)     { const m = this.consumables.find(x=>x.id==id); if (!hasBoxTracking(m)) return; this.set(id, this.get(id) + m.boxSize); this._changed(); },
 
   // ── BARCODE SCANNING ──────────────────────────────────────────────────
   // The scanner lives at the door, so people arrive holding the thing they're taking:
@@ -481,13 +465,8 @@ const ConsApp = {
     if (!m) { this._scanProblem('Barcode not set up. See the manager.', code); return; }
     const isBoxed = hasBoxTracking(m);
     const before  = this.get(m.id);
-    if (isBoxed) this.addBox(m.id, true); else this.adj(m.id, 1, true);
+    if (isBoxed) this.addBox(m.id); else this.adj(m.id, 1);
     const added = this.get(m.id) - before;
-    if (added <= 0) {
-      const avail = this._availableQty(m);
-      this._scanProblem(avail === null ? `${m.description}: not set up for sign out. See the manager.` : `${m.description}: no more in stock.`);
-      return;
-    }
     this._toast(isBoxed
       ? `Added 1 ${m.boxUnit || 'Box'} (${added}) · ${m.description}`
       : `Added 1 · ${m.description}`);
@@ -666,7 +645,7 @@ const ConsApp = {
       const bcCount = (this._stockFor(sid)?.barcodes || []).length;
       const bcBadge = this._barcodeSetup
         ? `<span class="cons-bc-flag ${bcCount ? 'has' : 'none'}"><i class="ti ti-barcode"></i>${bcCount ? ' ' + bcCount : ''}</span>` : '';
-      return `<div class="cons-tile ${inOrder?'in-order':''} ${isZero?'out-of-stock':''} ${hasPhoto?'':'no-photo'}" data-tile="${m.id}">
+      return `<div class="cons-tile ${inOrder?'in-order':''} ${hasPhoto?'':'no-photo'}" data-tile="${m.id}">
         <div class="cons-tile-img">
           ${catTile(m.category, 'cons-tile-icon')}
           ${imgTag}
@@ -678,7 +657,7 @@ const ConsApp = {
           <div><div class="cons-tile-name">${descHtml(m.description)}</div><div class="cons-tile-unit">${isBoxed ? `Each · ${esc(m.boxUnit||'Box')} of ${m.boxSize}` : esc(m.qtyType||'')}</div></div>
           <div class="cons-tile-foot"><div class="cons-tile-controls">
             <button class="qty-btn" data-dec="${m.id}">−</button>
-            <input class="qty-input" ${QtyField.attrs(m)} ${avail!==null?`max="${avail}"`:''} value="${qty || ''}" data-qid="${m.id}">
+            <input class="qty-input" ${QtyField.attrs(m)} value="${qty || ''}" data-qid="${m.id}">
             <button class="qty-btn" data-inc="${m.id}">+</button>
           </div>
           ${isBoxed ? `<button class="cons-box-btn" data-box="${m.id}"><i class="ti ti-box-seam"></i> Take a ${esc(m.boxUnit||'Box')} (${m.boxSize})</button>` : ''}
@@ -799,33 +778,31 @@ const ConsApp = {
   // quantity change or a stock update never touches the name being typed.
   _signOutParts() {
     const items = this.items();
-    const over  = items.some(i => { const a = this._availableQty(i); return a !== null && i.qty > a; });
     const rows  = items.map(i => {
-      const avail     = this._availableQty(i);
-      const overLimit = avail !== null && i.qty > avail;
-      return `<div class="signout-item-row${overLimit?' over-limit':''}">
+      return `<div class="signout-item-row">
         <div class="signout-item-info">
           <div class="signout-item-name">${descHtml(i.description)}</div>
-          <div class="signout-item-unit">${esc(i.qtyType||'')}${avail!==null?` · ${avail} in stock`:''}</div>
+          <div class="signout-item-unit">${esc(this._unitLine(i))}</div>
         </div>
         <div class="signout-item-controls">
           <button class="qty-btn" data-so-dec="${i.id}">−</button>
-          <input class="qty-input" ${QtyField.attrs(i)} ${avail!==null?`max="${avail}"`:''} value="${i.qty}" data-so-qid="${i.id}">
+          <input class="qty-input" ${QtyField.attrs(i)} value="${i.qty}" data-so-qid="${i.id}">
           <button class="qty-btn" data-so-inc="${i.id}">+</button>
         </div>
         <button class="remove-btn" data-so-rem="${i.id}" aria-label="Take off"><i class="ti ti-x"></i></button>
       </div>`;
     }).join('');
-    const warning = over ? `
-            <div style="background:var(--amber-bg);border:1px solid var(--amber-text);border-radius:var(--radius);padding:8px 10px;font-size:12px;color:var(--amber-text);margin-bottom:8px;text-align:left">
-              <i class="ti ti-alert-triangle"></i> Some quantities exceed current stock.
-            </div>` : '';
-    return { rows, warning };
+    return { rows };
+  },
+  // "Each · 3 in stock" — nothing below zero is shown here; the manager page has that.
+  _unitLine(i) {
+    const avail = this._availableQty(i);
+    return `${i.qtyType || ''}${avail === null ? '' : avail > 0 ? ` · ${avail} in stock` : ' · out of stock'}`;
   },
 
   _renderSignOutOverlay() {
     if (!this.count()) { document.getElementById('overlay-wrap').innerHTML = ''; return; }
-    const { rows: itemRows, warning } = this._signOutParts();
+    const { rows: itemRows } = this._signOutParts();
 
     const ow = document.getElementById('overlay-wrap');
     ow.innerHTML = `
@@ -838,7 +815,6 @@ const ConsApp = {
             ${this._recentNames().map(n => `<button class="recent-name-chip" data-name="${esc(n)}">${esc(n)}</button>`).join('')}
           </div>` : ''}
           <div class="inline-error" id="signout-error" role="alert" hidden style="margin-bottom:8px"></div>
-          <div id="signout-warning">${warning}</div>
           <div class="signout-item-list" id="signout-item-list">${itemRows}</div>
           <button class="btn btn-primary" id="btn-overlay-confirm" style="width:100%;margin-top:12px">
             <i class="ti ti-check"></i> Confirm sign out
@@ -869,7 +845,7 @@ const ConsApp = {
     QtyField.attach(document.getElementById('signout-item-list'), '[data-so-qid]', {
       item: el => this.consumables.find(m => m.id == el.dataset.soQid),
       get:  el => this.get(+el.dataset.soQid),
-      set:  (el, qty) => { this.set(+el.dataset.soQid, qty); this._limit(+el.dataset.soQid, qty, el); },
+      set:  (el, qty) => { this.set(+el.dataset.soQid, qty); },
       live: () => { this._updateBadge(); this.renderList(); },
     });
 
@@ -884,18 +860,14 @@ const ConsApp = {
     if (this._checkoutBusy) return;
     const list = document.getElementById('signout-item-list'); if (!list) return;
     if (!this.count()) { document.getElementById('overlay-wrap').innerHTML = ''; return; }
-    const { rows, warning } = this._signOutParts();
-    const w = document.getElementById('signout-warning'); if (w) w.innerHTML = warning;
+    const { rows } = this._signOutParts();
     // The same lines as before: change them where they are, so nothing under a finger moves.
     const items = this.items();
     if (items.map(i => String(i.id)).join() === [...list.querySelectorAll('[data-so-qid]')].map(el => el.dataset.soQid).join()) {
       for (const i of items) {
         const inp = list.querySelector(`[data-so-qid="${i.id}"]`), row = inp.closest('.signout-item-row');
-        const avail = this._availableQty(i);
-        row.classList.toggle('over-limit', avail !== null && i.qty > avail);
         if (inp !== document.activeElement) { inp.value = i.qty; inp.defaultValue = String(i.qty); }
-        if (avail !== null) inp.max = avail;
-        const u = row.querySelector('.signout-item-unit'); if (u) u.textContent = `${i.qtyType || ''}${avail !== null ? ` · ${avail} in stock` : ''}`;
+        const u = row.querySelector('.signout-item-unit'); if (u) u.textContent = this._unitLine(i);
       }
       return;
     }
@@ -918,14 +890,6 @@ const ConsApp = {
     }
     const items = this.items();
     if (!items.length) { document.getElementById('overlay-wrap').innerHTML=''; return; }
-    // The stock shown here already takes off sign-outs still waiting on this iPad.
-    for (const item of items) {
-      const avail = this._availableQty(item);
-      if (avail !== null && item.qty > avail) {
-        inlineError('signout-error', `${item.description}: only ${avail} in stock.`);
-        return;
-      }
-    }
 
     this._checkoutBusy = true;
     try {

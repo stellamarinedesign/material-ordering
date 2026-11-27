@@ -12,8 +12,8 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" media="print" onload="this.media='all'">
   <link rel="stylesheet" href="fonts/tabler-icons.min.css">
-  <link rel="stylesheet" href="css/style.css?v=2026-11-27.5">
-  <link rel="stylesheet" href="css/themes.css?v=2026-11-27.5">
+  <link rel="stylesheet" href="css/style.css?v=2026-11-27.6">
+  <link rel="stylesheet" href="css/themes.css?v=2026-11-27.6">
 </head>
 <body>
 <!-- Start-up cover: painted before any script; see Boot in js/shared.js -->
@@ -33,12 +33,12 @@
 <!-- APP CHECK: remove this line to disable App Check (also remove init block in firebase-sync.js) -->
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-check-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
-<script src="js/shared.js?v=2026-11-27.5"></script>
-<script src="js/firebase-sync.js?v=2026-11-27.5"></script>
-<script src="js/auth.js?v=2026-11-27.5"></script>
-<script src="js/intake.js?v=2026-11-27.5"></script>
-<script src="js/catalogue.js?v=2026-11-27.5"></script>
-<script src="js/accounts.js?v=2026-11-27.5"></script>
+<script src="js/shared.js?v=2026-11-27.6"></script>
+<script src="js/firebase-sync.js?v=2026-11-27.6"></script>
+<script src="js/auth.js?v=2026-11-27.6"></script>
+<script src="js/intake.js?v=2026-11-27.6"></script>
+<script src="js/catalogue.js?v=2026-11-27.6"></script>
+<script src="js/accounts.js?v=2026-11-27.6"></script>
 <!-- Vendored xlsx-js-style (SheetJS fork with cell styling) — stocktake Excel exports -->
 <script src="js/xlsx-style.min.js"></script>
 <!-- Vendored ExcelJS — used only for the consumables export, which embeds drawn
@@ -177,6 +177,7 @@ const Manager = {
     this.consumables  = this._baseConsumables;
     this.orderRef  = genRef();
     this._intakeDrafts = Intake.loadDrafts('manager');
+    Intake.page = 'manager';   // whose deliveries wait for the connection (Intake.waiting)
     this._loadStaged();
     this.renderShell();
     this._loadCarts();
@@ -208,6 +209,7 @@ const Manager = {
     DB.listenConnectionStatus(connected => {
       this._connState.connected = connected;
       this._renderLiveStatus();
+      if (connected) Intake.flushWaiting(this._intakeHost());   // deliveries saved here while offline
     });
   },
 
@@ -1332,10 +1334,12 @@ const Manager = {
   // What the shared save code (Intake.saveCard and friends) needs from this page.
   _intakeHost() {
     return {
-      page: 'manager', drafts: this._intakeDrafts,
+      page: 'manager', drafts: this._intakeDrafts, device: 'PC',
       by:     () => (Settings.get().managerName || 'Manager').trim() || 'Manager',
       find:   groupKey => this._intakeFindGroup(groupKey),
       redraw: group => { if (!group.entries[0].order.type || group.entries[0].order.type === 'materials') this.renderIntakeMat(); else this.renderIntakeCons(); },
+      connected: () => this._connState.connected,
+      ready:     () => !!this._ordersReady,   // the save itself checks against the server
     };
   },
   intakeConfirm(cardKey)    { return Intake.saveCard(this._intakeHost(), cardKey, true); },
@@ -2004,6 +2008,7 @@ const Manager = {
       this.orders = orders;
       this._ordersFromCache = !!fromCache;
       if (!fromCache || orders.length) this._ordersReady = true;
+      setTimeout(() => Intake.flushWaiting(this._intakeHost()));   // anything saved here offline, once connected
       this._tidyStaged();
       this._settleOwed();
       const n = this._materialsOrders().filter(o => this._orderHasPendingItems(o)).length;
@@ -3806,38 +3811,42 @@ const Manager = {
   // Returns the stock record for a given stockId, or null
   _stockFor(sid) { return this._stock.find(r => r._id === sid) || null; },
 
-  // Classify a tracked item: 'ok' | 'warning' | 'critical' | 'zero'
+  // Classify a tracked item: 'count' | 'zero' | 'critical' | 'warning' | 'ok'.
+  // 'count': below zero. The door iPad signs out what people are holding, so more went
+  // out than was recorded: the shelf needs counting (Set stock clears it).
   _stockStatus(rec) {
     if (!rec || !rec.tracked) return 'untracked';
     const qty = rec.qty || 0;
-    if (qty <= 0) return 'zero';
+    if (qty < 0) return 'count';
+    if (qty === 0) return 'zero';
     if (rec.warningQty > 0 && qty <= rec.warningQty) return qty <= (rec.reorderQty||0) ? 'critical' : 'warning';
     return 'ok';
   },
+  // Wants the manager: low on stock, or needing a count. The Low stock tab, its count and the banner.
+  _stockNeedsYou(rec) {
+    return !!rec && rec.tracked && ((rec.qty || 0) < 0 || (rec.warningQty > 0 && (rec.qty || 0) <= rec.warningQty));
+  },
 
   _updateStockBadge() {
-    const low = this.consumables.filter(m => {
-      const rec = this._stockFor(stockId(m));
-      if (!rec || !rec.tracked) return false;
-      return rec.warningQty > 0 && (rec.qty||0) <= rec.warningQty;
-    }).length;
+    const recs = this.consumables.map(m => this._stockFor(stockId(m))).filter(r => this._stockNeedsYou(r));
+    const all = recs.length, count = recs.filter(r => (r.qty || 0) < 0).length, low = all - count;
     const badge = document.getElementById('stock-low-badge');
-    if (badge) { setCount(badge, low); }
+    if (badge) { setCount(badge, all); }
     const banner = document.getElementById('stock-low-banner');
     const bannerText = document.getElementById('stock-low-text');
     if (banner && bannerText) {
-      banner.style.display = low > 0 && this._stockActiveCat !== '__low__' ? 'flex' : 'none';
-      bannerText.textContent = `${low} item${low!==1?'s':''} low on stock`;
+      banner.style.display = all > 0 && this._stockActiveCat !== '__low__' ? 'flex' : 'none';
+      bannerText.textContent = [
+        count ? `${count} item${count !== 1 ? 's' : ''} need${count === 1 ? 's' : ''} a count` : '',
+        low ? `${low} item${low !== 1 ? 's' : ''} low on stock` : '',
+      ].filter(Boolean).join(' · ');
     }
   },
 
   renderStockTabs() {
     const wrap = document.getElementById('stock-tabs-wrap'); if (!wrap) return;
     const cats = Data.categories(this.consumables);
-    const lowItems = this.consumables.filter(m => {
-      const rec = this._stockFor(stockId(m));
-      return rec?.tracked && rec.warningQty > 0 && (rec.qty||0) <= rec.warningQty;
-    });
+    const lowItems = this.consumables.filter(m => this._stockNeedsYou(this._stockFor(stockId(m))));
     const lowCount = lowItems.length;
     const catBtns = cats.map(c => `<button class="tab ${this._stockActiveCat===c?'active':''}" data-stock-cat="${esc(c)}">${esc(c)}</button>`).join('');
     wrap.innerHTML = `<div class="tabs-bar"><div class="tabs-inner">
@@ -3878,10 +3887,7 @@ const Manager = {
     let items = [...this.consumables];
 
     if (this._stockActiveCat === '__low__') {
-      items = items.filter(m => {
-        const rec = this._stockFor(stockId(m));
-        return rec?.tracked && rec.warningQty > 0 && (rec.qty||0) <= rec.warningQty;
-      });
+      items = items.filter(m => this._stockNeedsYou(this._stockFor(stockId(m))));
     } else if (this._stockActiveCat) {
       items = items.filter(m => m.category === this._stockActiveCat);
       if (this._stockActiveSub) items = items.filter(m => m.subcategory === this._stockActiveSub);
@@ -3889,12 +3895,12 @@ const Manager = {
     let note = '';
     if (q.trim()) { const found = Data.filter(items, null, null, q); note = searchNote(found, q); items = [...found]; }
 
-    // Sort: out → reorder → low → ok → untracked
-    const order = { zero:0, critical:1, warning:2, ok:3, untracked:4 };   // what has run out first
+    // Sort: count needed → out → reorder → low → ok → untracked
+    const order = { count:0, zero:1, critical:2, warning:3, ok:4, untracked:5 };   // what needs you first
     items.sort((a, b) => {
       const ra = this._stockFor(stockId(a)), rb = this._stockFor(stockId(b));
       const sa = this._stockStatus(ra), sb = this._stockStatus(rb);
-      return (order[sa]??4) - (order[sb]??4) || descCompare(a.description, b.description);
+      return (order[sa]??5) - (order[sb]??5) || descCompare(a.description, b.description);
     });
 
     if (!items.length) { list.innerHTML = note || `<div class="empty-state"><i class="ti ti-package-off"></i><p>${this._stockActiveCat === '__low__' ? 'Nothing is low on stock.' : 'No consumables in this category.'}</p></div>`; return; }
@@ -3956,10 +3962,10 @@ const Manager = {
     const isOpen  = this._openStockCards.has(sid);
     const isBoxed = hasBoxTracking(m);
 
-    const badgeClass = status === 'ok' ? '' : status === 'zero' ? ' zero' : status === 'warning' ? ' warning' : status === 'critical' ? ' critical' : ' zero';
-    const cardClass  = status === 'untracked' ? ' untracked' : status === 'warning' ? ' warning' : status === 'critical' ? ' critical' : status === 'zero' ? ' zero' : '';
+    const badgeClass = status === 'ok' ? '' : status === 'zero' ? ' zero' : status === 'warning' ? ' warning' : status === 'critical' || status === 'count' ? ' critical' : ' zero';
+    const cardClass  = status === 'untracked' ? ' untracked' : status === 'warning' ? ' warning' : status === 'critical' || status === 'count' ? ' critical' : status === 'zero' ? ' zero' : '';
 
-    const word = { zero: 'Out of stock', critical: `Reorder · ${boxDisplay(m, qty)}`, warning: `Low · ${boxDisplay(m, qty)}` }[status];
+    const word = { count: `Count needed · −${round2(-qty)}`, zero: 'Out of stock', critical: `Reorder · ${boxDisplay(m, qty)}`, warning: `Low · ${boxDisplay(m, qty)}` }[status];
     const qtyBadge = tracked
       ? `<span class="stock-qty-badge${badgeClass}">${esc(word || boxDisplay(m, qty))}</span>`
       : `<span style="font-size:11px;color:var(--text3);font-family:var(--mono)">Not tracked</span>`;
@@ -3967,8 +3973,8 @@ const Manager = {
     // Boxed items get a box-centric workflow (add whole boxes, override by boxes+loose,
     // and a quick "open new box" stocktake action) since that's how warehouse stock is
     // actually handled — tracking individual units one at a time is rare in practice.
-    const wholeBoxes  = isBoxed ? Math.floor(qty / m.boxSize) : 0;
-    const looseUnits  = isBoxed ? qty % m.boxSize : 0;
+    const wholeBoxes  = isBoxed ? Math.floor(Math.max(0, qty) / m.boxSize) : 0;
+    const looseUnits  = isBoxed ? Math.max(0, qty) % m.boxSize : 0;
 
     const boxedIntakeRow = `
           <div class="stock-action-row">
@@ -4902,7 +4908,7 @@ const Manager = {
       <span class="history-delta ${dClass}">${deltaDisplay}</span>
       <div style="flex:1;min-width:0">
         <div class="history-item-name">${esc(r.itemName||r.stockId||'')}</div>
-        <div class="history-meta">${esc(r.by||'')}${ts ? ' · '+ts : ''}${r.newQty != null ? ` · now: ${r.newQty}` : ''}${r.reverted?' · reverted':''}</div>
+        <div class="history-meta">${esc(r.by||'')}${ts ? ' · '+ts : ''}${r.newQty != null ? ` · now: ${String(r.newQty).replace('-', '−')}` : ''}${r.reverted?' · reverted':''}</div>
       </div>
       ${revertBtn}
     </div>`;

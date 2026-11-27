@@ -1360,6 +1360,7 @@ button.bc-chip { font-family: var(--mono); line-height: inherit; }
   font-size: 11px; font-weight: 600; padding: 3px 8px; border-radius: 20px;
 }
 .intake-unsaved-tag { background: var(--amber-bg); color: var(--amber-text); }
+.intake-unsaved-tag.waiting { background: var(--blue-bg); color: var(--blue-text); }   /* saved on this device; goes when the connection is back */
 .intake-saving { background: var(--bg2); color: var(--text2); }
 .intake-saving .ti { animation: spin 1s linear infinite; }
 /* More arrived than was ordered */

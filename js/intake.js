@@ -1,4 +1,4 @@
-// intake.js — v2026-11-27.5
+// intake.js — v2026-11-27.6
 // Shared intake rendering module used by warehouse.html and manager.html.
 
 const Intake = {
@@ -136,6 +136,45 @@ const Intake = {
     return this._saving.size > 0 || Object.values(this._readDrafts(this.draftKey(page))).some(v => v && v.at > since);
   },
 
+  // ── SAVES WAITING FOR A CONNECTION ──────────────────────────────────
+  // A delivery saved, confirmed or added to stock with no connection is kept on this
+  // device — its ticks stay on the card (the kept draft) — and marked waiting. The save
+  // itself needs the server: it checks each line is still on the delivery and adds to
+  // what other devices have ticked. So it runs, exactly as if pressed, when the
+  // connection is back (flushWaiting). page: set by the page ('warehouse' or 'manager').
+  // Kept per page: { [groupKey]: { save?, confirm?, stock?, at } }.
+  page: null,
+  waitKey(page) { return `mo_intake_wait_${page}${FirebaseConfig.isTestMode() ? '_test' : ''}`; },
+  waiting(page) {
+    try { const v = JSON.parse(localStorage.getItem(this.waitKey(page || this.page)) || '{}'); return v && typeof v === 'object' ? v : {}; } catch { return {}; }
+  },
+  // what: flags to set (true) or clear (false); null clears the delivery altogether.
+  _markWaiting(page, groupKey, what) {
+    const w = this.waiting(page);
+    const v = what ? { ...(w[groupKey] || {}), ...what, at: (w[groupKey] && w[groupKey].at) || Date.now() } : null;
+    if (v && (v.save || v.confirm || v.stock)) w[groupKey] = v; else delete w[groupKey];
+    try { localStorage.setItem(this.waitKey(page), JSON.stringify(w)); } catch {}
+  },
+  isWaiting(groupKey) { return !!this.page && !!this.waiting(this.page)[groupKey]; },
+  _offline(host) { return navigator.onLine === false || (!!host.connected && host.connected() === false); },
+  // The connection is back (or the page opened online): save what waited, oldest first.
+  async flushWaiting(host) {
+    if (this._flushing || this._offline(host) || (host.ready && !host.ready())) return;
+    this._flushing = true;
+    try {
+      const list = Object.entries(this.waiting(host.page)).sort((a, b) => (a[1].at || 0) - (b[1].at || 0));
+      for (const [groupKey, v] of list) {
+        if (this._offline(host)) break;
+        if (v.save || v.confirm) await this.saveCard(host, groupKey, !!v.confirm, true);
+        if (v.stock && !this._offline(host)) {
+          const group = host.find(groupKey);
+          if (group) await this._applyStock(host, group, true);
+          else this._markWaiting(host.page, groupKey, null);
+        }
+      }
+    } finally { this._flushing = false; }
+  },
+
   // Whether a draft really differs from what is saved: ticking a line and unticking it
   // again leaves nothing to save.
   draftChanges(entries, draftForCard) {
@@ -158,14 +197,41 @@ const Intake = {
   isSaving(groupKey) { return this._saving.has(groupKey); },
   bareKey(cardKey) { return cardKey.endsWith('|||bo') ? cardKey.slice(0, -5) : cardKey; },
 
-  // host: { page, drafts, by, find(groupKey) -> group, redraw(group) }
+  // host: { page, drafts, by, find(groupKey) -> group, redraw(group), connected?, ready?, device? }
   // confirm=true (Confirm) needs every line actioned; false (Save) keeps partial progress.
-  async saveCard(host, cardKey, confirm) {
+  // auto: a save that waited for the connection, run now it is back (flushWaiting).
+  async saveCard(host, cardKey, confirm, auto) {
     const groupKey = this.bareKey(cardKey);
     if (this.isSaving(groupKey)) return;
-    const group = host.find(groupKey); if (!group) return;
-    const draft = host.drafts.get(groupKey); if (!draft) return;
-    if (confirm && !this.canConfirmEntries(group.entries, draft)) return;
+    const group = host.find(groupKey);
+    const draft = host.drafts.get(groupKey);
+    if (auto && (!group || !draft)) {
+      // Nothing left to save (saved meanwhile), or the delivery has gone (said below).
+      if (!draft) { this._markWaiting(host.page, groupKey, { save: false, confirm: false }); return; }
+    }
+    if (!group || !draft) {
+      if (auto && !group) {
+        const name = (this.waiting(host.page)[groupKey] || {}).name || 'A delivery';
+        host.drafts.delete(groupKey); this._failed.delete(groupKey);
+        this.keepDrafts(host.page, host.drafts);
+        this._markWaiting(host.page, groupKey, null);
+        await Ask.confirm({ title: 'Not saved', body: `${name} is no longer on the list.`, yes: 'Close' });
+      }
+      return;
+    }
+    if (confirm && !this.canConfirmEntries(group.entries, draft)) {
+      if (!auto) return;
+      confirm = false;   // changed meanwhile: keep the progress at least
+    }
+    // No connection: keep it, ticks and all, and save it when the connection is back.
+    if (!auto && this._offline(host)) {
+      this.keepDrafts(host.page, host.drafts);
+      this._markWaiting(host.page, groupKey, { ...(confirm ? { confirm: true } : { save: true }), name: group.category });
+      this._failed.delete(groupKey);
+      host.redraw(group);
+      toast(`${group.category}: saved on this ${host.device || 'device'}. It saves when the connection is back.`);
+      return;
+    }
 
     const sent   = { ...draft };   // what this save covers; anything ticked meanwhile stays staged
     const merged = this.mergeDraftEntries(group.entries, sent);
@@ -219,30 +285,48 @@ const Intake = {
 
     this._saving.set(groupKey, 'Saving…'); this._failed.delete(groupKey);
     host.redraw(group);
-    let saved = false;
+    let saved = false, failure = null;
     try {
-      if (navigator.onLine === false) throw Object.assign(new Error('offline'), { code: 'unavailable' });
       await Promise.all([...byOrder.entries()].map(([orderId, patch]) => DB.updateIntake(orderId, patch, host.by(), groupKey)));
       saved = true;
+      this._markWaiting(host.page, groupKey, { save: false, confirm: false });
       const now = host.drafts.get(groupKey) || {}, left = {};
       for (const k of Object.keys(now)) if (skipped.has(k) || now[k] !== sent[k]) left[k] = now[k];
       if (Object.keys(left).length) host.drafts.set(groupKey, left); else host.drafts.delete(groupKey);
       this.keepDrafts(host.page, host.drafts);
     } catch (e) {
       console.error('Delivery save failed:', e);
-      this._failed.set(groupKey, `Not saved: ${whyFailed(e)}. Tap ${confirm ? 'Confirm delivery' : 'Save progress'} to try again.`);
+      failure = e;
+      const conn = e && (e.code === 'unavailable' || e.code === 'deadline-exceeded');
+      if (auto && conn) { /* the connection went again: it stays waiting */ }
+      else {
+        if (auto) this._markWaiting(host.page, groupKey, { save: false, confirm: false });
+        this._failed.set(groupKey, `Not saved: ${whyFailed(e)}. Tap ${confirm ? 'Confirm delivery' : 'Save progress'} to try again.`);
+      }
     } finally {
       this._saving.delete(groupKey);
       host.redraw(host.find(groupKey) || group);
     }
+    // A save that waited, refused because the delivery changed meanwhile (a line put back,
+    // the order removed). This device's list may not have caught up yet, so it is said
+    // here rather than on a card that is about to go.
+    if (!saved && auto && failure && failure.code === 'delivery-changed') {
+      const still = await DB.deliveryStillThere([...new Set(group.entries.map(e => e.order._id))], groupKey).catch(() => !!host.find(groupKey));
+      if (!still) { host.drafts.delete(groupKey); this._failed.delete(groupKey); this.keepDrafts(host.page, host.drafts); }
+      await Ask.confirm({ title: 'Not saved', yes: 'Close', body: still
+        ? `${group.category} changed while this ${host.device || 'device'} was offline. Check the ticks, then save it again.`
+        : `${group.category} is no longer on the list.` });
+    }
     // Put back while it was being ticked off: there is no card left to say so on.
-    if (!saved && !host.find(groupKey)) {
+    else if (!saved && !host.find(groupKey)) {
       host.drafts.delete(groupKey); this._failed.delete(groupKey);
       this.keepDrafts(host.page, host.drafts);
+      this._markWaiting(host.page, groupKey, null);
       await Ask.confirm({ title: 'Not saved', body: `${group.category} is no longer on the list.`, yes: 'Close' });
     }
     // On a full Confirm of a consumables delivery, offer to add what was received to stock.
-    if (saved && confirm) await this.offerStock(host, group, merged);
+    // Not for a save that waited: nobody may be there to answer; the card's "Add to stock" stays.
+    if (saved && confirm && !auto) await this.offerStock(host, group, merged);
     if (saved) {
       const bo = group.entries.some(({ order, item }) => this.outstandingOf(order, item, merged) > 0);
       const where = bo ? 'backorder' : 'completed';
@@ -272,32 +356,54 @@ const Intake = {
     const first = changes.every(c => c.prev === 0);
     this._saving.set(group.groupKey, first ? 'Add to stock?' : 'Update stock?');   // one question at a time per delivery
     host.redraw(group);
-    let go = await Ask.confirm({
+    const go = await Ask.confirm({
       title: first ? 'Add these to stock?' : 'Update stock to match this delivery?',
       rows: moves.map(c => [c.item.description, `${c.delta > 0 ? '+' : '−'}${Math.abs(c.delta)} ${c.item.qtyType || 'units'}`]),
       yes: first ? 'Add to stock' : 'Update stock', no: 'Not now',
     });
+    this._saving.delete(group.groupKey);
+    if (go) await this._applyStock(host, group, false, merged);
+    else host.redraw(host.find(group.groupKey) || group);
+  },
+  // Puts the delivery's received quantities into stock — only the difference from what it
+  // already put in (DB.applyDeliveryStock works that out on the server). With no
+  // connection it waits on this device and goes when one is back (auto: that run).
+  async _applyStock(host, group, auto, merged) {
+    const key = group.groupKey;
+    merged = merged || this.mergeDraftEntries(group.entries, null);
+    const changes = this.deliveryStockDeltas(group.entries, merged);
+    if (!changes.some(c => c.delta !== 0)) { this._markWaiting(host.page, key, { stock: false }); host.redraw(group); return; }
+    const first = changes.every(c => c.prev === 0);
+    if (!auto && this._offline(host)) {
+      this._markWaiting(host.page, key, { stock: true, name: group.category });
+      host.redraw(group);
+      toast(`${group.category}: saved on this ${host.device || 'device'}. Stock is ${first ? 'added' : 'updated'} when the connection is back.`);
+      return;
+    }
+    let go = true;
     while (go) {
-      this._saving.set(group.groupKey, first ? 'Adding…' : 'Updating…'); this._failed.delete(group.groupKey);
+      this._saving.set(key, first ? 'Adding…' : 'Updating…'); this._failed.delete(key);
       host.redraw(group);
       try {
-        if (navigator.onLine === false) throw Object.assign(new Error('offline'), { code: 'unavailable' });
         const units = new Map(this.deliveryStockStamp(group.entries, merged).map(s => [`${s.orderId}::${s.itemId}`, s.units]));
         await DB.applyDeliveryStock(group.entries.map(({ order, item }) => ({
           orderId: order._id, itemId: String(item.id), sid: stockId(item), description: item.description,
           units: units.get(`${order._id}::${item.id}`) || 0,
-        })), `${host.by()} — Delivery: ${group.category}`, genRef(), group.groupKey);
+        })), `${host.by()} — Delivery: ${group.category}`, genRef(), key);
+        this._markWaiting(host.page, key, { stock: false });
         go = false;
       } catch (e) {
         console.error('Stock update failed:', e);
+        if (auto && e && (e.code === 'unavailable' || e.code === 'deadline-exceeded')) break;   // still waiting
+        if (auto) this._markWaiting(host.page, key, { stock: false });
         const why = whyFailed(e);
-        this._failed.set(group.groupKey, `Stock not changed: ${why}. Tap ${first ? 'Add to stock' : 'Update stock'} to try again.`);
+        this._failed.set(key, `Stock not changed: ${why}. Tap ${first ? 'Add to stock' : 'Update stock'} to try again.`);
         // A confirmed delivery may already have left this list, card and all: ask here too.
-        go = await Ask.confirm({ title: 'Stock not changed', body: `${why[0].toUpperCase()}${why.slice(1)}.${nothingDone(e, `Nothing was ${first ? 'added' : 'moved'}.`)}`, yes: 'Try again', no: 'Later' });
+        go = auto ? false : await Ask.confirm({ title: 'Stock not changed', body: `${why[0].toUpperCase()}${why.slice(1)}.${nothingDone(e, `Nothing was ${first ? 'added' : 'moved'}.`)}`, yes: 'Try again', no: 'Later' });
       }
     }
-    this._saving.delete(group.groupKey);
-    host.redraw(host.find(group.groupKey) || group);
+    this._saving.delete(key);
+    host.redraw(host.find(key) || group);
   },
 
   // Throws away a card's staged ticks, after asking.
@@ -308,6 +414,7 @@ const Intake = {
     if (!await Ask.confirm({ title: 'Discard the unsaved changes?', body: group.category, yes: 'Discard changes', no: 'Keep changes', danger: true })) return;
     host.drafts.delete(groupKey); this._failed.delete(groupKey);
     this.keepDrafts(host.page, host.drafts);
+    this._markWaiting(host.page, groupKey, { save: false, confirm: false });
     host.redraw(group);
   },
 
@@ -584,6 +691,7 @@ const Intake = {
     const canConfirm = hasDraft && this.canConfirmEntries(entries, draftForCard);
     const saving     = readOnly ? '' : (this._saving.get(groupKey) || '');
     const failed     = readOnly ? '' : (this._failed.get(groupKey) || '');
+    const wait       = readOnly || !this.page ? null : (this.waiting()[groupKey] || null);   // saved here, offline
 
     // Follow-up tag — any line short with no explanation (see needsFollowUp). Reflects
     // staged edits too, so resolving it on the card clears the tag immediately.
@@ -635,9 +743,10 @@ const Intake = {
           <div class="intake-card-right">
             ${readOnly && showRestore ? `<button class="intake-restore-btn" data-restore="${esc(groupKey)}" title="Reopen this delivery"><i class="ti ti-arrow-back-up"></i> Reopen</button>` : ''}
             ${saving && !isOpen ? `<span class="intake-saving"><i class="ti ti-loader-2"></i> ${esc(saving)}</span>` : ''}
-            ${hasDraft && !saving ? `<span class="intake-unsaved-tag"><i class="ti ti-pencil"></i> Unsaved</span>` : ''}
+            ${saving ? '' : wait ? `<span class="intake-unsaved-tag waiting"><i class="ti ti-cloud-upload"></i> Waiting to save</span>`
+              : hasDraft ? `<span class="intake-unsaved-tag"><i class="ti ti-pencil"></i> Unsaved</span>` : ''}
             ${followUpTag}
-            ${saving || hasDraft ? '' : stockTag}
+            ${saving || hasDraft || (wait && wait.stock) ? '' : stockTag}
             ${this.statusBadge(badgeStatus)}
             <i class="ti ${isOpen ? 'ti-chevron-up' : 'ti-chevron-down'} intake-chevron"></i>
           </div>
@@ -646,7 +755,7 @@ const Intake = {
         ${isOpen ? `<div class="intake-card-body${this._foldIn === cardKey ? ' fold-in' : ''}">
           ${this._renderMergedEntries(entries, { draftForCard, readOnly })}
         </div>
-        ${this._cardFoot(cardKey, entries, draftForCard, { readOnly, hasDraft, canConfirm, saving, failed, resolved: this.TAB_RESOLVED.has(status) })}` : ''}
+        ${this._cardFoot(cardKey, entries, draftForCard, { readOnly, hasDraft, canConfirm, saving, failed, wait, resolved: this.TAB_RESOLVED.has(status) })}` : ''}
       </div>`;
   },
 
@@ -665,11 +774,12 @@ const Intake = {
     }
     return { ticked, noQty, n: rows.size };
   },
-  _cardFoot(cardKey, entries, draftForCard, { readOnly, hasDraft, canConfirm, saving, failed, resolved }) {
-    if (readOnly || (resolved && !hasDraft && !saving && !failed)) return '';
+  _cardFoot(cardKey, entries, draftForCard, { readOnly, hasDraft, canConfirm, saving, failed, wait, resolved }) {
+    if (readOnly || (resolved && !hasDraft && !saving && !failed && !wait)) return '';
     const { ticked, noQty, n } = this._progress(entries, draftForCard);
     const left = n - ticked - noQty;
-    const why = canConfirm || !hasDraft ? `${ticked} of ${n} ticked`
+    const why = wait && !saving ? 'Saves when the connection is back'
+      : canConfirm || !hasDraft ? `${ticked} of ${n} ticked`
       : left ? `${left} line${left !== 1 ? 's' : ''} left to tick` : 'Enter how many arrived';
     const main = saving
       ? `<button class="intake-confirm-btn" disabled><i class="ti ti-loader-2" style="animation:spin 1s linear infinite"></i> ${esc(saving)}</button>`
