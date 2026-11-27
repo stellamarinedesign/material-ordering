@@ -55,7 +55,7 @@ def edit(path, fn):
 # js/shared.js — the single source of truth (no "v": it's added for display)
 edit("js/shared.js", lambda s: re.subn(rf"(const APP_VERSION = ')({VER})(')", rf"\g<1>{new}\g<3>", s))
 # module headers
-for js in ["js/shared.js", "js/firebase-sync.js", "js/intake.js", "js/auth.js", "js/catalogue.js", "js/accounts.js", "js/hub-bridge.js"]:
+for js in ["js/shared.js", "js/firebase-sync.js", "js/intake.js", "js/auth.js", "js/catalogue.js", "js/accounts.js", "js/hub-bridge.js", "js/hub-card.js"]:
     name = os.path.basename(js)
     edit(js, lambda s, name=name: re.subn(rf"^(// {re.escape(name)} — ){VER}", rf"\g<1>v{new}", s, count=1, flags=re.M))
 # cache-busting stamps on local assets

@@ -1565,11 +1565,6 @@ label.settings-row { cursor: pointer; }
 #auth-gate .auth-logo { height: calc(var(--logo-h) + 8px); margin: 6px 0 14px; }
 [data-theme="workshop"] .auth-logo { display: none; }   /* no logo on the light theme */
 [data-master-only][hidden] { display: none !important; }
-.master-chip {
-  display: inline-block; margin-left: 6px; padding: 1px 7px; border-radius: 10px; vertical-align: 1px;
-  font-size: 10px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; font-family: var(--mono);
-  background: var(--chip-bg); color: var(--chip-text); border: 1px solid var(--chip-line);
-}
 .settings-acts { display: flex; gap: 6px; flex-shrink: 0; }
 /* Accounts: one line pointing to the hub (js/accounts.js) */
 .acct-hub-link { color: var(--link); text-decoration: underline; }

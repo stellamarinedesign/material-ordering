@@ -1,4 +1,4 @@
-// auth.js — v2026-11-27.10
+// auth.js — v2026-11-27.11
 //
 // Sign-in (Firebase email + password, compat SDK) and WHO IS WHAT, on every
 // page. The same model as the production board:
@@ -46,12 +46,6 @@ const Access = {
   LISTS: ['managers', 'engineers', 'floor', 'masters'],
   ROLES: ['manager', 'floor'],                                 // what this app offers; 'engineer' is still read
   ROLE_LIST:  { manager: 'managers', engineer: 'engineers', floor: 'floor' },
-  ROLE_LABEL: { manager: 'Manager', engineer: 'Engineer', floor: 'Floor' },
-  ROLE_WORDS: {
-    manager:  'the manager page and the materials catalogue',
-    engineer: 'ordering, consumables and deliveries',
-    floor:    'ordering, consumables and deliveries',
-  },
   _tidyList(xs) { return [...new Set((Array.isArray(xs) ? xs : []).map(tidyEmail).filter(Boolean))]; },
 
   // The document as the app holds it: four tidy, de-duplicated lists. With no
@@ -449,12 +443,10 @@ const Auth = {
          <div style="flex:1"><div class="settings-row-label">Admin</div><div class="settings-row-sub">Device name, password, sign out</div></div>
          <button class="btn-sm" data-auth-unlock>Unlock</button>`;
     } else {
-      // Role words and the Admin chip for an admin (a "master" in the access document)
-      // only — everyone else sees their address; which page they get is the whole of
-      // their role.
-      const master = this.isMaster(), role = this.role();
-      const sub = master ? `${Access.ROLE_LABEL[role]}: ${Access.ROLE_WORDS[role]}` : (this._accessState === 'missing' ? 'No accounts list exists yet' : '');
-      body = `<div><div class="settings-row-label">${esc(this._user.email || '')}${master ? ' <span class="master-chip">Admin</span>' : ''}</div>${sub ? `<div class="settings-row-sub">${esc(sub)}</div>` : ''}</div>
+      // The address only. Roles are shown nowhere but the hub's Accounts (Pete, 27 Nov):
+      // which page a person gets is the whole of their role here, admin or not.
+      const sub = this._accessState === 'missing' ? 'No accounts list exists yet' : '';
+      body = `<div><div class="settings-row-label">${esc(this._user.email || '')}</div>${sub ? `<div class="settings-row-sub">${esc(sub)}</div>` : ''}</div>
          <div class="settings-acts"><button class="btn-sm" data-auth-password>Change password</button><button class="btn-sm" data-auth-signout>Sign out</button>${this._floor() ? '<button class="btn-sm" data-auth-lock><i class="ti ti-lock"></i> Lock</button>' : ''}</div>`;
     }
     const setup = this._user && this._accessState === 'missing' ? `
