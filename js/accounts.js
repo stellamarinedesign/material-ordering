@@ -1,197 +1,34 @@
-// accounts.js — v2026-11-27.8
+// accounts.js — v2026-11-27.9
 //
-// Manager page only: the Accounts section of Settings, for a MASTER and for
-// nobody else — absent otherwise, not greyed. Every listed address with its
-// role in a dropdown, a Master tick, Make user and Remove; and an Add row
-// that lists an address AND makes its Firebase user, showing a temporary
-// password once. Each change is written to settings/access (see js/auth.js
-// for the model) and logged to the append-only `activity` collection.
+// Manager page only: the Accounts section of Settings, for an ADMIN (a
+// "master" in settings/access) and for nobody else — absent otherwise.
 //
-// ADD LISTS FIRST, THEN MAKES THE USER. The rules read the list, so a user
-// that exists but isn't listed can sign in and read nothing, while a listed
-// address whose user doesn't exist yet is harmless. The user is made on a
-// second Firebase app (DB.createAccount) so the master stays signed in.
+// SINCE THE APP JOINED THE HUB, people, their roles and their passwords are
+// looked after in the hub (its Accounts page), which writes this app's
+// settings/access itself. Two editors would overwrite each other, so the
+// role dropdowns, the Admin tick, Make user, Remove and Add went in the same
+// release, and this section is one line pointing there. The second Firebase
+// app that made users (DB.createAccount) stays unused until the clean-up
+// release.
 const Accounts = {
-  _fresh: null,       // { email, password } | { email, exists } | { email, failed } — what became of the last user made
-  _activity: null,    // recent access changes, newest first (null = not fetched)
-  _err: '',
-  _status: '',        // "Saving…": what is happening, not a failure
-  _busy: false,
-  _mounted: false,
+  HUB_ACCOUNTS: '/#/accounts',
 
   section() { return `<div class="settings-section" id="auth-accounts">${this._inner()}</div>`; },
   refresh() {
     const el = document.getElementById('auth-accounts'); if (!el) return;
-    const restore = captureInputFocus();
     el.innerHTML = this._inner();
-    restore();
   },
-  // Settings closed: the temporary password goes, as it says it will.
-  forget() { if (this._fresh) { this._fresh = null; this.refresh(); } },
-  mount() {
-    if (this._mounted) return;
-    this._mounted = true;
-    document.addEventListener('click',  e => this._onClick(e));
-    document.addEventListener('change', e => this._onChange(e));
-    document.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.id === 'acct-new-email') this._add(); });
-  },
+  forget() {},     // nothing is held any more
+  mount() {},
 
   _inner() {
-    if (!Auth.isMaster()) { this._fresh = null; return ''; }
-    if (this._activity === null) this._loadActivity();
-    const me = Auth.email(), rows = Access.rows(Auth.access());
-    const roleSel = (value, attrs) => `<select class="acct-role" ${attrs || ''}>${value === 'none' ? '<option value="" selected disabled>No access</option>' : ''}${
-      [...Access.ROLES, ...(value === 'engineer' ? ['engineer'] : [])].map(r => `<option value="${r}"${r === value ? ' selected' : ''}>${Access.ROLE_LABEL[r]}</option>`).join('')}</select>`;
-    const rowHtml = r => {
-      const self = r.email === me;
-      return `<div class="acct-row" data-acct-row="${esc(r.email)}">
-        <span class="acct-email">${esc(r.email)}${r.master ? ' <span class="master-chip">Master</span>' : ''}</span>
-        ${roleSel(r.role, `data-acct-role${self ? ' disabled title="Your own role; another master can change it."' : ''}`)}
-        <label class="acct-master" title="${self ? 'Your own; another master can change it.' : 'May change this list'}"><input type="checkbox" data-acct-master${r.master ? ' checked' : ''}${self ? ' disabled' : ''}> Master</label>
-        <button class="btn-sm" data-acct-make${self ? ' disabled title="Your own account exists: you are signed in with it."' : ' title="Make the Firebase user for this address, temporary password shown once"'}>Make user</button>
-        <button class="btn-sm btn-sm-danger" data-acct-remove${self ? ' disabled title="You cannot remove yourself; another master can."' : ' title="Off every list: signed in, this account then sees nothing"'}>Remove</button>
-      </div>`;
-    };
+    if (!Auth.isMaster()) return '';
     return `
       <div class="settings-label">Accounts</div>
       <div class="settings-card">
-        <div class="settings-row" style="flex-direction:column;align-items:stretch;gap:0">
-          <div class="settings-row-sub" style="margin-bottom:8px">Manager: ${esc(Access.ROLE_WORDS.manager)}. Floor: ${esc(Access.ROLE_WORDS.floor)}. An account on no list can sign in and sees nothing. Master: may change this list; not a role.</div>
-          <div class="acct-table">
-            ${rows.length ? rows.map(rowHtml).join('') : '<div class="settings-row-sub">nobody listed yet</div>'}
-          </div>
-          <div class="acct-add">
-            <input type="email" id="acct-new-email" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="name@example.com" value="${esc(this._newEmail || '')}">
-            ${roleSel('floor', 'id="acct-new-role"')}
-            <button class="btn-sm btn-sm-save" data-acct-add${this._busy ? ' disabled' : ''}>${this._busy ? 'Adding…' : 'Add account'}</button>
-          </div>
-          <div class="acct-status" role="status">${esc(this._status)}</div>
-          <div class="auth-err" id="acct-err" role="alert">${esc(this._err)}</div>
-          ${this._fresh ? this._freshHtml(this._fresh) : ''}
+        <div class="settings-row">
+          <div class="settings-row-label">Roles and new people are set in the hub, under <a href="${this.HUB_ACCOUNTS}" class="acct-hub-link">Accounts</a>.</div>
         </div>
-      </div>
-      ${this._activityHtml()}`;
-  },
-
-  // What became of the Firebase user: made, with its temporary password shown
-  // once and a Copy; already there; or not made, with why and what to press.
-  _freshHtml(f) {
-    if (f.exists) return `<div class="acct-fresh">
-        <div class="acct-fresh-head">${esc(f.email)} already has a Firebase user</div>
-        <div class="settings-row-sub">Its password is unchanged. If that password is lost: delete the user in the Firebase console (Authentication → Users) and press Make user here again for a fresh temporary one.</div>
       </div>`;
-    if (f.failed) return `<div class="acct-fresh">
-        <div class="acct-fresh-head">${esc(f.email)} is listed, but its Firebase user was not made</div>
-        <div class="settings-row-sub">${esc(f.failed)} Press Make user on its row to try again.</div>
-      </div>`;
-    return `<div class="acct-fresh">
-        <div class="acct-fresh-head">Account made for ${esc(f.email)}</div>
-        <div class="acct-fresh-line">Temporary password: <code id="acct-temp-pass">${esc(f.password)}</code> <button class="btn-sm" data-acct-copy>Copy</button></div>
-        <div class="settings-row-sub">Shown once — it goes when Settings closes. They sign in with it and press Password under Settings → Account to make it theirs.</div>
-      </div>`;
-  },
-  _activityHtml() {
-    const a = this._activity;
-    if (!a || !a.length) return '';
-    return `<div class="settings-label" style="margin-top:6px">Recent account changes</div>
-      <div class="settings-card"><div class="acct-log">${a.map(e => `<div class="acct-log-row"><span>${esc(this._when(e.at))}</span><span>${esc(String(e.by || '').split('@')[0] || 'unknown')}</span><span>${esc(e.text || '')}</span></div>`).join('')}</div></div>`;
-  },
-  _when(iso) {
-    const d = new Date(iso); if (isNaN(d)) return '';
-    return fmtTime(d);
-  },
-  async _loadActivity() {
-    this._activity = [];
-    try { this._activity = await DB.listActivity(20); this.refresh(); }
-    catch (e) { console.warn('[accounts] activity not readable:', e); }
-  },
-
-  // ── actions ───────────────────────────────────────────────────────────
-  _onClick(e) {
-    const t = e.target;
-    if (t.closest('[data-acct-add]')) { this._add(); return; }
-    if (t.closest('[data-acct-copy]')) {
-      const btn = t.closest('[data-acct-copy]'), text = document.getElementById('acct-temp-pass')?.textContent || '';
-      navigator.clipboard.writeText(text).then(() => { btn.textContent = 'Copied'; }, () => { btn.textContent = 'Select and copy it'; });
-      return;
-    }
-    const row = t.closest('[data-acct-row]'); if (!row) return;
-    const email = row.dataset.acctRow;
-    if (t.closest('[data-acct-make]'))   this._makeUser(email, t.closest('[data-acct-make]'));
-    if (t.closest('[data-acct-remove]')) this._remove(email);
-  },
-  _onChange(e) {
-    const t = e.target, row = t.closest('[data-acct-row]'); if (!row) return;
-    const email = row.dataset.acctRow;
-    if (t.matches('[data-acct-role]') && t.value) this._save(Access.withRole(Auth.access(), email, t.value), `${email} is now ${Access.ROLE_LABEL[t.value].toLowerCase()}.`);
-    if (t.matches('[data-acct-master]')) this._save(Access.withMaster(Auth.access(), email, t.checked), t.checked ? `${email} is now a master.` : `${email} is no longer a master.`);
-  },
-
-  async _remove(email) {
-    if (!await Ask.confirm({ title: 'Remove this account?', body: `${email} stays able to sign in and sees nothing.`, yes: 'Remove account', no: 'Keep account', danger: true })) return;
-    // What it had, so Undo can give it back.
-    const was = Auth.access(), role = Access.isListed(was, email) ? Access.roleOf(was, email) : null, master = Access.isMaster(was, email);
-    const undo = role || master ? { label: 'Undo', run: () => {
-      let back = Auth.access();
-      if (role) back = Access.withRole(back, email, role);
-      if (master) back = Access.withMaster(back, email, true);
-      this._save(back, `${email} put back.`);
-    } } : null;
-    await this._save(Access.withoutAccount(was, email), `${email} removed from the lists.`, undo);
-  },
-  // Write the lists; log it; redraw. Returns whether it saved.
-  async _save(next, note, action) {
-    this._status = 'Saving…'; this._err = ''; this.refresh();
-    try {
-      await DB.saveAccess(next);
-      this._status = '';
-      Auth.setAccess(next);        // redraws this section too
-      this._log(note);
-      Manager._toast(note, false, action);
-      return true;
-    } catch (e) {
-      console.error('Accounts not saved:', e);
-      this._status = '';
-      this._err = `Not saved: ${whyFailed(e)}. Try again.`;
-      this.refresh();
-      return false;
-    }
-  },
-  async _add() {
-    const input = document.getElementById('acct-new-email'), sel = document.getElementById('acct-new-role');
-    if (!input || this._busy) return;
-    const email = tidyEmail(input.value), role = sel.value;
-    this._newEmail = input.value;
-    if (!isEmail(email)) { this._err = 'That does not look like an email address.'; this.refresh(); return; }
-    if (Access.rows(Auth.access()).some(r => r.email === email)) {
-      this._err = `${email} is already listed, as ${Access.roleOf(Auth.access(), email)}; change the role on its row.`; this.refresh(); return;
-    }
-    this._busy = true; this._err = ''; this._fresh = null;
-    try {
-      if (!await this._save(Access.withRole(Auth.access(), email, role), `${email} added as ${role}.`)) return;
-      this._newEmail = '';
-      await this._makeUser(email);
-    } finally { this._busy = false; this.refresh(); }
-  },
-  async _makeUser(email, btn) {
-    const back = busyBtn(btn, 'Making…');
-    const password = Access.tempPassword();
-    try {
-      await DB.createAccount(email, password);
-      this._fresh = { email, password };
-      this._log(`${email}: Firebase user made.`);
-    } catch (e) {
-      const code = (e && e.code) || '';
-      this._fresh = code === 'auth/email-already-in-use' ? { email, exists: true } : { email, failed: Auth._friendly(e, 'account') };
-    } finally {
-      back();
-      this.refresh();
-      document.querySelector('.acct-fresh')?.scrollIntoView({ block: 'nearest' });
-    }
-  },
-  _log(text) {
-    DB.logActivity({ at: new Date().toISOString(), by: Auth.email() || 'unknown', action: 'access', text })
-      .then(() => this._loadActivity())
-      .catch(e => console.warn('[accounts] activity not logged:', e));
   },
 };

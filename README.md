@@ -13,7 +13,7 @@ Ordering, stock and deliveries for the workshop. Four pages, one Firebase databa
 
 1. GitHub Pages serves the repository: Settings → Pages → main branch.
 2. The Firebase settings are built into `js/shared.js` (`FIREBASE_PROJECTS`), so a new device needs nothing typed in beyond its sign-in.
-3. Each device signs in with an account a master has listed on the manager page (Settings → Accounts). The floor iPads share one floor account; on those iPads, sign out, change password and the device name sit behind Settings → Admin, which unlocks with that account's password.
+3. Each device signs in through the hub, Stella's one sign-in (`js/hub-bridge.js`; people and roles are set in the hub's Accounts). The floor iPads share one floor login; on those iPads, sign out, change password and the device name sit behind Settings → Admin, which unlocks with that login's hub password. A device signed in before the app joined the hub carries on as it was. See `AUTH-SETUP.md`.
 4. To add a page to an iPad's home screen, open it in Safari → Share → Add to Home Screen. Each page has its own icon name.
 5. Once a page has been opened online, it also opens with no connection (`sw.js` keeps its files on the device), showing the data saved there. Online, the newest files are always fetched first.
 6. Orders, consumables sign-outs and stocktake counts made with no connection wait on the device (the "waiting to submit" pill) and send themselves when it returns. A delivery saved, confirmed or added to stock with no connection shows "Waiting to save" on its card and saves itself, with the usual checks, when the connection is back. Release the database rules (`firestore.rules`) before the code that needs them.
@@ -26,7 +26,7 @@ Ordering, stock and deliveries for the workshop. Four pages, one Firebase databa
 
 ## Test database
 
-A master can switch a device to the test database (Settings → Database → Test mode). It is a separate Firebase project with its own orders, stock and accounts; only per-device settings (theme, device name and the like) are shared with live.
+A device enters the test database with `?test=1` on the address (honoured only where the hub's sign-in has the test project) and leaves it with `?test=0`; an admin can also switch it under Settings → Database → Test mode. It is a separate Firebase project with its own orders, stock and accounts; only per-device settings (theme, device name and the like) are shared with live.
 
 ## Releasing
 

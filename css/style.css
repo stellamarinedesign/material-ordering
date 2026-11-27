@@ -165,6 +165,9 @@ button { cursor: pointer; }
 .header-title { font-size: 16px; font-weight: var(--title-weight); letter-spacing: var(--title-spacing); text-transform: var(--title-transform); }
 .header-ref { font-size: 11px; font-family: var(--mono); color: var(--header-muted); letter-spacing: 0.05em; }
 .header-actions { display: flex; align-items: center; gap: 8px; }
+/* The hub's app switcher (js/hub-bridge.js): drawn only for a login with two or more apps */
+.hd-apps { display: flex; margin-right: -4px; }
+.hd-apps:empty { display: none; }
 .icon-btn {
   background: var(--icon-btn-bg); border: 1px solid var(--icon-btn-line);
   border-radius: var(--radius); width: 36px; height: 36px;
@@ -405,7 +408,6 @@ button { cursor: pointer; }
   flex: 1; border: 1px solid var(--border); background: var(--bg);
   border-radius: var(--radius); padding: 7px 10px; min-height: 36px; font-size: 13px; color: var(--text); outline: none; min-width: 0;
 }
-.acct-role, .acct-add input { min-height: 36px; }
 .settings-value { margin-left: auto; font-size: 14px; color: var(--text2); text-align: right; min-width: 0; overflow-wrap: anywhere; }
 .settings-value[hidden], .settings-row input[hidden] { display: none; }
 .admin-lock { font-size: 20px; color: var(--text3); flex-shrink: 0; }
@@ -416,10 +418,9 @@ button { cursor: pointer; }
 }
 .btn-sm-danger { background: var(--red-bg); border-color: var(--red-text); color: var(--red-text); }
 .btn-sm-save   { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
-/* Small buttons that sit on the darker band (an open stock card, an order note, an
-   account row, a line in the sign-out list) take the card grey, so they still stand
-   apart from it. */
-:is(.stock-card-body, .order-note, .acct-row, .signout-item-row) :is(.btn-sm:not(.btn-sm-danger):not(.btn-sm-save), .qty-btn) { background: var(--surface); }
+/* Small buttons that sit on the darker band (an open stock card, an order note, a
+   line in the sign-out list) take the card grey, so they still stand apart from it. */
+:is(.stock-card-body, .order-note, .signout-item-row) :is(.btn-sm:not(.btn-sm-danger):not(.btn-sm-save), .qty-btn) { background: var(--surface); }
 
 /* ═══════════════════════════════════════
    OVERLAY + BOTTOM SHEET
@@ -1568,32 +1569,5 @@ label.settings-row { cursor: pointer; }
   background: var(--chip-bg); color: var(--chip-text); border: 1px solid var(--chip-line);
 }
 .settings-acts { display: flex; gap: 6px; flex-shrink: 0; }
-.acct-table { display: flex; flex-direction: column; gap: 6px; }
-.acct-row {
-  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
-  padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg);
-}
-.acct-email { flex: 1 1 200px; min-width: 0; font-size: 13px; color: var(--text); word-break: break-all; }
-.acct-role, .acct-add select {
-  border: 1px solid var(--border); background: var(--surface); color: var(--text);
-  border-radius: var(--radius); padding: 5px 8px; font-size: 12px; outline: none;
-}
-.acct-role:focus, .acct-add select:focus, .acct-add input:focus { border-color: var(--focus); }
-.acct-role, .acct-add select, .acct-add input { min-height: 36px; }
-.acct-status { font-size: 12.5px; color: var(--text2); margin: 4px 0 2px; }
-.acct-status:empty { display: none; }
-.acct-master { display: flex; align-items: center; gap: 5px; font-size: 12px; color: var(--text2); white-space: nowrap; }
-.acct-master input { width: 16px; height: 16px; accent-color: var(--accent); }
-.acct-add { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 10px; }
-.acct-add input {
-  flex: 1 1 220px; border: 1px solid var(--border); background: var(--bg); color: var(--text);
-  border-radius: var(--radius); padding: 7px 10px; font-size: 13px; outline: none; font-family: var(--font);
-}
-.acct-fresh { margin-top: 10px; padding: 10px 12px; border-radius: var(--radius); background: var(--note-bg); border: 1px solid var(--border2); }
-.acct-fresh-head { font-size: 13px; font-weight: 600; color: var(--text); margin-bottom: 4px; }
-.acct-fresh-line { font-size: 13px; color: var(--text); display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 4px 0 6px; }
-.acct-fresh-line code { font-family: var(--mono); font-size: 15px; letter-spacing: 0.04em; background: var(--bg); padding: 3px 8px; border-radius: 6px; border: 1px solid var(--border); user-select: all; }
-.acct-log { padding: 6px 14px; }
-.acct-log-row { display: grid; grid-template-columns: 92px 96px 1fr; gap: 10px; font-size: 12px; color: var(--text2); padding: 5px 0; border-bottom: 1px solid var(--border); }
-.acct-log-row:last-child { border-bottom: none; }
-.acct-log-row span:first-child, .acct-log-row span:nth-child(2) { font-family: var(--mono); color: var(--text3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Accounts: one line pointing to the hub (js/accounts.js) */
+.acct-hub-link { color: var(--link); text-decoration: underline; }

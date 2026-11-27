@@ -1,9 +1,8 @@
-// firebase-sync.js — v2026-11-27.8
+// firebase-sync.js — v2026-11-27.9
 let _db = null, _configured = false, _config = null, _second = null;
 
-// Signed-in email for stamping writes (null when the device isn't signed in —
-// phase 1 of the auth rollout, see js/auth.js). Guarded so the module still
-// works on a page that hasn't loaded the auth SDK.
+// Signed-in email for stamping writes (null when nobody is signed in). Guarded
+// so the module still works on a page that hasn't loaded the auth SDK.
 function _who() {
   try { return (typeof firebase.auth === 'function' && firebase.auth().currentUser) ? (firebase.auth().currentUser.email || null) : null; }
   catch { return null; }
@@ -62,8 +61,13 @@ function _liveList(what, query, docs, callback) {
 const APPCHECK_SITE_KEY = '6LcvOCctAAAAAFXUhpQRg2c09P1g5l7qULqwZCbh';
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+const PERSIST_RETRY = 'mo_persist_retry';  // this tab has reloaded once for the saved copy already
+
 const DB = {
   onDenied: null,   // set by each page — called on a permission-denied listener error
+  problem: null,    // why init returned false, in words, when there is more to say than "no connection"
+  PERSIST_WAIT: 6000,                 // see init: the device's saved copy, opening
+  _reload: () => location.reload(),   // the tests' seam
 
   async init(config) {
     if (_configured) return true;
@@ -90,8 +94,29 @@ const DB = {
       // connection returns; reads come from the last data seen. One store per
       // origin (synchronizeTabs): the manager PC may have several tabs open,
       // and each iPad page is its own context.
-      try { await _db.enablePersistence({ synchronizeTabs: true }); }
-      catch (e) { console.warn('[Firestore] no on-device store — queued writes will not survive a reload:', (e && e.code) || e); }
+      // A TIME LIMIT. Opening it can be held up by another page of this site that
+      // still holds it: an iPad's frozen page, or another app in the hub's icon
+      // (the shape of design scheduling's iPad hang). Past PERSIST_WAIT the page
+      // reloads once; if the next start is held up too, it says so and stops. It
+      // never goes on without the saved copy: orders made offline live in it.
+      const opened = _db.enablePersistence({ synchronizeTabs: true }).then(() => 'open', e => {
+        console.warn('[Firestore] no on-device store — queued writes will not survive a reload:', (e && e.code) || e);
+        return 'none';     // this browser can't keep one at all (a private window): nothing was kept to lose
+      });
+      const how = await Promise.race([opened, new Promise(r => setTimeout(() => r('late'), this.PERSIST_WAIT))]);
+      if (how === 'late') {
+        let tried = false;
+        try { tried = sessionStorage.getItem(PERSIST_RETRY) === '1'; } catch {}
+        if (!tried) {
+          try { sessionStorage.setItem(PERSIST_RETRY, '1'); } catch {}
+          this._reload();
+          return new Promise(() => {});      // the page is going: nothing more starts here
+        }
+        try { sessionStorage.removeItem(PERSIST_RETRY); } catch {}
+        this.problem = "This device's saved copy did not open. Close the app completely, then open it again.";
+        return false;
+      }
+      try { sessionStorage.removeItem(PERSIST_RETRY); } catch {}
       _configured = true;
       return true;
     }

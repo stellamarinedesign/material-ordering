@@ -12,6 +12,12 @@
 //
 // One copy of each page, and of each file stamped with ?v= only the newest version
 // (tools/bump-version.py stamps them), so the store does not grow with every release.
+//
+// The hub's files (/core/v1/hub.js, its hub-impl.js?v=… and /js/registry.js?v=…; see
+// js/hub-bridge.js) are same-origin GETs from these pages, so they are kept the same way:
+// the network first, and a stamped file under its own version. A kept hub.js asks for
+// the hub-impl.js?v= of its own build, which is kept under exactly that address, so the
+// two always stay a pair: a new hub.js never meets an old hub-impl.js.
 
 const CACHE = 'mo-files-1';
 const WAIT_MS = 4000;

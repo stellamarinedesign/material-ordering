@@ -1,4 +1,4 @@
-// auth.js — v2026-11-27.8
+// auth.js — v2026-11-27.9
 //
 // Sign-in (Firebase email + password, compat SDK) and WHO IS WHAT, on every
 // page. The same model as the production board:
@@ -24,10 +24,14 @@
 // No address lives in this file or anywhere in the repo: a static site hands
 // its JavaScript to anyone who asks for it.
 //
-// Passwords are changed in the app (Settings → Account → Password), proving
-// the current one first. Firebase's reset mail is avoided (unrecognisable
-// sender, lands in junk, slow); a forgotten password is the one console job
-// left — delete the user there, then Make user again from Accounts.
+// SINCE THE APP JOINED THE HUB (js/hub-bridge.js), a new sign-in goes through
+// the hub's own screen, which signs this app in to its own project as the
+// hub's person; people, roles and passwords are looked after in the hub. On
+// the live site the app draws no sign-in form of its own: with nobody signed
+// in and the hub out of reach, a copy of the hub's card says so. A device
+// signed in before it met the hub carries on exactly as it was. Off the live
+// site (localhost, the _local harnesses) the old form is drawn as before, for
+// building and testing, until the clean-up release.
 //
 // Persistence is Firebase's default LOCAL, so a sign-in survives reloads and
 // home-screen app restarts until the account is signed out or removed.
@@ -44,7 +48,7 @@ const Access = {
   ROLE_LIST:  { manager: 'managers', engineer: 'engineers', floor: 'floor' },
   ROLE_LABEL: { manager: 'Manager', engineer: 'Engineer', floor: 'Floor' },
   ROLE_WORDS: {
-    manager:  'the manager page, the materials catalogue, accounts',
+    manager:  'the manager page and the materials catalogue',
     engineer: 'ordering, consumables and deliveries',
     floor:    'ordering, consumables and deliveries',
   },
@@ -118,43 +122,88 @@ const Auth = {
   _unsubAccess: null,
   _blocked: false,          // the "Enter" card is up (listed, but not for this page)
   // A page's device-name store ({ get, save }) — index: DeviceName,
-  // consumables: ConsumablesDeviceName, warehouse: WarehouseDeviceName. With
-  // every iPad on one shared login, the device's own label is what tells
-  // their orders apart, so the sign-in dialog carries it, as the setup screen
-  // does. The manager page has none (it uses the manager name in Settings).
+  // consumables: ConsumablesDeviceName, warehouse: WarehouseDeviceName,
+  // manager: ManagerDeviceName (the manager name in Settings). With every
+  // iPad on one shared login, the device's own label is what tells their
+  // orders apart: the old form carries the field, and after a sign-in through
+  // the hub a page whose store is empty asks for it once (namePrompt).
   deviceName: null,
+
+  hub: null,          // the hub (js/hub-bridge.js), when it loaded
+  hubState: null,     // what it answered: in | legacy | none | broken | unreachable
+  hubDrawn: false,    // one of its own screens was up as it answered: its card
 
   // Call once, after DB.init has succeeded. onChange(user|null) fires on every
   // auth state change AND again once the access document has been read, so a
   // page's role decisions (the manager guard) are made on real information.
-  start(onChange) {
+  async start(onChange) {
     if (this._started) return;
     if (typeof firebase === 'undefined' || typeof firebase.auth !== 'function') { Boot.ready('sign-in'); return; }
     this._started = true;
     this._onChange = onChange || null;
+    // One delegated handler for the Account buttons on every page.
+    document.addEventListener('click', e => {
+      const t = e.target;
+      if (t.closest('[data-auth-signin]'))   { e.preventDefault(); this.openDialog(); }
+      // Sign out and Change password on a floor iPad only while the admin lock is open
+      if (t.closest('[data-auth-signout]'))  { e.preventDefault(); if (this.adminOpen()) this.signOut(); }
+      if (t.closest('[data-auth-password]')) { e.preventDefault(); if (this.adminOpen()) this.changePasswordHere(); }
+      if (t.closest('[data-auth-unlock]'))   { e.preventDefault(); this.openUnlockDialog(); }
+      if (t.closest('[data-auth-lock]'))     { e.preventDefault(); this.lockAdmin(); }
+      if (t.closest('[data-auth-claim]'))    { e.preventDefault(); this.claim(t.closest('[data-auth-claim]')); }
+      if (t.closest('[data-auth-out-here]')) { e.preventDefault(); this.signOutEverywhere().then(() => this._reload()); }
+    });
+    // The app switcher beside the cog, as soon as the hub's file is here and the header is.
+    HubBridge.showSwitcher();
+    // THE HUB, before the app's own listener: it may sign this app in, or out, as the
+    // hub's person first, and its sign-in screen waits for one. The start-up cover stays
+    // up meanwhile, so nothing of the page shows for the wrong person. Fails open.
+    const joined = await HubBridge.join({ reload: () => this._again() });
+    this.hub = (joined && joined.Hub) || null;
+    this.hubState = (joined && joined.state) || null;
+    this.hubDrawn = !!(joined && joined.drawn);
     // Nothing shows until a sign-in is known: the page's opaque start-up cover (Boot) stays
-    // until Firebase reports a user, or the sign-in dialog takes its place if there is
-    // none. No page content is ever glimpsed signed out.
+    // until Firebase reports a user, or the hub's screen, its card or the old form (off the
+    // live site) takes its place. No page content is ever glimpsed signed out.
+    let seen = false;
     firebase.auth().onAuthStateChanged(user => {
+      // A SESSION THAT WENT WHILE THE PAGE WAS OPEN, with the hub in charge of it: a login
+      // just linked or given a new key, or signed out in another app. Reload; the reload
+      // asks the hub again. Orders waiting on this device are kept (Firestore's own queue
+      // belongs to the account, which linking takes over, never replaces).
+      if (!user && HubBridge.noUserAction({ seen, hubState: this.hubState }) === 'reload') { this._again(); return; }
+      if (user) seen = true;
       this._user = user || null;
       if (user) { this._closeGate(); Boot.ready('sign-in'); }
       this._stopAccess();
       this._access = null;
       this._accessState = user ? 'loading' : 'none';
       this._refresh(); this._emit();
-      if (user) this._watchAccess();
+      if (user) { this._watchAccess(); this.namePrompt(); }
     });
-    // One delegated handler for the pill / Account buttons on every page.
-    document.addEventListener('click', e => {
-      const t = e.target;
-      if (t.closest('[data-auth-signin]'))   { e.preventDefault(); this.openDialog(); }
-      // Sign out and Change password on a floor iPad only while the admin lock is open
-      if (t.closest('[data-auth-signout]'))  { e.preventDefault(); if (this.adminOpen()) this.signOut(); }
-      if (t.closest('[data-auth-password]')) { e.preventDefault(); if (this.adminOpen()) this.openPasswordDialog(); }
-      if (t.closest('[data-auth-unlock]'))   { e.preventDefault(); this.openUnlockDialog(); }
-      if (t.closest('[data-auth-lock]'))     { e.preventDefault(); this.lockAdmin(); }
-      if (t.closest('[data-auth-claim]'))    { e.preventDefault(); this.claim(t.closest('[data-auth-claim]')); }
-    });
+  },
+  _leaving: false,
+  _again() { if (this._leaving) return; this._leaving = true; location.reload(); },
+
+  /** Signed in as the hub's person: Password and Sign out behind the lock are the hub's. */
+  get viaHub() { return this.hubState === 'in' && !!this.hub; },
+  /** Nobody signed in: what to draw (HubBridge.noUserAction). */
+  _noUser() { return HubBridge.noUserAction({ hubState: this.hubState, loaded: !!this.hub, drawn: this.hubDrawn }); },
+
+  /** Sign out of the hub as well, when signed in through it (it leaves a mark, so the other apps on this device follow), then out of this app. */
+  async signOutEverywhere() {
+    if (this.viaHub) {
+      try { await this.hub.signOut(); } catch (e) { console.warn('[hub] sign-out failed:', (e && e.message) || e); }
+    }
+    await firebase.auth().signOut();
+  },
+  /** Change password: the hub's dialog when signed in through it, else the app's own. */
+  changePasswordHere() {
+    if (this.viaHub && typeof this.hub.openPassword === 'function') {
+      this.hub.openPassword().catch(e => tellFailed('Password not changed', e));
+      return;
+    }
+    this.openPasswordDialog();
   },
   _emit() { if (this._onChange) this._onChange(this._user); },
 
@@ -188,18 +237,39 @@ const Auth = {
   // Manager page only. A listed account that isn't a manager gets a quiet
   // card — the address and an Enter button to its own page — nothing that
   // reads as an error. Pass it as start()'s onChange so it follows every
-  // sign-in, sign-out and list change. Not signed in at all still gets in
-  // until the rules require sign-in.
+  // sign-in, sign-out and list change.
   guardManagerPage() {
     const blocked = this.isSignedIn() && this._accessState === 'ready' && this.isListed() && !this.isManager();
     if (blocked) this._block(); else this._clearBlock();
   },
   homeFor(role) { return role === 'manager' ? 'manager.html' : 'index.html'; },
 
-  // A listener was refused (DB.onDenied), or this account isn't on the list:
-  // either way the device needs a listed account, so the sign-in dialog, with
-  // no way past it. An unlisted account is simply not one for this app.
-  denied() { this.openDialog(); },
+  // A listener was refused (DB.onDenied), or this account isn't on the list. Signed in,
+  // that account is simply not one for this app: a plain screen says so, with Sign out.
+  // Signed out, whatever the sign-in way is here (_signInWay). Nothing about roles or
+  // lists: only the admin knows they exist.
+  denied() {
+    if (!this._user) { this._signInWay(); return; }
+    if (document.getElementById('auth-none')) return;
+    Boot.gone();
+    this._gate(`
+        <section class="success-card auth-card" id="auth-none">
+          <div class="auth-logo"></div>
+          <h3>No current account assigned</h3>
+          <p>Signed in as ${esc(this.email())}. Notify the admin.</p>
+          <button type="button" class="btn btn-outline" data-auth-out-here>Sign out</button>
+        </section>`);
+  },
+  // Nobody signed in: the hub's card is the answer when it drew one; on the live site with
+  // the hub drawing nothing, the app's copy of its card; a device the hub left alone that
+  // has just signed out reloads into the hub's sign-in; off the live site, the old form.
+  _signInWay() {
+    const way = this._noUser();
+    if (way === 'card') return;
+    if (way === 'down') { HubBridge.downCard(); return; }
+    if (HubBridge.onLiveSite()) { this._again(); return; }
+    this.openDialog();
+  },
 
   _block() {
     this._blocked = true;
@@ -236,7 +306,7 @@ const Auth = {
     } catch (e) {
       back();
       if (err) err.textContent = (e && e.code === 'permission-denied')
-        ? 'Refused — an accounts list already exists, so a master has to add this account.'
+        ? 'Refused — an accounts list already exists, so the admin has to add this account.'
         : `Not saved: ${whyFailed(e)}. Try again.`;
     }
   },
@@ -245,8 +315,10 @@ const Auth = {
     await firebase.auth().signInWithEmailAndPassword(String(email || '').trim(), String(password || ''));
   },
   async signOut() {
-    if (!await Ask.confirm({ title: 'Sign out on this device?', body: 'It needs the email and password to get back in.', yes: 'Sign out', no: 'Stay signed in', danger: true })) return;
-    await firebase.auth().signOut();
+    if (!await Ask.confirm({ title: 'Sign out on this device?',
+      body: this.viaHub ? 'Getting back in needs the hub sign-in.' : 'It needs the email and password to get back in.',
+      yes: 'Sign out', no: 'Stay signed in', danger: true })) return;
+    await this.signOutEverywhere();
   },
   // Change the signed-in account's password, here, no email in the loop.
   // Firebase won't change a password on a stale sign-in, so the current one
@@ -263,6 +335,10 @@ const Auth = {
   // There, the device name, Change password and Sign out wait behind the password the
   // iPad was signed in with, which floor staff never type. Unlocked for 5 minutes, or
   // until Settings closes. A deterrent, not security: the database rules are that.
+  // Signed in through the hub, the app's own password is a key nobody knows, so the
+  // lock takes the floor login's HUB password instead (Hub.confirmPassword: true or
+  // false; it rejects only when the hub cannot be reached). A hub too old to have it
+  // keeps the lock shut: "Ask the admin."
   ADMIN_MS: 5 * 60 * 1000,
   _adminUntil: 0,
   _adminTimer: null,
@@ -276,7 +352,15 @@ const Auth = {
   async unlockAdmin(password) {
     const user = firebase.auth().currentUser;
     if (!user || !user.email) throw new Error('Not signed in.');
-    await user.reauthenticateWithCredential(firebase.auth.EmailAuthProvider.credential(user.email, password));
+    if (this.viaHub) {
+      if (typeof this.hub.confirmPassword !== 'function') throw Object.assign(new Error('The hub cannot check it'), { code: 'hub/no-confirm' });
+      let ok;
+      try { ok = await this.hub.confirmPassword(password); }
+      catch (e) { throw Object.assign(new Error('The hub cannot be reached'), { code: 'hub/unreachable' }); }
+      if (ok !== true) throw Object.assign(new Error('Not the password'), { code: 'auth/wrong-password' });
+    } else {
+      await user.reauthenticateWithCredential(firebase.auth.EmailAuthProvider.credential(user.email, password));
+    }
     this._adminUntil = Date.now() + this.ADMIN_MS;
     clearTimeout(this._adminTimer);
     this._adminTimer = setTimeout(() => this.lockAdmin(), this.ADMIN_MS);
@@ -309,7 +393,11 @@ const Auth = {
         ow.innerHTML = '';
       } catch (e) {
         back();
-        err(this._badCredential(e) ? 'The password is not right.' : this._friendly(e, 'unlock'));
+        const code = (e && e.code) || '';
+        err(this._badCredential(e) ? 'The password is not right.'
+          : code === 'hub/no-confirm' ? 'Ask the admin.'
+          : code === 'hub/unreachable' ? 'The hub cannot be reached. Check the connection, then try again.'
+          : this._friendly(e, 'unlock'));
         refuseField($('unlock-pass'));
       }
     });
@@ -320,7 +408,7 @@ const Auth = {
   // ── DOM slots ─────────────────────────────────────────────────────────
   // Pages drop `<span id="auth-pill"></span>` in their header actions and the
   // Settings panels render `Auth.settingsSection()`; both are refreshed here.
-  pillHtml() { return ''; },   // kept for the header slots; sign-in is a dialog now, never optional
+  pillHtml() { return ''; },   // no header pill: sign-in is the hub's screen (or, off the live site, a dialog)
   settingsSection() {
     let body;
     if (!this._user) {
@@ -331,16 +419,17 @@ const Auth = {
          <div style="flex:1"><div class="settings-row-label">Admin</div><div class="settings-row-sub">Device name, password, sign out</div></div>
          <button class="btn-sm" data-auth-unlock>Unlock</button>`;
     } else {
-      // Role words and the Master chip for a master only — everyone else sees
-      // their address; which page they get is the whole of their role.
+      // Role words and the Admin chip for an admin (a "master" in the access document)
+      // only — everyone else sees their address; which page they get is the whole of
+      // their role.
       const master = this.isMaster(), role = this.role();
       const sub = master ? `${Access.ROLE_LABEL[role]}: ${Access.ROLE_WORDS[role]}` : (this._accessState === 'missing' ? 'No accounts list exists yet' : '');
-      body = `<div><div class="settings-row-label">${esc(this._user.email || '')}${master ? ' <span class="master-chip">Master</span>' : ''}</div>${sub ? `<div class="settings-row-sub">${esc(sub)}</div>` : ''}</div>
+      body = `<div><div class="settings-row-label">${esc(this._user.email || '')}${master ? ' <span class="master-chip">Admin</span>' : ''}</div>${sub ? `<div class="settings-row-sub">${esc(sub)}</div>` : ''}</div>
          <div class="settings-acts"><button class="btn-sm" data-auth-password>Change password</button><button class="btn-sm" data-auth-signout>Sign out</button>${this._floor() ? '<button class="btn-sm" data-auth-lock><i class="ti ti-lock"></i> Lock</button>' : ''}</div>`;
     }
     const setup = this._user && this._accessState === 'missing' ? `
           <div class="settings-row">
-            <div><div class="settings-row-label">Set up accounts</div><div class="settings-row-sub">Lists ${esc(this.email())} as the first manager and master</div></div>
+            <div><div class="settings-row-label">Set up accounts</div><div class="settings-row-sub">Lists ${esc(this.email())} as the first manager and admin</div></div>
             <button class="btn-sm btn-sm-save" data-auth-claim>Make me the manager</button>
           </div>
           <div class="auth-err" id="auth-claim-err" style="padding:0 14px"></div>` : '';
@@ -354,9 +443,9 @@ const Auth = {
     if (pill) pill.innerHTML = this.pillHtml();
     const acct = document.getElementById('auth-account');
     if (acct) acct.outerHTML = this.settingsSection();
-    if (!this._user) { this._clearBlock(); this.denied(); }      // the rules need a sign-in for everything: ask at once
+    if (!this._user) { this._clearBlock(); this._signInWay(); }   // the rules need a sign-in for everything
     else if (this._accessState === 'ready' && !this.isListed()) this.denied();
-    // Anything a master alone should see (the test-mode switch in Settings).
+    // Anything an admin alone should see (the test-mode switch in Settings).
     document.querySelectorAll('[data-master-only]').forEach(el => { el.hidden = !this.isMaster(); });
     // The admin lock: fields that change only when unlocked, and their read-only stand-ins.
     const open = this.adminOpen();
@@ -365,11 +454,37 @@ const Auth = {
     if (typeof Accounts !== 'undefined' && Accounts.refresh) Accounts.refresh();
   },
 
+  // ── The device name, after a sign-in through the hub ──────────────────
+  // The hub's screen has no device-name field, so a page whose store is empty asks for
+  // it once: one field and Save. A device already named keeps its name. The old form
+  // (off the live site) still asks in its own field.
+  namePrompt() {
+    const dn = this.deviceName;
+    if (!dn || dn.get() || !this._user || document.getElementById('auth-name-card') || document.getElementById('auth-card')) return;
+    this._gate(`
+        <form class="success-card auth-card" id="auth-name-card" style="max-width:380px;text-align:left" novalidate>
+          <h3 style="text-align:center" id="auth-name-title">Device name</h3>
+          <div class="setup-field"><input id="auth-name" type="text" aria-labelledby="auth-name-title" autocomplete="off" autocapitalize="words" autocorrect="off" spellcheck="false"></div>
+          <div class="auth-err" id="auth-name-err" role="alert"></div>
+          <button type="submit" class="btn btn-primary" id="auth-name-save" style="width:100%;margin-top:4px"><i class="ti ti-check"></i> Save</button>
+        </form>`);
+    const $ = id => document.getElementById(id);
+    $('auth-name-card').addEventListener('submit', e => {
+      e.preventDefault();
+      const name = $('auth-name').value.trim();
+      if (!name) { $('auth-name-err').textContent = 'Enter a device name.'; refuseField($('auth-name')); return; }
+      dn.save(name);
+      this._reload();             // every header and list drawn with the name
+    });
+    $('auth-name').focus();
+  },
+
   // ── Sign-in dialog ────────────────────────────────────────────────────
-  // Lives in the opaque gate, so nothing of the page shows behind it, and has
-  // no way past it. A successful sign-in reloads, so every listener attaches
-  // with the new credentials.
+  // OFF THE LIVE SITE ONLY since the hub (above). Lives in the opaque gate, so nothing
+  // of the page shows behind it, and has no way past it. A successful sign-in reloads,
+  // so every listener attaches with the new credentials.
   openDialog() {
+    if (HubBridge.onLiveSite()) { this._signInWay(); return; }   // never a form of the app's own there
     if (document.getElementById('auth-card')) return;   // already open
     const dn = this.deviceName;
     Boot.gone();

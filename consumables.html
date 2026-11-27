@@ -16,8 +16,8 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" media="print" onload="this.media='all'">
   <link rel="stylesheet" href="fonts/tabler-icons.min.css">
-  <link rel="stylesheet" href="css/style.css?v=2026-11-27.8">
-  <link rel="stylesheet" href="css/themes.css?v=2026-11-27.8">
+  <link rel="stylesheet" href="css/style.css?v=2026-11-27.9">
+  <link rel="stylesheet" href="css/themes.css?v=2026-11-27.9">
   <style>
     .cons-stock-badge {
       font-size: 11px; font-family: var(--mono); padding: 2px 8px;
@@ -139,9 +139,10 @@
 <!-- APP CHECK: remove this line to disable App Check (also remove init block in firebase-sync.js) -->
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-check-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
-<script src="js/shared.js?v=2026-11-27.8"></script>
-<script src="js/firebase-sync.js?v=2026-11-27.8"></script>
-<script src="js/auth.js?v=2026-11-27.8"></script>
+<script src="js/shared.js?v=2026-11-27.9"></script>
+<script src="js/firebase-sync.js?v=2026-11-27.9"></script>
+<script src="js/hub-bridge.js?v=2026-11-27.9"></script>
+<script src="js/auth.js?v=2026-11-27.9"></script>
 <script>
 const ConsApp = {
   consumables: [],
@@ -164,7 +165,7 @@ const ConsApp = {
   async init() {
     FirebaseConfig.forget();
     const ok = await DB.init(FirebaseConfig.get());
-    if (!ok) { this.showSetup("Can't reach the database. Check the Wi-Fi, then tap Reload."); return; }
+    if (!ok) { this.showSetup(DB.problem || "Can't reach the database. Check the Wi-Fi, then tap Reload."); return; }
     // Sign-outs not yet confirmed by the server wait here (and go by themselves); this
     // page's own list, apart from the ordering page's, and test mode's apart from live.
     Outbox.start(`mo_outbox_cons${FirebaseConfig.isTestMode() ? '_test' : ''}`,
@@ -220,7 +221,7 @@ const ConsApp = {
             </div>
             <div class="header-actions">
               ${deviceName ? `<span class="device-chip"><i class="ti ti-device-ipad" style="font-size:12px"></i> ${esc(deviceName)}</span>` : ''}
-              <span id="outbox-slot"></span><span id="auth-pill"></span>
+              <span id="outbox-slot"></span><span class="hd-apps" id="hubSlot"></span>
               <button class="icon-btn" id="btn-settings" aria-label="Settings"><i class="ti ti-settings"></i></button>
             </div>
           </div></div>

@@ -1,9 +1,9 @@
-// shared.js — v2026-11-27.8
+// shared.js — v2026-11-27.9
 
 // The build date plus that day's counter — "2026-10-06.2" is the second build
 // on 6 Oct 2026 (the production board's scheme). Set by tools/bump-version.py;
 // shown to people with a leading "v" (see verLabel).
-const APP_VERSION = '2026-11-27.8';
+const APP_VERSION = '2026-11-27.9';
 
 // Numeric version comparison, part by part. Returns true if `a` is strictly
 // newer than `b`. Reads both the dated form and the "v0.56"-style numbers used
@@ -1214,6 +1214,8 @@ const AutoUpdate = {
     if (!this._opts || !this._latest) return;
     if (Date.now() - this._lastActivity < this.IDLE_MS) return;
     if (this._busy()) return;
+    // Never under one of the hub's screens (its sign-in waits for somebody to type).
+    if (document.querySelector('.shub-screen, .shub-scrim')) return;
     // REACHABLE gate — only reload off the back of a recent successful fetch of
     // the site itself. Forcing a check here (throttled to 20s inside) means the
     // next 30s tick can pass this gate if the host answers.
@@ -1747,6 +1749,9 @@ const Dialogs = {
 };
 document.addEventListener('keydown', e => {
   if (e.key !== 'Escape' && e.key !== 'Tab') return;
+  // The hub's own screens and dialogs (its sign-in, its password dialog opened from
+  // Settings) look after their own keys: step back while one is up or has the focus.
+  if (document.querySelector('.shub-screen, .shub-scrim') || (document.activeElement && document.activeElement.closest && document.activeElement.closest('.shub'))) return;
   const box = Dialogs.top(); if (!box) return;
   if (e.key === 'Escape') {
     if (box.closest('#ask-wrap')) return;

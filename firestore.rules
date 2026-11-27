@@ -109,10 +109,13 @@ service cloud.firestore {
     }
 
     // The accounts and their roles. Read by anyone listed; written by a
-    // master, or by anyone signed in the first time, when it does not exist.
+    // master (the hub's Accounts, since the app joined it). The first time,
+    // when it does not exist, anyone signed in may read that it is missing
+    // and claim it; a signed-out visitor may not. The missing test comes
+    // first: with no document, listed() cannot answer.
     match /settings/access {
-      allow read:  if listed();
-      allow write: if master() || !accessExists();
+      allow read:  if (signedIn() && !accessExists()) || listed();
+      allow write: if (signedIn() && !accessExists()) || master();
     }
 
     // Who changed the accounts: one document per change, append-only.
