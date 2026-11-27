@@ -56,6 +56,7 @@
   --main-tab-active:var(--marina);
   --focus:          var(--marina);       /* focused field border and focus ring */
   --panel-bg:       var(--ground);       /* slide-in panels, setup screen, manager content */
+  --page-btn:       var(--surface);      /* a button or filter pill sitting straight on the page or a panel */
   --search-strip:   var(--ground);       /* strip the search box sits in… */
   --search-strip-line: 0 solid transparent;
   --search-input-bg:var(--surface);      /* …and the box itself */
@@ -363,11 +364,21 @@ button { cursor: pointer; }
 .action-bar-inner.split .btn { flex: 1; width: auto; min-width: 0; }
 .btn-primary { background: var(--accent); color: var(--accent-text); }
 .btn-primary:active { opacity: 0.85; }
-.btn-outline { background: var(--surface); border-color: var(--border); color: var(--text); }
-.btn-outline:active { background: var(--bg); }
-.btn-danger  { background: var(--surface); border-color: var(--border); color: var(--red-text); }
+/* A button's inside is never the colour it sits on, or only its outline says it is one:
+   on the grey cards and dialogs it takes the darker band (--bg), as the small buttons do;
+   where a button sits on that band itself, it takes the card grey instead (see below). */
+.btn-outline { background: var(--bg); border-color: var(--border); color: var(--text); }
+.btn-outline:active { background: var(--bg2); }
+/* Every destructive button looks like the red Reject / Reverse ones */
+.btn-danger  { background: var(--red-bg); border-color: var(--red-text); color: var(--red-text); }
 
 .btn-blue    { background: var(--select-bg); color: var(--select-text); }
+
+/* An order card's actions: emailing on the left, Reject order on the right of it with a
+   clear gap (it acts at once, with Undo). Below it when the card is too narrow. */
+.order-actions { display: flex; align-items: flex-start; flex-wrap: wrap; gap: 6px 16px; }
+.order-actions-main { flex: 1 1 260px; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.order-actions .order-reject { flex: 0 0 auto; width: auto; }
 
 /* ═══════════════════════════════════════
    EMAIL PANEL
@@ -405,6 +416,10 @@ button { cursor: pointer; }
 }
 .btn-sm-danger { background: var(--red-bg); border-color: var(--red-text); color: var(--red-text); }
 .btn-sm-save   { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+/* Small buttons that sit on the darker band (an open stock card, an order note, an
+   account row, a line in the sign-out list) take the card grey, so they still stand
+   apart from it. */
+:is(.stock-card-body, .order-note, .acct-row, .signout-item-row) :is(.btn-sm:not(.btn-sm-danger):not(.btn-sm-save), .qty-btn) { background: var(--surface); }
 
 /* ═══════════════════════════════════════
    OVERLAY + BOTTOM SHEET
@@ -568,7 +583,7 @@ button { cursor: pointer; }
 .seg { display: inline-flex; border: 1px solid var(--border2); border-radius: var(--radius); overflow: hidden; flex-shrink: 0; }
 .seg > button {
   min-height: 36px; padding: 0 12px; border: none; border-right: 1px solid var(--border2);
-  background: var(--surface); color: var(--text2); font-size: 12px; font-weight: 500; white-space: nowrap;
+  background: var(--bg); color: var(--text2); font-size: 12px; font-weight: 500; white-space: nowrap;
 }
 .seg > button:last-child { border-right: none; }
 .seg > button.on { background: var(--bg2); color: var(--text); font-weight: 600; box-shadow: inset 0 -2px 0 var(--select-line); }
@@ -855,7 +870,7 @@ input:focus-visible, textarea:focus-visible, select:focus-visible { outline: non
 .intake-filter-chip {
   display: flex; align-items: center; gap: 5px; white-space: nowrap;
   min-height: 36px; padding: 0 14px; border-radius: 20px; font-size: 12px; font-weight: 500;
-  border: 1px solid var(--border); background: var(--surface); color: var(--text2);
+  border: 1px solid var(--border); background: var(--page-btn); color: var(--text2);
   cursor: pointer; user-select: none; transition: background var(--dur-fast), color var(--dur-fast), border-color var(--dur-fast);
 }
 .intake-filter-chip.active { background: var(--select-bg); color: var(--select-text); border-color: var(--select-line); font-weight: 600; }
@@ -941,7 +956,7 @@ input:focus-visible, textarea:focus-visible, select:focus-visible { outline: non
 .st-tick:disabled { opacity: 0.45; }
 .st-mode-seg { display: flex; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
 .st-mode-opt {
-  min-width: 48px; height: 36px; padding: 0 10px; background: var(--surface); border: none;
+  min-width: 48px; height: 36px; padding: 0 10px; background: var(--bg); border: none;
   border-right: 1px solid var(--border); font-size: 13px; color: var(--text2); white-space: nowrap;
   display: flex; align-items: center; justify-content: center; cursor: pointer;
 }
@@ -1000,7 +1015,7 @@ input:focus-visible, textarea:focus-visible, select:focus-visible { outline: non
 .order-note-actions { display: flex; gap: 6px; margin-top: 8px; }
 .order-note-add {
   display: inline-flex; align-items: center; gap: 5px; min-height: 36px; margin: 4px 12px 8px; font-size: 12px; color: var(--text3);
-  background: none; border: 1px dashed var(--border); border-radius: var(--radius); padding: 5px 10px; cursor: pointer;
+  background: var(--bg); border: 1px dashed var(--border); border-radius: var(--radius); padding: 5px 10px; cursor: pointer;
 }
 
 /* ═══ SIGN-IN (js/auth.js) ═══ */
@@ -1035,6 +1050,7 @@ button.bc-chip { font-family: var(--mono); line-height: inherit; }
 /* The Barcodes panel is used on the iPad at the door: 44px to tap */
 #barcodes-list button.bc-chip { min-height: 44px; padding: 0 14px; }
 #barcodes-panel .btn-sm, #barcodes-panel .back-btn, #barcodes-panel .intake-filter-chip { min-height: 44px; }
+#btn-bc-new-item, #btn-bc-export-ghosts { background: var(--page-btn); }   /* on the panel itself, not a card */
 #barcodes-list .bc-chip { min-height: 36px; }
 #barcodes-list .bc-chip-x::after { inset: -14px -12px; }
 /* Items created on-device that don't have their consumables.csv row yet —

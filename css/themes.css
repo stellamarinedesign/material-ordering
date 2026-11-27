@@ -49,6 +49,7 @@
   --main-tab-active:var(--marina);
   --focus:          var(--marina);
   --panel-bg:       var(--bg);
+  --page-btn:       var(--bg2);   /* apart from both the white page and the panels */
   --search-strip:   var(--surface);
   --search-strip-line: 1px solid var(--border);
   --search-input-bg:var(--bg);
