@@ -1,4 +1,4 @@
-// auth.js — v2026-11-27.11
+// auth.js — v2026-11-27.12
 //
 // Sign-in (Firebase email + password, compat SDK) and WHO IS WHAT, on every
 // page. The same model as the production board:

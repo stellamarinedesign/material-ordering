@@ -1,4 +1,4 @@
-// hub-card.js — v2026-11-27.11
+// hub-card.js — v2026-11-27.12
 //
 // THIS APP'S CARD ON THE HUB'S FRONT PAGE: the orders waiting for the manager.
 //
@@ -11,7 +11,8 @@
 //   Which fields a card    the hub's js/cards.js (normaliseCard): title 40
 //   may have, and limits   characters, 3 lines, a line's title and sub 120
 //                          each, when 24, count 1-999, `late` draws the when in
-//                          amber, `empty` 80. A new kind of field is a hub
+//                          amber, `empty` 80, `cleared` draws the green tick
+//                          over the empty words. A new kind of field is a hub
 //                          change first.
 //
 // HOW THE HUB USES IT. The hub page imports this file by its plain address
@@ -33,6 +34,7 @@
 const FOR_ROLES        = ['manager'];         // who gets the card: the hub's role ids here are manager, engineer, floor
 const TITLE            = 'Orders waiting';    // the label over the lines
 const EMPTY            = 'No more pending orders.';  // said when nothing is waiting: the manager page's own words when its queue is clear
+const EMPTY_IS_GOOD_NEWS = true;              // nothing waiting shows the green tick over those words (the hub draws it still); false: the words alone
 const LINES            = 3;                   // lines shown (the hub draws 3 at most)
 const OLDEST_FIRST     = true;                // true: the order that has waited longest first; false: the newest first, as on the manager page
 const LATE_AFTER_HOURS = 24;                  // a line's time turns amber once its order has waited this long; null: never
@@ -113,6 +115,7 @@ export function cardFrom(orders, now = Date.now()) {
     }),
   };
   if (SHOW_COUNT && waiting.length) out.count = waiting.length;
+  if (EMPTY_IS_GOOD_NEWS && !waiting.length) out.cleared = true;
   return out;
 }
 

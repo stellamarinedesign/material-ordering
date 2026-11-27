@@ -1,4 +1,4 @@
-// firebase-sync.js — v2026-11-27.11
+// firebase-sync.js — v2026-11-27.12
 let _db = null, _configured = false, _config = null, _second = null;
 
 // Signed-in email for stamping writes (null when nobody is signed in). Guarded
